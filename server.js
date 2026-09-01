@@ -1,21 +1,39 @@
-import express from 'express';
-import session from 'express-session';
-import multer from 'multer';
-import axios from 'axios';
-import FormData from 'form-data';
-import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
-dotenv.config();
-const app=express(), upload=multer({dest:'uploads/'});
-app.use(express.json()); app.use(express.urlencoded({extended:true}));
-app.use(session({secret:process.env.SESSION_SECRET||'dev',resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax'}}));
-app.use(express.static('public'));
-const graph=()=>`https://graph.facebook.com/${process.env.META_GRAPH_VERSION}`;
-function auth(req,res,next){if(!req.session.userAccessToken)return res.status(401).json({error:'Not connected. Use Connect with Facebook.'});next()}
-app.get('/',(req,res)=>res.sendFile(path.resolve('public/index.html')));
-app.get('/auth/meta',(req,res)=>{const p=new URLSearchParams({client_id:process.env.META_APP_ID,redirect_uri:process.env.META_REDIRECT_URI,response_type:'code',scope:'pages_show_list,pages_read_engagement,pages_manage_posts'});res.redirect(`https://www.facebook.com/${process.env.META_GRAPH_VERSION}/dialog/oauth?${p}`)});
-app.get('/auth/meta/callback',async(req,res)=>{try{if(req.query.error)throw new Error(req.query.error_description||req.query.error);const r=await axios.get(`${graph()}/oauth/access_token`,{params:{client_id:process.env.META_APP_ID,client_secret:process.env.META_APP_SECRET,redirect_uri:process.env.META_REDIRECT_URI,code:req.query.code}});req.session.userAccessToken=r.data.access_token;res.redirect('/dashboard.html')}catch(e){res.status(500).send(e.response?.data||e.message)}});
-app.get('/api/pages',auth,async(req,res)=>{try{const r=await axios.get(`${graph()}/me/accounts`,{params:{access_token:req.session.userAccessToken,fields:'id,name,access_token,tasks'}});req.session.pages=r.data.data;res.json(r.data.data.map(({id,name,tasks})=>({id,name,tasks})));}catch(e){res.status(500).json(e.response?.data||{error:e.message})}});
-app.post('/api/publish',auth,upload.single('image'),async(req,res)=>{let ids=[];try{ids=JSON.parse(req.body.pageIds||'[]')}catch{};const pages=req.session.pages||[];if(!ids.length)return res.status(400).json({error:'Select Pages'});if(!req.body.message&&!req.file)return res.status(400).json({error:'Add text or image'});const results=[];for(const id of ids){const p=pages.find(x=>x.id===id);if(!p){results.push({id,status:'failed',error:'Page not found'});continue}try{let r;if(req.file){const f=new FormData();f.append('source',fs.createReadStream(req.file.path));if(req.body.message)f.append('caption',req.body.message);f.append('access_token',p.access_token);r=await axios.post(`${graph()}/${p.id}/photos`,f,{headers:f.getHeaders()})}else r=await axios.post(`${graph()}/${p.id}/feed`,null,{params:{message:req.body.message,access_token:p.access_token}});results.push({id,name:p.name,status:'published',post_id:r.data.id||r.data.post_id})}catch(e){results.push({id,name:p.name,status:'failed',error:e.response?.data?.error?.message||e.message})}}if(req.file)fs.unlink(req.file.path,()=>{});res.json({results})});
-app.listen(process.env.PORT||3000,()=>console.log(`http://localhost:${process.env.PORT||3000}`));
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/") {
+      return new Response(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Meta Multi Page Publisher</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+        </head>
+        <body style="font-family:Arial;padding:30px">
+          <h2>Meta Multi Page Publisher</h2>
+          <p>Cloudflare Worker is working ✅</p>
+          <a href="/auth/meta">Connect with Facebook</a>
+        </body>
+        </html>
+      `, {
+        headers: { "content-type": "text/html;charset=UTF-8" }
+      });
+    }
+
+    if (url.pathname === "/auth/meta") {
+      const redirectUri = `${url.origin}/auth/meta/callback`;
+
+      const facebookUrl =
+        `https://www.facebook.com/${env.META_GRAPH_VERSION}/dialog/oauth` +
+        `?client_id=${encodeURIComponent(env.META_APP_ID)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&response_type=code` +
+        `&scope=pages_show_list,pages_read_engagement,pages_manage_posts`;
+
+      return Response.redirect(facebookUrl, 302);
+    }
+
+    return new Response("Not found", { status: 404 });
+  }
+};
