@@ -1,0 +1,1 @@
+{"name":"meta-multi-page-publisher","version":"1.0.0","private":true,"type":"module","scripts":{"start":"node server.js"},"dependencies":{"axios":"^1.11.0","dotenv":"^17.2.1","express":"^5.1.0","express-session":"^1.18.2","multer":"^2.0.2","form-data":"^4.0.4"}}
