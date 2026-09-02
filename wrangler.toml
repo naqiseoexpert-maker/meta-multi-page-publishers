@@ -1,3 +1,6 @@
 name = "meta-multi-page-publishers"
 main = "server.js"
 compatibility_date = "2026-08-31"
+
+[triggers]
+crons = ["* * * * *"]
