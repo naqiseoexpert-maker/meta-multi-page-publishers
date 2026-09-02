@@ -264,6 +264,29 @@ export default {
                   ⬜ Unselect
                 </button>
 
+
+                <form
+                  method="POST"
+                  action="/remove-account"
+                  style="display:inline"
+                  onsubmit="return confirm('Is Facebook account aur is ke tamam Pages ko remove karna hai?');"
+                >
+
+                  <input
+                    type="hidden"
+                    name="account_id"
+                    value="${escapeHtml(accountId)}"
+                  >
+
+                  <button
+                    type="submit"
+                    class="small-button remove-button"
+                  >
+                    🗑️ Remove Account
+                  </button>
+
+                </form>
+
               </div>
 
             </div>
@@ -482,6 +505,11 @@ export default {
             }
 
 
+            .remove-button {
+              background: #dc2626;
+            }
+
+
             .search {
               width: 100%;
               padding: 12px;
@@ -605,6 +633,28 @@ export default {
               td {
                 padding: 7px;
                 font-size: 13px;
+              }
+
+
+              .account-actions {
+                width: 100%;
+              }
+
+
+              .account-actions button,
+              .account-actions form {
+                width: 100%;
+              }
+
+
+              .account-actions form button {
+                width: 100%;
+              }
+
+
+              .button {
+                width: 100%;
+                text-align: center;
               }
 
             }
@@ -1262,10 +1312,6 @@ export default {
       url.pathname === "/auth/meta"
     ) {
 
-      // -------------------------------------------------------
-      // CHECK REQUIRED VARIABLES
-      // -------------------------------------------------------
-
       if (!env.META_APP_ID) {
 
         return new Response(
@@ -1302,17 +1348,9 @@ export default {
       }
 
 
-      // -------------------------------------------------------
-      // REDIRECT URI
-      // -------------------------------------------------------
-
       const redirectUri =
         `${url.origin}/auth/meta/callback`;
 
-
-      // -------------------------------------------------------
-      // FACEBOOK OAUTH URL
-      // -------------------------------------------------------
 
       const facebookUrl =
         `https://www.facebook.com/${env.META_GRAPH_VERSION}/dialog/oauth` +
@@ -1363,10 +1401,6 @@ export default {
         );
 
 
-      // -------------------------------------------------------
-      // FACEBOOK ERROR
-      // -------------------------------------------------------
-
       if (error) {
 
         return new Response(
@@ -1412,10 +1446,6 @@ export default {
       }
 
 
-      // -------------------------------------------------------
-      // CODE CHECK
-      // -------------------------------------------------------
-
       if (!code) {
 
         return new Response(
@@ -1427,10 +1457,6 @@ export default {
 
       }
 
-
-      // -------------------------------------------------------
-      // REDIRECT URI
-      // -------------------------------------------------------
 
       const redirectUri =
         `${url.origin}/auth/meta/callback`;
@@ -1850,6 +1876,185 @@ export default {
           }
         }
       );
+
+    }
+
+
+    // =========================================================
+    // REMOVE FACEBOOK ACCOUNT
+    // =========================================================
+
+    if (
+      url.pathname === "/remove-account" &&
+      request.method === "POST"
+    ) {
+
+      try {
+
+        const formData =
+          await request.formData();
+
+
+        const accountId =
+          String(
+            formData.get(
+              "account_id"
+            ) || ""
+          ).trim();
+
+
+        if (!accountId) {
+
+          return htmlResult(
+            "Invalid Account",
+            "Facebook account ID is missing.",
+            true
+          );
+
+        }
+
+
+        // -----------------------------------------------------
+        // FIND ACCOUNT
+        // -----------------------------------------------------
+
+        const account =
+          await env.DB.prepare(`
+            SELECT
+              id,
+              facebook_user_id
+            FROM facebook_accounts
+            WHERE id = ?
+          `)
+          .bind(
+            accountId
+          )
+          .first();
+
+
+        if (!account) {
+
+          return htmlResult(
+            "Account Not Found",
+            "The Facebook account was not found.",
+            true
+          );
+
+        }
+
+
+        // -----------------------------------------------------
+        // DELETE ACCOUNT PAGES
+        // -----------------------------------------------------
+
+        await env.DB.prepare(`
+          DELETE FROM facebook_pages
+          WHERE account_id = ?
+        `)
+        .bind(
+          accountId
+        )
+        .run();
+
+
+        // -----------------------------------------------------
+        // DELETE FACEBOOK ACCOUNT
+        // -----------------------------------------------------
+
+        await env.DB.prepare(`
+          DELETE FROM facebook_accounts
+          WHERE id = ?
+        `)
+        .bind(
+          accountId
+        )
+        .run();
+
+
+        // -----------------------------------------------------
+        // SUCCESS
+        // -----------------------------------------------------
+
+        return new Response(
+          `
+          <!DOCTYPE html>
+
+          <html>
+
+          <head>
+
+            <title>
+              Account Removed
+            </title>
+
+            <meta
+              name="viewport"
+              content="width=device-width, initial-scale=1"
+            >
+
+          </head>
+
+
+          <body
+            style="font-family:Arial;padding:30px"
+          >
+
+            <h2>
+              Facebook Account Removed ✅
+            </h2>
+
+
+            <p>
+
+              Facebook Account:
+
+              <strong>
+                ${escapeHtml(
+                  account.facebook_user_id
+                )}
+              </strong>
+
+              aur is ke tamam Pages
+              publisher database se remove ho gaye hain.
+
+            </p>
+
+
+            <p>
+
+              <a href="/">
+                ← Back to Dashboard
+              </a>
+
+            </p>
+
+          </body>
+
+          </html>
+          `,
+          {
+            headers: {
+              "content-type":
+                "text/html;charset=UTF-8"
+            }
+          }
+        );
+
+      }
+
+
+      catch (
+        error
+      ) {
+
+        return htmlResult(
+          "Remove Account Error",
+          error.message ||
+            "Unable to remove Facebook account.",
+          true
+        );
+
+      }
 
     }
 
@@ -2410,6 +2615,31 @@ function publishResultsPage(
           padding: 12px 18px;
           border-radius: 8px;
           text-decoration: none;
+        }
+
+
+        @media (max-width: 700px) {
+
+          body {
+            padding: 10px;
+          }
+
+
+          .box {
+            padding: 15px;
+          }
+
+
+          table {
+            font-size: 13px;
+          }
+
+
+          th,
+          td {
+            padding: 7px;
+          }
+
         }
 
       </style>
