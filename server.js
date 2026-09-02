@@ -29,8 +29,11 @@ export default {
                   value="${escapeHtml(page.page_id)}"
                 >
               </td>
+
               <td>${escapeHtml(page.page_name)}</td>
+
               <td>${escapeHtml(page.page_id)}</td>
+
               <td>${escapeHtml(page.facebook_user_id)}</td>
             </tr>
           `
@@ -40,9 +43,14 @@ export default {
       return new Response(`
         <!DOCTYPE html>
         <html>
+
         <head>
           <title>Meta Multi Page Publisher</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
+
+          <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1"
+          >
 
           <style>
             body {
@@ -97,6 +105,8 @@ export default {
             input[type="file"] {
               margin-top: 10px;
               margin-bottom: 15px;
+              width: 100%;
+              box-sizing: border-box;
             }
 
             table {
@@ -122,25 +132,47 @@ export default {
               border-radius: 10px;
             }
 
-            .results {
-              margin-top: 25px;
-              padding: 15px;
-              background: #f0fdf4;
-              border-radius: 10px;
-            }
-
-            .error {
-              background: #fef2f2;
-            }
-
             .select-row {
               margin-top: 10px;
               margin-bottom: 10px;
+            }
+
+            .media-box {
+              margin-top: 15px;
+              padding: 15px;
+              background: #ffffff;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+            }
+
+            .media-label {
+              display: block;
+              font-weight: bold;
+              margin-top: 12px;
+            }
+
+            @media (max-width: 700px) {
+              body {
+                padding: 10px;
+              }
+
+              .box {
+                padding: 15px;
+              }
+
+              table {
+                font-size: 13px;
+              }
+
+              th, td {
+                padding: 7px;
+              }
             }
           </style>
         </head>
 
         <body>
+
           <div class="box">
 
             <h2>Meta Multi Page Publisher</h2>
@@ -178,23 +210,39 @@ export default {
                         placeholder="Write your Facebook post here..."
                       ></textarea>
 
-                      <br><br>
+                      <div class="media-box">
 
-                      <label>
-                        <strong>Image (optional)</strong>
-                      </label>
+                        <label class="media-label">
+                          🖼️ Image (optional)
+                        </label>
 
-                      <br>
+                        <input
+                          type="file"
+                          name="image"
+                          accept="image/*"
+                        >
 
-                      <input
-                        type="file"
-                        name="image"
-                        accept="image/*"
-                      >
+                        <label class="media-label">
+                          🎥 Video (optional)
+                        </label>
+
+                        <input
+                          type="file"
+                          name="video"
+                          accept="video/*"
+                        >
+
+                        <p style="font-size:13px;color:#666">
+                          Select either an image or a video for a
+                          media post.
+                        </p>
+
+                      </div>
 
                       <h3>Select Pages</h3>
 
                       <div class="select-row">
+
                         <button
                           type="button"
                           onclick="selectAllPages()"
@@ -208,9 +256,11 @@ export default {
                         >
                           Unselect All
                         </button>
+
                       </div>
 
                       <table>
+
                         <thead>
                           <tr>
                             <th>Select</th>
@@ -223,6 +273,7 @@ export default {
                         <tbody>
                           ${pageRows}
                         </tbody>
+
                       </table>
 
                       <button
@@ -240,13 +291,17 @@ export default {
                     function selectAllPages() {
                       document
                         .querySelectorAll('input[name="page_ids"]')
-                        .forEach(cb => cb.checked = true);
+                        .forEach(cb => {
+                          cb.checked = true;
+                        });
                     }
 
                     function unselectAllPages() {
                       document
                         .querySelectorAll('input[name="page_ids"]')
-                        .forEach(cb => cb.checked = false);
+                        .forEach(cb => {
+                          cb.checked = false;
+                        });
                     }
                   </script>
                 `
@@ -254,6 +309,7 @@ export default {
             }
 
           </div>
+
         </body>
         </html>
       `, {
@@ -263,10 +319,12 @@ export default {
       });
     }
 
+
     // =========================
     // START FACEBOOK LOGIN
     // =========================
     if (url.pathname === "/auth/meta") {
+
       const redirectUri =
         `${url.origin}/auth/meta/callback`;
 
@@ -279,15 +337,24 @@ export default {
           "pages_show_list,pages_read_engagement,pages_manage_posts"
         )}`;
 
-      return Response.redirect(facebookUrl, 302);
+      return Response.redirect(
+        facebookUrl,
+        302
+      );
     }
+
 
     // =========================
     // FACEBOOK CALLBACK
     // =========================
     if (url.pathname === "/auth/meta/callback") {
-      const code = url.searchParams.get("code");
-      const error = url.searchParams.get("error");
+
+      const code =
+        url.searchParams.get("code");
+
+      const error =
+        url.searchParams.get("error");
+
       const errorDescription =
         url.searchParams.get("error_description");
 
@@ -296,19 +363,24 @@ export default {
           `Facebook login failed: ${escapeHtml(
             errorDescription || error
           )}`,
-          { status: 400 }
+          {
+            status: 400
+          }
         );
       }
 
       if (!code) {
         return new Response(
           "Missing Facebook authorization code.",
-          { status: 400 }
+          {
+            status: 400
+          }
         );
       }
 
       const redirectUri =
         `${url.origin}/auth/meta/callback`;
+
 
       // =========================
       // EXCHANGE CODE FOR TOKEN
@@ -320,24 +392,37 @@ export default {
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&code=${encodeURIComponent(code)}`;
 
-      const tokenResponse = await fetch(tokenUrl);
-      const tokenData = await tokenResponse.json();
+      const tokenResponse =
+        await fetch(tokenUrl);
 
-      if (!tokenResponse.ok || tokenData.error) {
+      const tokenData =
+        await tokenResponse.json();
+
+      if (
+        !tokenResponse.ok ||
+        tokenData.error
+      ) {
         return new Response(
           `<pre>${escapeHtml(
-            JSON.stringify(tokenData, null, 2)
+            JSON.stringify(
+              tokenData,
+              null,
+              2
+            )
           )}</pre>`,
           {
             status: 400,
             headers: {
-              "content-type": "text/html;charset=UTF-8"
+              "content-type":
+                "text/html;charset=UTF-8"
             }
           }
         );
       }
 
-      const userAccessToken = tokenData.access_token;
+      const userAccessToken =
+        tokenData.access_token;
+
 
       // =========================
       // GET FACEBOOK USER ID
@@ -349,24 +434,38 @@ export default {
           userAccessToken
         )}`;
 
-      const meResponse = await fetch(meUrl);
-      const meData = await meResponse.json();
+      const meResponse =
+        await fetch(meUrl);
 
-      if (!meResponse.ok || meData.error || !meData.id) {
+      const meData =
+        await meResponse.json();
+
+      if (
+        !meResponse.ok ||
+        meData.error ||
+        !meData.id
+      ) {
         return new Response(
           `<pre>${escapeHtml(
-            JSON.stringify(meData, null, 2)
+            JSON.stringify(
+              meData,
+              null,
+              2
+            )
           )}</pre>`,
           {
             status: 400,
             headers: {
-              "content-type": "text/html;charset=UTF-8"
+              "content-type":
+                "text/html;charset=UTF-8"
             }
           }
         );
       }
 
-      const facebookUserId = meData.id;
+      const facebookUserId =
+        meData.id;
+
 
       // =========================
       // SAVE / UPDATE ACCOUNT
@@ -375,6 +474,7 @@ export default {
         INSERT INTO facebook_accounts
           (facebook_user_id, access_token)
         VALUES (?, ?)
+
         ON CONFLICT(facebook_user_id)
         DO UPDATE SET
           access_token = excluded.access_token
@@ -385,15 +485,19 @@ export default {
         )
         .run();
 
-      const accountResult = await env.DB.prepare(`
-        SELECT id
-        FROM facebook_accounts
-        WHERE facebook_user_id = ?
-      `)
+
+      const accountResult =
+        await env.DB.prepare(`
+          SELECT id
+          FROM facebook_accounts
+          WHERE facebook_user_id = ?
+        `)
         .bind(facebookUserId)
         .first();
 
-      const accountId = accountResult.id;
+      const accountId =
+        accountResult.id;
+
 
       // =========================
       // GET FACEBOOK PAGES
@@ -405,42 +509,67 @@ export default {
           userAccessToken
         )}`;
 
-      const pagesResponse = await fetch(pagesUrl);
-      const pagesData = await pagesResponse.json();
+      const pagesResponse =
+        await fetch(pagesUrl);
 
-      if (!pagesResponse.ok || pagesData.error) {
+      const pagesData =
+        await pagesResponse.json();
+
+      if (
+        !pagesResponse.ok ||
+        pagesData.error
+      ) {
         return new Response(
           `<pre>${escapeHtml(
-            JSON.stringify(pagesData, null, 2)
+            JSON.stringify(
+              pagesData,
+              null,
+              2
+            )
           )}</pre>`,
           {
             status: 400,
             headers: {
-              "content-type": "text/html;charset=UTF-8"
+              "content-type":
+                "text/html;charset=UTF-8"
             }
           }
         );
       }
 
+
       // =========================
       // SAVE PAGES
       // =========================
-      for (const page of pagesData.data || []) {
-        if (!page.id || !page.name || !page.access_token) {
+      for (
+        const page of pagesData.data || []
+      ) {
+
+        if (
+          !page.id ||
+          !page.name ||
+          !page.access_token
+        ) {
           continue;
         }
 
-        // Check if page already exists for this account
-        const existingPage = await env.DB.prepare(`
-          SELECT id
-          FROM facebook_pages
-          WHERE account_id = ?
-            AND page_id = ?
-        `)
-          .bind(accountId, page.id)
+
+        const existingPage =
+          await env.DB.prepare(`
+            SELECT id
+            FROM facebook_pages
+            WHERE account_id = ?
+              AND page_id = ?
+          `)
+          .bind(
+            accountId,
+            page.id
+          )
           .first();
 
+
         if (existingPage) {
+
           await env.DB.prepare(`
             UPDATE facebook_pages
             SET
@@ -448,13 +577,15 @@ export default {
               page_access_token = ?
             WHERE id = ?
           `)
-            .bind(
-              page.name,
-              page.access_token,
-              existingPage.id
-            )
-            .run();
+          .bind(
+            page.name,
+            page.access_token,
+            existingPage.id
+          )
+          .run();
+
         } else {
+
           await env.DB.prepare(`
             INSERT INTO facebook_pages
               (
@@ -465,15 +596,17 @@ export default {
               )
             VALUES (?, ?, ?, ?)
           `)
-            .bind(
-              accountId,
-              page.id,
-              page.name,
-              page.access_token
-            )
-            .run();
+          .bind(
+            accountId,
+            page.id,
+            page.name,
+            page.access_token
+          )
+          .run();
+
         }
       }
+
 
       // =========================
       // SUCCESS PAGE
@@ -481,23 +614,36 @@ export default {
       return new Response(`
         <!DOCTYPE html>
         <html>
+
         <head>
           <title>Facebook Connected</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
+
+          <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1"
+          >
         </head>
 
-        <body style="font-family:Arial;padding:30px">
+        <body
+          style="font-family:Arial;padding:30px"
+        >
 
-          <h2>Facebook Connected ✅</h2>
+          <h2>
+            Facebook Connected ✅
+          </h2>
 
           <p>
             Facebook Account Connected:
-            <strong>${escapeHtml(facebookUserId)}</strong>
+            <strong>
+              ${escapeHtml(facebookUserId)}
+            </strong>
           </p>
 
           <p>
             Pages found:
-            <strong>${pagesData.data?.length || 0}</strong>
+            <strong>
+              ${pagesData.data?.length || 0}
+            </strong>
           </p>
 
           <p>
@@ -505,83 +651,212 @@ export default {
           </p>
 
           <p>
-            <a href="/">← Back to Dashboard</a>
+            <a href="/">
+              ← Back to Dashboard
+            </a>
           </p>
 
         </body>
         </html>
       `, {
         headers: {
-          "content-type": "text/html;charset=UTF-8"
+          "content-type":
+            "text/html;charset=UTF-8"
         }
       });
     }
 
+
     // =========================
-    // PUBLISH POST
+    // PUBLISH
     // =========================
-    if (url.pathname === "/publish" && request.method === "POST") {
+    if (
+      url.pathname === "/publish" &&
+      request.method === "POST"
+    ) {
+
       try {
-        const formData = await request.formData();
+
+        const formData =
+          await request.formData();
+
 
         const message =
-          String(formData.get("message") || "").trim();
+          String(
+            formData.get("message") || ""
+          ).trim();
 
-        const selectedPageIds = formData
-          .getAll("page_ids")
-          .map(id => String(id))
-          .filter(Boolean);
 
-        const image = formData.get("image");
+        const selectedPageIds =
+          formData
+            .getAll("page_ids")
+            .map(id => String(id))
+            .filter(Boolean);
 
+
+        const image =
+          formData.get("image");
+
+
+        const video =
+          formData.get("video");
+
+
+        // =========================
+        // VALIDATION
+        // =========================
         if (!selectedPageIds.length) {
+
           return htmlResult(
             "No Pages Selected",
             "Please select at least one Facebook Page.",
             true
           );
+
         }
 
-        if (!message && !(image instanceof File)) {
+
+        const hasImage =
+          image instanceof File &&
+          image.size > 0;
+
+
+        const hasVideo =
+          video instanceof File &&
+          video.size > 0;
+
+
+        if (
+          !message &&
+          !hasImage &&
+          !hasVideo
+        ) {
+
           return htmlResult(
             "Post Empty",
-            "Please enter post text or select an image.",
+            "Please enter post text or select an image or video.",
             true
           );
+
         }
 
-        // Get selected pages from database
-        const placeholders =
-          selectedPageIds.map(() => "?").join(",");
 
-        const pagesResult = await env.DB.prepare(`
-          SELECT
-            page_id,
-            page_name,
-            page_access_token
-          FROM facebook_pages
-          WHERE page_id IN (${placeholders})
-        `)
+        // =========================
+        // DON'T ALLOW IMAGE + VIDEO
+        // TOGETHER
+        // =========================
+        if (
+          hasImage &&
+          hasVideo
+        ) {
+
+          return htmlResult(
+            "Choose One Media",
+            "Please select either an image or a video, not both.",
+            true
+          );
+
+        }
+
+
+        // =========================
+        // GET SELECTED PAGES
+        // =========================
+        const placeholders =
+          selectedPageIds
+            .map(() => "?")
+            .join(",");
+
+
+        const pagesResult =
+          await env.DB.prepare(`
+            SELECT
+              page_id,
+              page_name,
+              page_access_token
+            FROM facebook_pages
+            WHERE page_id IN (${placeholders})
+          `)
           .bind(...selectedPageIds)
           .all();
 
-        const pages = pagesResult.results || [];
+
+        const pages =
+          pagesResult.results || [];
+
 
         const results = [];
+
 
         // =========================
         // PUBLISH TO EACH PAGE
         // =========================
-        for (const page of pages) {
+        for (
+          const page of pages
+        ) {
+
           try {
+
             let graphResponse;
             let graphData;
+
+
+            // =========================
+            // VIDEO POST
+            // =========================
+            if (hasVideo) {
+
+              const uploadData =
+                new FormData();
+
+
+              uploadData.append(
+                "source",
+                video,
+                video.name || "video.mp4"
+              );
+
+
+              if (message) {
+
+                uploadData.append(
+                  "description",
+                  message
+                );
+
+              }
+
+
+              uploadData.append(
+                "access_token",
+                page.page_access_token
+              );
+
+
+              graphResponse =
+                await fetch(
+                  `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${page.page_id}/videos`,
+                  {
+                    method: "POST",
+                    body: uploadData
+                  }
+                );
+
+
+              graphData =
+                await graphResponse.json();
+
+            }
+
 
             // =========================
             // IMAGE POST
             // =========================
-            if (image instanceof File && image.size > 0) {
-              const uploadData = new FormData();
+            else if (hasImage) {
+
+              const uploadData =
+                new FormData();
+
 
               uploadData.append(
                 "source",
@@ -589,94 +864,164 @@ export default {
                 image.name || "image.jpg"
               );
 
+
               if (message) {
-                uploadData.append("message", message);
+
+                uploadData.append(
+                  "message",
+                  message
+                );
+
               }
 
-              uploadData.append("published", "true");
+
+              uploadData.append(
+                "published",
+                "true"
+              );
+
 
               uploadData.append(
                 "access_token",
                 page.page_access_token
               );
 
-              graphResponse = await fetch(
-                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${page.page_id}/photos`,
-                {
-                  method: "POST",
-                  body: uploadData
-                }
-              );
 
-              graphData = await graphResponse.json();
+              graphResponse =
+                await fetch(
+                  `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${page.page_id}/photos`,
+                  {
+                    method: "POST",
+                    body: uploadData
+                  }
+                );
+
+
+              graphData =
+                await graphResponse.json();
+
             }
+
 
             // =========================
             // TEXT ONLY POST
             // =========================
             else {
-              const postData = new URLSearchParams();
 
-              postData.set("message", message);
+              const postData =
+                new URLSearchParams();
+
+
+              postData.set(
+                "message",
+                message
+              );
+
 
               postData.set(
                 "access_token",
                 page.page_access_token
               );
 
-              graphResponse = await fetch(
-                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${page.page_id}/feed`,
-                {
-                  method: "POST",
-                  headers: {
-                    "content-type":
-                      "application/x-www-form-urlencoded"
-                  },
-                  body: postData
-                }
-              );
 
-              graphData = await graphResponse.json();
+              graphResponse =
+                await fetch(
+                  `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${page.page_id}/feed`,
+                  {
+                    method: "POST",
+
+                    headers: {
+                      "content-type":
+                        "application/x-www-form-urlencoded"
+                    },
+
+                    body: postData
+                  }
+                );
+
+
+              graphData =
+                await graphResponse.json();
+
             }
 
-            if (!graphResponse.ok || graphData.error) {
+
+            // =========================
+            // RESULT
+            // =========================
+            if (
+              !graphResponse.ok ||
+              graphData.error
+            ) {
+
               results.push({
-                page_name: page.page_name,
+                page_name:
+                  page.page_name,
+
                 success: false,
+
                 message:
                   graphData?.error?.message ||
                   "Facebook publishing failed."
               });
+
             } else {
+
               results.push({
-                page_name: page.page_name,
+                page_name:
+                  page.page_name,
+
                 success: true,
+
                 message:
                   "Published successfully."
               });
+
             }
 
           } catch (error) {
+
             results.push({
-              page_name: page.page_name,
+              page_name:
+                page.page_name,
+
               success: false,
-              message: error.message || "Unknown error."
+
+              message:
+                error.message ||
+                "Unknown error."
             });
+
           }
+
         }
 
-        return publishResultsPage(results);
+
+        return publishResultsPage(
+          results
+        );
+
 
       } catch (error) {
+
         return htmlResult(
           "Publishing Error",
-          error.message || "Unknown publishing error.",
+          error.message ||
+            "Unknown publishing error.",
           true
         );
+
       }
+
     }
 
-    return new Response("Not found", { status: 404 });
+
+    return new Response(
+      "Not found",
+      {
+        status: 404
+      }
+    );
   }
 };
 
@@ -684,33 +1029,68 @@ export default {
 // =========================
 // PUBLISH RESULTS PAGE
 // =========================
-function publishResultsPage(results) {
+function publishResultsPage(
+  results
+) {
+
   const successCount =
-    results.filter(result => result.success).length;
+    results.filter(
+      result => result.success
+    ).length;
+
 
   const failedCount =
-    results.filter(result => !result.success).length;
+    results.filter(
+      result => !result.success
+    ).length;
 
-  const rows = results
-    .map(
-      result => `
-        <tr>
-          <td>${result.success ? "✅" : "❌"}</td>
-          <td>${escapeHtml(result.page_name)}</td>
-          <td>${escapeHtml(result.message)}</td>
-        </tr>
-      `
-    )
-    .join("");
+
+  const rows =
+    results
+      .map(
+        result => `
+          <tr>
+
+            <td>
+              ${result.success ? "✅" : "❌"}
+            </td>
+
+            <td>
+              ${escapeHtml(
+                result.page_name
+              )}
+            </td>
+
+            <td>
+              ${escapeHtml(
+                result.message
+              )}
+            </td>
+
+          </tr>
+        `
+      )
+      .join("");
+
 
   return new Response(`
     <!DOCTYPE html>
+
     <html>
+
     <head>
-      <title>Publish Results</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1">
+
+      <title>
+        Publish Results
+      </title>
+
+      <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+      >
 
       <style>
+
         body {
           font-family: Arial;
           padding: 30px;
@@ -731,7 +1111,8 @@ function publishResultsPage(results) {
           margin-top: 20px;
         }
 
-        th, td {
+        th,
+        td {
           padding: 10px;
           border-bottom: 1px solid #ddd;
           text-align: left;
@@ -750,46 +1131,64 @@ function publishResultsPage(results) {
           border-radius: 8px;
           text-decoration: none;
         }
+
       </style>
+
     </head>
 
     <body>
+
       <div class="box">
 
-        <h2>Publish Results</h2>
+        <h2>
+          Publish Results
+        </h2>
 
         <p>
           ✅ Successful:
-          <strong>${successCount}</strong>
+          <strong>
+            ${successCount}
+          </strong>
         </p>
 
         <p>
           ❌ Failed:
-          <strong>${failedCount}</strong>
+          <strong>
+            ${failedCount}
+          </strong>
         </p>
 
         <table>
+
           <thead>
+
             <tr>
               <th>Status</th>
               <th>Page</th>
               <th>Result</th>
             </tr>
+
           </thead>
 
           <tbody>
             ${rows}
           </tbody>
+
         </table>
 
-        <a href="/">← Back to Dashboard</a>
+        <a href="/">
+          ← Back to Dashboard
+        </a>
 
       </div>
+
     </body>
+
     </html>
   `, {
     headers: {
-      "content-type": "text/html;charset=UTF-8"
+      "content-type":
+        "text/html;charset=UTF-8"
     }
   });
 }
@@ -798,31 +1197,58 @@ function publishResultsPage(results) {
 // =========================
 // GENERIC RESULT PAGE
 // =========================
-function htmlResult(title, message, isError = false) {
+function htmlResult(
+  title,
+  message,
+  isError = false
+) {
+
   return new Response(`
     <!DOCTYPE html>
+
     <html>
+
     <head>
-      <title>${escapeHtml(title)}</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1">
+
+      <title>
+        ${escapeHtml(title)}
+      </title>
+
+      <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+      >
+
     </head>
 
-    <body style="font-family:Arial;padding:30px">
+    <body
+      style="font-family:Arial;padding:30px"
+    >
 
-      <h2>${isError ? "❌" : "✅"} ${escapeHtml(title)}</h2>
-
-      <p>${escapeHtml(message)}</p>
+      <h2>
+        ${isError ? "❌" : "✅"}
+        ${escapeHtml(title)}
+      </h2>
 
       <p>
-        <a href="/">← Back to Dashboard</a>
+        ${escapeHtml(message)}
+      </p>
+
+      <p>
+        <a href="/">
+          ← Back to Dashboard
+        </a>
       </p>
 
     </body>
+
     </html>
   `, {
     status: isError ? 400 : 200,
+
     headers: {
-      "content-type": "text/html;charset=UTF-8"
+      "content-type":
+        "text/html;charset=UTF-8"
     }
   });
 }
@@ -831,11 +1257,29 @@ function htmlResult(title, message, isError = false) {
 // =========================
 // HTML ESCAPE
 // =========================
-function escapeHtml(value) {
+function escapeHtml(
+  value
+) {
+
   return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+    .replaceAll(
+      "&",
+      "&amp;"
+    )
+    .replaceAll(
+      "<",
+      "&lt;"
+    )
+    .replaceAll(
+      ">",
+      "&gt;"
+    )
+    .replaceAll(
+      '"',
+      "&quot;"
+    )
+    .replaceAll(
+      "'",
+      "&#039;"
+    );
 }
