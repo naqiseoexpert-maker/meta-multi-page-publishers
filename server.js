@@ -11,41 +11,157 @@ export default {
           facebook_pages.id,
           facebook_pages.page_id,
           facebook_pages.page_name,
+          facebook_pages.account_id,
           facebook_accounts.facebook_user_id
         FROM facebook_pages
         JOIN facebook_accounts
           ON facebook_pages.account_id = facebook_accounts.id
-        ORDER BY facebook_pages.id DESC
+        ORDER BY facebook_accounts.id DESC, facebook_pages.page_name ASC
       `).all();
 
-      const pageRows = (pages.results || [])
-        .map(
-          (page) => `
-            <tr>
-              <td>
-                <input
-                  type="checkbox"
-                  name="page_ids"
-                  value="${escapeHtml(page.page_id)}"
+      const allPages = pages.results || [];
+
+      // =========================
+      // GROUP PAGES BY ACCOUNT
+      // =========================
+      const accountGroups = {};
+
+      for (const page of allPages) {
+        const accountId = String(page.account_id);
+
+        if (!accountGroups[accountId]) {
+          accountGroups[accountId] = {
+            facebook_user_id: page.facebook_user_id,
+            pages: []
+          };
+        }
+
+        accountGroups[accountId].pages.push(page);
+      }
+
+      let accountHtml = "";
+
+      for (const [accountId, account] of Object.entries(accountGroups)) {
+        const groupPages = account.pages;
+
+        const pageRows = groupPages
+          .map(
+            (page) => `
+              <tr
+                class="page-row"
+                data-page-name="${escapeHtml(
+                  page.page_name.toLowerCase()
+                )}"
+                data-page-id="${escapeHtml(
+                  page.page_id
+                )}"
+              >
+
+                <td>
+                  <input
+                    type="checkbox"
+                    class="page-checkbox account-${accountId}"
+                    name="page_ids"
+                    value="${escapeHtml(page.page_id)}"
+                  >
+                </td>
+
+                <td>
+                  <strong>
+                    ${escapeHtml(page.page_name)}
+                  </strong>
+                </td>
+
+                <td>
+                  ${escapeHtml(page.page_id)}
+                </td>
+
+              </tr>
+            `
+          )
+          .join("");
+
+        accountHtml += `
+          <div class="account-box">
+
+            <div class="account-header">
+
+              <div>
+                <strong>
+                  👤 Facebook Account
+                </strong>
+
+                <div class="account-id">
+                  ${escapeHtml(account.facebook_user_id)}
+                </div>
+
+                <div class="page-count">
+                  ${groupPages.length} Page${
+                    groupPages.length === 1 ? "" : "s"
+                  }
+                </div>
+              </div>
+
+              <div class="account-actions">
+
+                <button
+                  type="button"
+                  class="small-button"
+                  onclick="selectAccount('${accountId}')"
                 >
-              </td>
+                  Select Account
+                </button>
 
-              <td>${escapeHtml(page.page_name)}</td>
+                <button
+                  type="button"
+                  class="small-button gray"
+                  onclick="unselectAccount('${accountId}')"
+                >
+                  Unselect
+                </button>
 
-              <td>${escapeHtml(page.page_id)}</td>
+              </div>
 
-              <td>${escapeHtml(page.facebook_user_id)}</td>
-            </tr>
-          `
-        )
-        .join("");
+            </div>
+
+            <table>
+
+              <thead>
+                <tr>
+                  <th style="width:70px">
+                    Select
+                  </th>
+
+                  <th>
+                    Page Name
+                  </th>
+
+                  <th>
+                    Page ID
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                ${pageRows}
+              </tbody>
+
+            </table>
+
+          </div>
+        `;
+      }
 
       return new Response(`
         <!DOCTYPE html>
+
         <html>
 
         <head>
-          <title>Meta Multi Page Publisher</title>
+
+          <title>
+            Meta Multi Page Publisher
+          </title>
 
           <meta
             name="viewport"
@@ -53,24 +169,38 @@ export default {
           >
 
           <style>
+
+            * {
+              box-sizing: border-box;
+            }
+
             body {
               font-family: Arial, sans-serif;
-              padding: 30px;
+              padding: 20px;
               background: #f5f7fb;
               margin: 0;
+              color: #111827;
             }
 
             .box {
               background: white;
               padding: 25px;
-              border-radius: 12px;
-              max-width: 1100px;
+              border-radius: 14px;
+              max-width: 1200px;
               margin: auto;
-              box-shadow: 0 2px 10px rgba(0,0,0,.05);
+              box-shadow: 0 2px 12px rgba(0,0,0,.06);
             }
 
             h2 {
               margin-top: 0;
+            }
+
+            .top-bar {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 15px;
+              flex-wrap: wrap;
             }
 
             .button {
@@ -87,14 +217,31 @@ export default {
 
             .publish-button {
               background: #16a34a;
-              margin-top: 15px;
+              margin-top: 20px;
+              width: 100%;
+              font-size: 17px;
+              padding: 14px;
+            }
+
+            .stats {
+              background: #eff6ff;
+              padding: 15px;
+              border-radius: 10px;
+              margin-top: 20px;
+            }
+
+            .post-box {
+              margin-top: 25px;
+              padding: 20px;
+              background: #f8fafc;
+              border-radius: 12px;
+              border: 1px solid #e5e7eb;
             }
 
             textarea {
               width: 100%;
               min-height: 130px;
               padding: 12px;
-              box-sizing: border-box;
               border: 1px solid #ccc;
               border-radius: 8px;
               font-family: Arial;
@@ -103,55 +250,132 @@ export default {
             }
 
             input[type="file"] {
-              margin-top: 10px;
-              margin-bottom: 15px;
               width: 100%;
-              box-sizing: border-box;
-            }
-
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 20px;
-            }
-
-            th, td {
-              padding: 10px;
-              border-bottom: 1px solid #ddd;
-              text-align: left;
-            }
-
-            th {
-              background: #f0f2f5;
-            }
-
-            .post-box {
-              margin-top: 25px;
-              padding: 20px;
-              background: #f8fafc;
-              border-radius: 10px;
-            }
-
-            .select-row {
-              margin-top: 10px;
-              margin-bottom: 10px;
+              margin-top: 8px;
+              margin-bottom: 12px;
             }
 
             .media-box {
-              margin-top: 15px;
+              margin-top: 18px;
               padding: 15px;
-              background: #ffffff;
+              background: white;
               border: 1px solid #ddd;
-              border-radius: 8px;
+              border-radius: 10px;
             }
 
             .media-label {
               display: block;
               font-weight: bold;
+              margin-top: 10px;
+            }
+
+            .toolbar {
+              margin-top: 25px;
+              padding: 15px;
+              background: #f8fafc;
+              border-radius: 10px;
+              border: 1px solid #e5e7eb;
+            }
+
+            .toolbar-row {
+              display: flex;
+              gap: 10px;
+              flex-wrap: wrap;
               margin-top: 12px;
             }
 
+            .small-button {
+              border: none;
+              background: #1877f2;
+              color: white;
+              padding: 8px 12px;
+              border-radius: 7px;
+              cursor: pointer;
+            }
+
+            .small-button.gray {
+              background: #6b7280;
+            }
+
+            .search {
+              width: 100%;
+              padding: 12px;
+              border: 1px solid #ccc;
+              border-radius: 8px;
+              font-size: 15px;
+              margin-top: 10px;
+            }
+
+            .account-box {
+              margin-top: 20px;
+              border: 1px solid #ddd;
+              border-radius: 12px;
+              overflow: hidden;
+              background: white;
+            }
+
+            .account-header {
+              padding: 15px;
+              background: #f0f2f5;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 15px;
+              flex-wrap: wrap;
+            }
+
+            .account-id {
+              margin-top: 5px;
+              font-size: 13px;
+              color: #4b5563;
+            }
+
+            .page-count {
+              margin-top: 4px;
+              font-size: 13px;
+              color: #6b7280;
+            }
+
+            .account-actions {
+              display: flex;
+              gap: 8px;
+              flex-wrap: wrap;
+            }
+
+            table {
+              width: 100%;
+              border-collapse: collapse;
+            }
+
+            th,
+            td {
+              padding: 10px;
+              border-bottom: 1px solid #e5e7eb;
+              text-align: left;
+            }
+
+            th {
+              background: #fafafa;
+            }
+
+            tr.page-row.hidden {
+              display: none;
+            }
+
+            .selection-info {
+              margin-top: 12px;
+              font-weight: bold;
+              color: #166534;
+            }
+
+            .hint {
+              color: #6b7280;
+              font-size: 13px;
+              margin-top: 8px;
+            }
+
             @media (max-width: 700px) {
+
               body {
                 padding: 10px;
               }
@@ -160,47 +384,85 @@ export default {
                 padding: 15px;
               }
 
-              table {
+              th,
+              td {
+                padding: 7px;
                 font-size: 13px;
               }
 
-              th, td {
-                padding: 7px;
-              }
             }
+
           </style>
+
         </head>
 
         <body>
 
           <div class="box">
 
-            <h2>Meta Multi Page Publisher</h2>
+            <div class="top-bar">
 
-            <p>
-              Connected Pages:
-              <strong>${pages.results?.length || 0}</strong>
-            </p>
+              <div>
+                <h2>
+                  Meta Multi Page Publisher
+                </h2>
 
-            <a class="button" href="/auth/meta">
-              + Connect Facebook Account
-            </a>
+                <div>
+                  Manage all your Facebook Pages
+                </div>
+              </div>
+
+              <a
+                class="button"
+                href="/auth/meta"
+              >
+                + Connect Facebook Account
+              </a>
+
+            </div>
+
+
+            <div class="stats">
+
+              👤 Connected Facebook Accounts:
+              <strong>
+                ${Object.keys(accountGroups).length}
+              </strong>
+
+              &nbsp;&nbsp; | &nbsp;&nbsp;
+
+              📄 Connected Pages:
+              <strong>
+                ${allPages.length}
+              </strong>
+
+            </div>
+
 
             ${
-              pages.results?.length
+              allPages.length
                 ? `
+
                   <form
                     method="POST"
                     action="/publish"
                     enctype="multipart/form-data"
                   >
 
+                    <!-- =====================
+                         CREATE POST
+                         ===================== -->
+
                     <div class="post-box">
 
-                      <h3>Create Post</h3>
+                      <h3>
+                        📝 Create Post
+                      </h3>
 
                       <label>
-                        <strong>Post Text</strong>
+                        <strong>
+                          Post Text
+                        </strong>
                       </label>
 
                       <br><br>
@@ -209,6 +471,7 @@ export default {
                         name="message"
                         placeholder="Write your Facebook post here..."
                       ></textarea>
+
 
                       <div class="media-box">
 
@@ -222,6 +485,7 @@ export default {
                           accept="image/*"
                         >
 
+
                         <label class="media-label">
                           🎥 Video (optional)
                         </label>
@@ -232,89 +496,303 @@ export default {
                           accept="video/*"
                         >
 
-                        <p style="font-size:13px;color:#666">
-                          Select either an image or a video for a
-                          media post.
-                        </p>
+                        <div class="hint">
+                          Select either an image or a video.
+                        </div>
 
                       </div>
-
-                      <h3>Select Pages</h3>
-
-                      <div class="select-row">
-
-                        <button
-                          type="button"
-                          onclick="selectAllPages()"
-                        >
-                          Select All
-                        </button>
-
-                        <button
-                          type="button"
-                          onclick="unselectAllPages()"
-                        >
-                          Unselect All
-                        </button>
-
-                      </div>
-
-                      <table>
-
-                        <thead>
-                          <tr>
-                            <th>Select</th>
-                            <th>Page Name</th>
-                            <th>Page ID</th>
-                            <th>Facebook Account</th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          ${pageRows}
-                        </tbody>
-
-                      </table>
-
-                      <button
-                        class="button publish-button"
-                        type="submit"
-                      >
-                        🚀 Publish to Selected Pages
-                      </button>
 
                     </div>
 
+
+                    <!-- =====================
+                         PAGE CONTROLS
+                         ===================== -->
+
+                    <div class="toolbar">
+
+                      <h3>
+                        📄 Select Pages
+                      </h3>
+
+                      <input
+                        id="pageSearch"
+                        class="search"
+                        type="text"
+                        placeholder="🔍 Search Page Name or Page ID..."
+                        oninput="searchPages()"
+                      >
+
+
+                      <div class="toolbar-row">
+
+                        <button
+                          type="button"
+                          class="small-button"
+                          onclick="selectAllPages()"
+                        >
+                          ☑️ Select All
+                        </button>
+
+                        <button
+                          type="button"
+                          class="small-button gray"
+                          onclick="unselectAllPages()"
+                        >
+                          ⬜ Unselect All
+                        </button>
+
+                      </div>
+
+
+                      <div
+                        class="selection-info"
+                        id="selectionInfo"
+                      >
+                        0 Pages Selected
+                      </div>
+
+                    </div>
+
+
+                    <!-- =====================
+                         ACCOUNTS / PAGES
+                         ===================== -->
+
+                    <div id="accountsContainer">
+
+                      ${accountHtml}
+
+                    </div>
+
+
+                    <button
+                      class="button publish-button"
+                      type="submit"
+                    >
+                      🚀 Publish to Selected Pages
+                    </button>
+
                   </form>
 
+
                   <script>
-                    function selectAllPages() {
-                      document
-                        .querySelectorAll('input[name="page_ids"]')
-                        .forEach(cb => {
-                          cb.checked = true;
-                        });
+
+                    function getPageCheckboxes() {
+
+                      return document.querySelectorAll(
+                        'input[name="page_ids"]'
+                      );
+
                     }
 
-                    function unselectAllPages() {
-                      document
-                        .querySelectorAll('input[name="page_ids"]')
-                        .forEach(cb => {
-                          cb.checked = false;
-                        });
+
+                    function updateSelectionCount() {
+
+                      const checkboxes =
+                        getPageCheckboxes();
+
+                      let count = 0;
+
+                      checkboxes.forEach(
+                        function(cb) {
+
+                          if (cb.checked) {
+                            count++;
+                          }
+
+                        }
+                      );
+
+                      const info =
+                        document.getElementById(
+                          "selectionInfo"
+                        );
+
+                      if (info) {
+
+                        info.textContent =
+                          count +
+                          " Page" +
+                          (count === 1 ? "" : "s") +
+                          " Selected";
+
+                      }
+
                     }
+
+
+                    function selectAllPages() {
+
+                      getPageCheckboxes()
+                        .forEach(
+                          function(cb) {
+
+                            cb.checked = true;
+
+                          }
+                        );
+
+                      updateSelectionCount();
+
+                    }
+
+
+                    function unselectAllPages() {
+
+                      getPageCheckboxes()
+                        .forEach(
+                          function(cb) {
+
+                            cb.checked = false;
+
+                          }
+                        );
+
+                      updateSelectionCount();
+
+                    }
+
+
+                    function selectAccount(
+                      accountId
+                    ) {
+
+                      document
+                        .querySelectorAll(
+                          ".account-" + accountId
+                        )
+                        .forEach(
+                          function(cb) {
+
+                            cb.checked = true;
+
+                          }
+                        );
+
+                      updateSelectionCount();
+
+                    }
+
+
+                    function unselectAccount(
+                      accountId
+                    ) {
+
+                      document
+                        .querySelectorAll(
+                          ".account-" + accountId
+                        )
+                        .forEach(
+                          function(cb) {
+
+                            cb.checked = false;
+
+                          }
+                        );
+
+                      updateSelectionCount();
+
+                    }
+
+
+                    function searchPages() {
+
+                      const search =
+                        document
+                          .getElementById(
+                            "pageSearch"
+                          )
+                          .value
+                          .toLowerCase()
+                          .trim();
+
+
+                      document
+                        .querySelectorAll(
+                          ".page-row"
+                        )
+                        .forEach(
+                          function(row) {
+
+                            const pageName =
+                              row.dataset.pageName ||
+                              "";
+
+                            const pageId =
+                              row.dataset.pageId ||
+                              "";
+
+                            if (
+                              pageName.includes(search) ||
+                              pageId.includes(search)
+                            ) {
+
+                              row.classList.remove(
+                                "hidden"
+                              );
+
+                            } else {
+
+                              row.classList.add(
+                                "hidden"
+                              );
+
+                            }
+
+                          }
+                        );
+
+                    }
+
+
+                    document.addEventListener(
+                      "change",
+                      function(event) {
+
+                        if (
+                          event.target.matches(
+                            'input[name="page_ids"]'
+                          )
+                        ) {
+
+                          updateSelectionCount();
+
+                        }
+
+                      }
+                    );
+
+
+                    updateSelectionCount();
+
                   </script>
+
                 `
-                : "<p>No Facebook Pages connected yet.</p>"
+                : `
+                  <div class="post-box">
+
+                    <h3>
+                      No Facebook Pages Connected
+                    </h3>
+
+                    <p>
+                      Connect a Facebook account to load its Pages.
+                    </p>
+
+                  </div>
+                `
             }
 
           </div>
 
         </body>
+
         </html>
       `, {
         headers: {
-          "content-type": "text/html;charset=UTF-8"
+          "content-type":
+            "text/html;charset=UTF-8"
         }
       });
     }
@@ -330,8 +808,12 @@ export default {
 
       const facebookUrl =
         `https://www.facebook.com/${env.META_GRAPH_VERSION}/dialog/oauth` +
-        `?client_id=${encodeURIComponent(env.META_APP_ID)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `?client_id=${encodeURIComponent(
+          env.META_APP_ID
+        )}` +
+        `&redirect_uri=${encodeURIComponent(
+          redirectUri
+        )}` +
         `&response_type=code` +
         `&scope=${encodeURIComponent(
           "pages_show_list,pages_read_engagement,pages_manage_posts"
@@ -347,7 +829,10 @@ export default {
     // =========================
     // FACEBOOK CALLBACK
     // =========================
-    if (url.pathname === "/auth/meta/callback") {
+    if (
+      url.pathname ===
+      "/auth/meta/callback"
+    ) {
 
       const code =
         url.searchParams.get("code");
@@ -356,9 +841,13 @@ export default {
         url.searchParams.get("error");
 
       const errorDescription =
-        url.searchParams.get("error_description");
+        url.searchParams.get(
+          "error_description"
+        );
+
 
       if (error) {
+
         return new Response(
           `Facebook login failed: ${escapeHtml(
             errorDescription || error
@@ -367,30 +856,44 @@ export default {
             status: 400
           }
         );
+
       }
 
+
       if (!code) {
+
         return new Response(
           "Missing Facebook authorization code.",
           {
             status: 400
           }
         );
+
       }
+
 
       const redirectUri =
         `${url.origin}/auth/meta/callback`;
 
 
       // =========================
-      // EXCHANGE CODE FOR TOKEN
+      // EXCHANGE CODE
       // =========================
       const tokenUrl =
         `https://graph.facebook.com/${env.META_GRAPH_VERSION}/oauth/access_token` +
-        `?client_id=${encodeURIComponent(env.META_APP_ID)}` +
-        `&client_secret=${encodeURIComponent(env.META_APP_SECRET)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&code=${encodeURIComponent(code)}`;
+        `?client_id=${encodeURIComponent(
+          env.META_APP_ID
+        )}` +
+        `&client_secret=${encodeURIComponent(
+          env.META_APP_SECRET
+        )}` +
+        `&redirect_uri=${encodeURIComponent(
+          redirectUri
+        )}` +
+        `&code=${encodeURIComponent(
+          code
+        )}`;
+
 
       const tokenResponse =
         await fetch(tokenUrl);
@@ -398,10 +901,12 @@ export default {
       const tokenData =
         await tokenResponse.json();
 
+
       if (
         !tokenResponse.ok ||
         tokenData.error
       ) {
+
         return new Response(
           `<pre>${escapeHtml(
             JSON.stringify(
@@ -418,14 +923,16 @@ export default {
             }
           }
         );
+
       }
+
 
       const userAccessToken =
         tokenData.access_token;
 
 
       // =========================
-      // GET FACEBOOK USER ID
+      // GET USER ID
       // =========================
       const meUrl =
         `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
@@ -434,17 +941,20 @@ export default {
           userAccessToken
         )}`;
 
+
       const meResponse =
         await fetch(meUrl);
 
       const meData =
         await meResponse.json();
 
+
       if (
         !meResponse.ok ||
         meData.error ||
         !meData.id
       ) {
+
         return new Response(
           `<pre>${escapeHtml(
             JSON.stringify(
@@ -461,23 +971,29 @@ export default {
             }
           }
         );
+
       }
+
 
       const facebookUserId =
         meData.id;
 
 
       // =========================
-      // SAVE / UPDATE ACCOUNT
+      // SAVE ACCOUNT
       // =========================
       await env.DB.prepare(`
         INSERT INTO facebook_accounts
-          (facebook_user_id, access_token)
+          (
+            facebook_user_id,
+            access_token
+          )
         VALUES (?, ?)
 
         ON CONFLICT(facebook_user_id)
         DO UPDATE SET
-          access_token = excluded.access_token
+          access_token =
+            excluded.access_token
       `)
         .bind(
           facebookUserId,
@@ -492,15 +1008,18 @@ export default {
           FROM facebook_accounts
           WHERE facebook_user_id = ?
         `)
-        .bind(facebookUserId)
+        .bind(
+          facebookUserId
+        )
         .first();
+
 
       const accountId =
         accountResult.id;
 
 
       // =========================
-      // GET FACEBOOK PAGES
+      // GET PAGES
       // =========================
       const pagesUrl =
         `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me/accounts` +
@@ -509,16 +1028,19 @@ export default {
           userAccessToken
         )}`;
 
+
       const pagesResponse =
         await fetch(pagesUrl);
 
       const pagesData =
         await pagesResponse.json();
 
+
       if (
         !pagesResponse.ok ||
         pagesData.error
       ) {
+
         return new Response(
           `<pre>${escapeHtml(
             JSON.stringify(
@@ -535,11 +1057,12 @@ export default {
             }
           }
         );
+
       }
 
 
       // =========================
-      // SAVE PAGES
+      // SAVE / UPDATE PAGES
       // =========================
       for (
         const page of pagesData.data || []
@@ -605,23 +1128,29 @@ export default {
           .run();
 
         }
+
       }
 
 
       // =========================
-      // SUCCESS PAGE
+      // SUCCESS
       // =========================
       return new Response(`
         <!DOCTYPE html>
+
         <html>
 
         <head>
-          <title>Facebook Connected</title>
+
+          <title>
+            Facebook Connected
+          </title>
 
           <meta
             name="viewport"
             content="width=device-width, initial-scale=1"
           >
+
         </head>
 
         <body
@@ -635,7 +1164,9 @@ export default {
           <p>
             Facebook Account Connected:
             <strong>
-              ${escapeHtml(facebookUserId)}
+              ${escapeHtml(
+                facebookUserId
+              )}
             </strong>
           </p>
 
@@ -657,6 +1188,7 @@ export default {
           </p>
 
         </body>
+
         </html>
       `, {
         headers: {
@@ -702,20 +1234,6 @@ export default {
           formData.get("video");
 
 
-        // =========================
-        // VALIDATION
-        // =========================
-        if (!selectedPageIds.length) {
-
-          return htmlResult(
-            "No Pages Selected",
-            "Please select at least one Facebook Page.",
-            true
-          );
-
-        }
-
-
         const hasImage =
           image instanceof File &&
           image.size > 0;
@@ -724,6 +1242,22 @@ export default {
         const hasVideo =
           video instanceof File &&
           video.size > 0;
+
+
+        // =========================
+        // VALIDATION
+        // =========================
+        if (
+          !selectedPageIds.length
+        ) {
+
+          return htmlResult(
+            "No Pages Selected",
+            "Please select at least one Facebook Page.",
+            true
+          );
+
+        }
 
 
         if (
@@ -741,10 +1275,6 @@ export default {
         }
 
 
-        // =========================
-        // DON'T ALLOW IMAGE + VIDEO
-        // TOGETHER
-        // =========================
         if (
           hasImage &&
           hasVideo
@@ -777,7 +1307,9 @@ export default {
             FROM facebook_pages
             WHERE page_id IN (${placeholders})
           `)
-          .bind(...selectedPageIds)
+          .bind(
+            ...selectedPageIds
+          )
           .all();
 
 
@@ -802,7 +1334,7 @@ export default {
 
 
             // =========================
-            // VIDEO POST
+            // VIDEO
             // =========================
             if (hasVideo) {
 
@@ -850,7 +1382,7 @@ export default {
 
 
             // =========================
-            // IMAGE POST
+            // IMAGE
             // =========================
             else if (hasImage) {
 
@@ -904,7 +1436,7 @@ export default {
 
 
             // =========================
-            // TEXT ONLY POST
+            // TEXT
             // =========================
             else {
 
@@ -1027,7 +1559,7 @@ export default {
 
 
 // =========================
-// PUBLISH RESULTS PAGE
+// PUBLISH RESULTS
 // =========================
 function publishResultsPage(
   results
