@@ -4,3 +4,7 @@ compatibility_date = "2026-08-31"
 
 [triggers]
 crons = ["* * * * *"]
+
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "meta-publisher-media"
