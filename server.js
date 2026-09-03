@@ -1,4 +1,3 @@
-```javascript
 export default {
   async fetch(request, env) {
     try {
@@ -52,37 +51,47 @@ export default {
         const pages = pagesResult.results || [];
 
         // ---------------------------------------------------------
-        // Refresh missing / old placeholder Facebook account names
+        // IMPORTANT:
+        // Always try to get the REAL Facebook account name from
+        // Meta for every connected account.
+        //
+        // This fixes old values such as:
+        // Facebook Account 1
+        // Facebook Account 2
+        // Account 1
+        // Account 2
         // ---------------------------------------------------------
         for (const account of accounts) {
-          if (
-            account.access_token &&
-            isPlaceholderAccountName(account.account_name)
-          ) {
-            try {
-              const refreshedName =
-                await getFacebookAccountName(
-                  account.access_token,
-                  env.META_GRAPH_VERSION
-                );
+          if (!account.access_token) {
+            continue;
+          }
 
-              if (refreshedName) {
-                account.account_name = refreshedName;
+          try {
+            const refreshedName =
+              await getFacebookAccountName(
+                account.access_token,
+                env.META_GRAPH_VERSION
+              );
 
-                await env.DB.prepare(`
-                  UPDATE facebook_accounts
-                  SET account_name = ?
-                  WHERE id = ?
-                `)
-                  .bind(
-                    refreshedName,
-                    account.id
-                  )
-                  .run();
-              }
-            } catch (error) {
-              // Keep dashboard working if name refresh fails.
+            if (
+              refreshedName &&
+              !isPlaceholderAccountName(refreshedName)
+            ) {
+              account.account_name = refreshedName;
+
+              await env.DB.prepare(`
+                UPDATE facebook_accounts
+                SET account_name = ?
+                WHERE id = ?
+              `)
+                .bind(
+                  refreshedName,
+                  account.id
+                )
+                .run();
             }
+          } catch (error) {
+            // Keep dashboard working even if Meta name refresh fails.
           }
         }
 
@@ -100,14 +109,6 @@ export default {
           const accountPages =
             pagesByAccount[account.id] || [];
 
-          // -------------------------------------------------------
-          // NEVER show generic names such as:
-          // Facebook Account 1
-          // Account 1
-          // Facebook Account 2
-          //
-          // If actual name is unavailable, use Facebook ID.
-          // -------------------------------------------------------
           const accountName =
             getSafeAccountDisplayName(
               account.account_name,
@@ -451,7 +452,7 @@ export default {
           String(
             meData.name ||
             facebookUserId
-          );
+          ).trim();
 
         // =====================================================
         // SAVE / UPDATE FACEBOOK ACCOUNT
@@ -669,7 +670,12 @@ export default {
 
               <p>
                 Facebook Account:
-                <b>${escapeHtml(facebookAccountName)}</b>
+                <b>${escapeHtml(
+                  getSafeAccountDisplayName(
+                    facebookAccountName,
+                    facebookUserId
+                  )
+                )}</b>
               </p>
 
               <p>
@@ -791,7 +797,10 @@ export default {
               env.META_GRAPH_VERSION
             );
 
-          if (refreshedName) {
+          if (
+            refreshedName &&
+            !isPlaceholderAccountName(refreshedName)
+          ) {
             account.account_name =
               refreshedName;
 
@@ -1569,6 +1578,7 @@ async function getFacebookAccountName(
   if (
     !response.ok ||
     data.error ||
+    !data.id ||
     !data.name
   ) {
     return null;
@@ -1601,12 +1611,12 @@ function isPlaceholderAccountName(name) {
     return true;
   }
 
-  // Examples:
   // Facebook Account 1
   // Facebook Account 2
+  // Facebook Account 01
   // Account 1
   // Account 2
-  // Facebook account 10
+  // Account 01
   if (
     /^facebook\s+account\s+\d+$/i.test(value)
   ) {
@@ -1631,11 +1641,14 @@ function getSafeAccountDisplayName(
   accountName,
   facebookUserId
 ) {
+  const name =
+    String(accountName || "").trim();
+
   if (
-    accountName &&
-    !isPlaceholderAccountName(accountName)
+    name &&
+    !isPlaceholderAccountName(name)
   ) {
-    return String(accountName);
+    return name;
   }
 
   return String(
@@ -2330,9 +2343,9 @@ function dashboardHtml({
       });
     }
 
-    // ---------------------------------------------------------
+    // =========================================================
     // GLOBAL PAGE SELECT ALL
-    // ---------------------------------------------------------
+    // =========================================================
 
     function selectAllPages() {
       getPageCheckboxes().forEach(function (checkbox) {
@@ -2348,9 +2361,9 @@ function dashboardHtml({
       });
     }
 
-    // ---------------------------------------------------------
+    // =========================================================
     // GLOBAL PAGE UNSELECT ALL
-    // ---------------------------------------------------------
+    // =========================================================
 
     function unselectAllPages() {
       getPageCheckboxes().forEach(function (checkbox) {
@@ -3110,4 +3123,3 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
-```
