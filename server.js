@@ -1,35 +1,35 @@
+const APP_NAME = "Meta Multi Page Publisher";
+
 export default {
   async fetch(request, env) {
     try {
       await ensureDatabaseSchema(env.DB);
 
       const url = new URL(request.url);
+      const path = url.pathname;
 
-      if (request.method === "GET" && url.pathname === "/") {
-        return await showDashboard(env);
+      if (request.method === "GET" && path === "/") {
+        return showDashboard(env);
       }
 
-      if (request.method === "GET" && url.pathname === "/auth/meta") {
+      if (request.method === "GET" && path === "/auth/meta") {
         return startMetaLogin(request, env);
       }
 
-      if (
-        request.method === "GET" &&
-        url.pathname === "/auth/meta/callback"
-      ) {
-        return await metaCallback(request, env);
+      if (request.method === "GET" && path === "/auth/meta/callback") {
+        return metaCallback(request, env);
       }
 
-      if (request.method === "POST" && url.pathname === "/sync-pages") {
-        return await syncPages(request, env);
+      if (request.method === "POST" && path === "/sync") {
+        return syncPages(request, env);
       }
 
-      if (request.method === "POST" && url.pathname === "/remove-account") {
-        return await removeAccount(request, env);
+      if (request.method === "POST" && path === "/remove-account") {
+        return removeAccount(request, env);
       }
 
-      if (request.method === "POST" && url.pathname === "/publish") {
-        return await publishPost(request, env);
+      if (request.method === "POST" && path === "/publish") {
+        return publishPost(request, env);
       }
 
       return new Response("Not Found", { status: 404 });
@@ -37,59 +37,79 @@ export default {
       console.error(error);
 
       return page(
-        "Server Error",
-        `<pre>${escapeHtml(error?.stack || String(error))}</pre>`
+        "Error",
+        `
+        <div class="error-box">
+          <h2>Something went wrong</h2>
+          <pre>${escapeHtml(error?.stack || error?.message || String(error))}</pre>
+        </div>
+        `
       );
     }
-  }
+  },
 };
 
-
 /* =========================================================
-   DATABASE INITIALIZATION
+   DATABASE
 ========================================================= */
 
 async function ensureDatabaseSchema(db) {
   if (!db) {
     throw new Error(
-      "D1 binding DB is missing. Check Cloudflare Worker Bindings."
+      "D1 database binding DB is missing. Check wrangler.toml and Cloudflare Worker Bindings."
     );
   }
 
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      facebook_user_id TEXT NOT NULL UNIQUE,
-      account_name TEXT,
-      access_token TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
+  await db
+    .prepare(
+      `
+      CREATE TABLE IF NOT EXISTS accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        facebook_user_id TEXT NOT NULL UNIQUE,
+        account_name TEXT,
+        access_token TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+      `
     )
-  `).run();
+    .run();
 
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS pages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      facebook_page_id TEXT NOT NULL UNIQUE,
-      page_name TEXT,
-      access_token TEXT NOT NULL,
-      account_id INTEGER NOT NULL
+  await db
+    .prepare(
+      `
+      CREATE TABLE IF NOT EXISTS pages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        facebook_page_id TEXT NOT NULL UNIQUE,
+        page_name TEXT,
+        access_token TEXT NOT NULL,
+        account_id INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+      `
     )
-  `).run();
+    .run();
 
-  await db.prepare(`
-    CREATE INDEX IF NOT EXISTS idx_pages_account_id
-    ON pages(account_id)
-  `).run();
+  await db
+    .prepare(
+      `
+      CREATE INDEX IF NOT EXISTS idx_pages_account_id
+      ON pages(account_id)
+      `
+    )
+    .run();
 
-  await db.prepare(`
-    CREATE INDEX IF NOT EXISTS idx_pages_facebook_page_id
-    ON pages(facebook_page_id)
-  `).run();
+  await db
+    .prepare(
+      `
+      CREATE INDEX IF NOT EXISTS idx_pages_page_id
+      ON pages(facebook_page_id)
+      `
+    )
+    .run();
 }
 
-
 /* =========================================================
-   META CONFIGURATION
+   META CONFIG
 ========================================================= */
 
 function getMetaConfig(env) {
@@ -99,800 +119,385 @@ function getMetaConfig(env) {
 
   const missing = [];
 
-  if (!appId) {
-    missing.push("META_APP_ID");
-  }
-
-  if (!appSecret) {
-    missing.push("META_APP_SECRET");
-  }
-
-  if (!graphVersion) {
-    missing.push("META_GRAPH_VERSION");
-  }
+  if (!appId) missing.push("META_APP_ID");
+  if (!appSecret) missing.push("META_APP_SECRET");
+  if (!graphVersion) missing.push("META_GRAPH_VERSION");
 
   if (missing.length > 0) {
     throw new Error(
-      `Meta configuration is missing in the Worker environment: ${missing.join(
+      `Meta configuration is missing: ${missing.join(
         ", "
-      )}. Go to Cloudflare Worker > Settings > Variables and Secrets and make sure these exact variable names exist in the Production environment, then redeploy.`
+      )}. Check Cloudflare Worker > Settings > Variables and Secrets.`
     );
   }
 
   return {
     appId,
     appSecret,
-    graphVersion
+    graphVersion,
   };
 }
-
 
 /* =========================================================
    DASHBOARD
 ========================================================= */
 
 async function showDashboard(env) {
-  const accountsResult = await env.DB.prepare(`
+  const accountsResult = await env.DB.prepare(
+    `
     SELECT
       id,
       facebook_user_id,
       account_name,
-      access_token
+      created_at
     FROM accounts
     ORDER BY id ASC
-  `).all();
+    `
+  ).all();
 
   const accounts = accountsResult.results || [];
 
-  for (const account of accounts) {
-    try {
-      const me = await facebookMe(
-        account.access_token,
-        env
-      );
-
-      if (
-        me?.name &&
-        me.name !== account.account_name
-      ) {
-        await env.DB.prepare(`
-          UPDATE accounts
-          SET account_name = ?
-          WHERE id = ?
-        `)
-          .bind(
-            me.name,
-            account.id
-          )
-          .run();
-
-        account.account_name = me.name;
-      }
-    } catch (error) {
-      console.log(
-        "Account name refresh failed",
-        error
-      );
-    }
-  }
-
-  const pagesResult = await env.DB.prepare(`
+  const pagesResult = await env.DB.prepare(
+    `
     SELECT
       id,
       facebook_page_id,
       page_name,
-      access_token,
       account_id
     FROM pages
-    ORDER BY account_id ASC, page_name ASC
-  `).all();
+    ORDER BY account_id ASC, page_name COLLATE NOCASE ASC
+    `
+  ).all();
 
   const pages = pagesResult.results || [];
 
-  const accountHtml = accounts
-    .map((account, index) => {
-      const accountPages = pages.filter(
-        p =>
-          Number(p.account_id) ===
-          Number(account.id)
-      );
+  const groupedPages = {};
 
-      const accountName =
-        account.account_name ||
-        `Facebook Account ${index + 1}`;
+  for (const account of accounts) {
+    groupedPages[account.id] = [];
+  }
 
-      return `
-        <div class="account">
+  for (const p of pages) {
+    if (!groupedPages[p.account_id]) {
+      groupedPages[p.account_id] = [];
+    }
+
+    groupedPages[p.account_id].push(p);
+  }
+
+  let accountHtml = "";
+
+  if (accounts.length === 0) {
+    accountHtml = `
+      <div class="empty-box">
+        <h3>No Facebook account connected</h3>
+        <p>Connect your Facebook account to load your Pages.</p>
+      </div>
+    `;
+  } else {
+    for (const account of accounts) {
+      const accountPages = groupedPages[account.id] || [];
+
+      accountHtml += `
+        <section class="account-card">
 
           <div class="account-header">
-
             <div>
-              <h2>
-                ${escapeHtml(accountName)}
-              </h2>
+              <h2>${escapeHtml(
+                account.account_name || "Facebook Account"
+              )}</h2>
 
-              <div class="muted">
+              <div class="facebook-id">
                 Facebook ID:
-                ${escapeHtml(account.facebook_user_id)}
+                <code>${escapeHtml(account.facebook_user_id)}</code>
               </div>
 
-              <div class="count">
-                ${accountPages.length}
-                Connected Pages
+              <div class="page-count">
+                ${accountPages.length} Connected Page${
+        accountPages.length === 1 ? "" : "s"
+      }
               </div>
             </div>
 
-            <div class="actions">
+            <div class="account-actions">
 
-              <button
-                type="button"
-                onclick="syncAccount(${Number(account.id)})"
-              >
-                Sync Pages
-              </button>
+              <form method="POST" action="/sync">
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${account.id}"
+                />
+                <button class="btn btn-blue" type="submit">
+                  Sync Pages
+                </button>
+              </form>
 
-              <button
-                type="button"
-                class="danger"
-                onclick="removeAccount(${Number(account.id)})"
+              <form
+                method="POST"
+                action="/remove-account"
+                onsubmit="return confirm('Remove this Facebook account and all its connected Pages?');"
               >
-                Remove
-              </button>
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${account.id}"
+                />
+                <button class="btn btn-red" type="submit">
+                  Remove
+                </button>
+              </form>
 
             </div>
-
           </div>
 
-          <div class="pages">
+          <div class="pages-section">
 
             ${
-              accountPages.length
-                ? accountPages
-                    .map(
-                      p => `
-                        <label class="page">
+              accountPages.length > 0
+                ? `
+              <div class="list-toolbar">
+                <strong>Select Pages</strong>
 
-                          <input
-                            type="checkbox"
-                            name="page_ids"
-                            value="${escapeHtml(
-                              p.facebook_page_id
-                            )}"
-                            class="page-checkbox"
-                          >
+                <div class="select-actions">
+                  <button
+                    type="button"
+                    class="small-btn"
+                    onclick="selectAccountPages(${account.id}, true)"
+                  >
+                    Select All
+                  </button>
 
-                          <span>
+                  <button
+                    type="button"
+                    class="small-btn"
+                    onclick="selectAccountPages(${account.id}, false)"
+                  >
+                    Unselect All
+                  </button>
+                </div>
+              </div>
 
-                            <strong>
-                              ${escapeHtml(
-                                p.page_name ||
-                                "Unnamed Page"
-                              )}
-                            </strong>
+              <div class="page-list">
+                ${accountPages
+                  .map(
+                    (p) => `
+                    <label
+                      class="page-row"
+                      data-account="${account.id}"
+                    >
+                      <input
+                        class="page-checkbox account-${account.id}"
+                        type="checkbox"
+                        name="page_ids"
+                        value="${escapeHtml(p.id)}"
+                        data-page-id="${escapeHtml(
+                          p.facebook_page_id
+                        )}"
+                        data-page-name="${escapeHtml(
+                          p.page_name || ""
+                        )}"
+                        form="publish-form"
+                      />
 
-                            <small>
-                              ${escapeHtml(
-                                p.facebook_page_id
-                              )}
-                            </small>
+                      <div class="page-check"></div>
 
-                          </span>
+                      <div class="page-info">
+                        <div class="page-name">
+                          ${escapeHtml(
+                            p.page_name || "Unnamed Page"
+                          )}
+                        </div>
 
-                        </label>
-                      `
-                    )
-                    .join("")
-                : `
-                    <div class="muted">
-                      No Pages Found
-                    </div>
+                        <div class="page-id">
+                          Page ID:
+                          <code>${escapeHtml(
+                            p.facebook_page_id
+                          )}</code>
+                        </div>
+                      </div>
+                    </label>
                   `
+                  )
+                  .join("")}
+              </div>
+              `
+                : `
+              <div class="no-pages">
+                No Pages found for this account.
+                Click <strong>Sync Pages</strong> to refresh.
+              </div>
+              `
             }
 
           </div>
-
-        </div>
+        </section>
       `;
-    })
-    .join("");
+    }
+  }
 
-  return new Response(
+  return page(
+    APP_NAME,
     `
-<!DOCTYPE html>
-<html>
-<head>
-
-<meta charset="UTF-8">
-
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1"
->
-
-<title>Meta Multi Page Publisher</title>
-
-<style>
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  background: #f3f4f6;
-  font-family: Arial, sans-serif;
-  color: #111827;
-}
-
-.container {
-  width: 94%;
-  max-width: 1400px;
-  margin: 30px auto 60px;
-}
-
-.top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 15px;
-  flex-wrap: wrap;
-  margin-bottom: 25px;
-}
-
-h1 {
-  margin: 0;
-}
-
-.subtitle {
-  color: #6b7280;
-  margin-top: 6px;
-}
-
-.connect {
-  background: #1877f2;
-  color: white;
-  padding: 12px 18px;
-  border-radius: 8px;
-  text-decoration: none;
-  font-weight: bold;
-}
-
-.stats {
-  display: flex;
-  gap: 15px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-
-.stat {
-  background: white;
-  padding: 15px 20px;
-  border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.06);
-}
-
-.stat strong {
-  font-size: 25px;
-  display: block;
-}
-
-.account {
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 2px 10px rgba(0,0,0,.06);
-}
-
-.account-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 15px;
-  margin-bottom: 18px;
-  flex-wrap: wrap;
-}
-
-.account h2 {
-  margin: 0 0 5px;
-}
-
-.muted {
-  color: #6b7280;
-  font-size: 13px;
-}
-
-.count {
-  margin-top: 7px;
-  font-weight: bold;
-  font-size: 13px;
-}
-
-.actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-button {
-  border: 0;
-  border-radius: 7px;
-  padding: 9px 13px;
-  cursor: pointer;
-  font-weight: bold;
-}
-
-button:hover {
-  opacity: .92;
-}
-
-.danger {
-  background: #fee2e2;
-  color: #b91c1c;
-}
-
-.pages {
-  display: grid;
-  grid-template-columns: repeat(
-    auto-fill,
-    minmax(250px, 1fr)
-  );
-  gap: 10px;
-}
-
-.page {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.page:hover {
-  border-color: #1877f2;
-  background: #f8fbff;
-}
-
-.page input {
-  margin-top: 3px;
-  transform: scale(1.2);
-}
-
-.page small {
-  display: block;
-  color: #9ca3af;
-  font-size: 11px;
-  margin-top: 4px;
-  word-break: break-all;
-}
-
-.publisher {
-  background: white;
-  border-radius: 12px;
-  padding: 22px;
-  box-shadow: 0 2px 10px rgba(0,0,0,.06);
-}
-
-.publisher h2 {
-  margin-top: 0;
-}
-
-.search {
-  width: 100%;
-  padding: 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  margin-bottom: 12px;
-  font-size: 15px;
-}
-
-.tools {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 15px;
-  flex-wrap: wrap;
-}
-
-.tools button {
-  background: #eef2f7;
-}
-
-textarea {
-  width: 100%;
-  min-height: 150px;
-  padding: 13px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  resize: vertical;
-  font-family: Arial, sans-serif;
-  font-size: 15px;
-  margin-bottom: 15px;
-}
-
-.files {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
-  margin-bottom: 18px;
-}
-
-.file {
-  border: 1px solid #e5e7eb;
-  padding: 13px;
-  border-radius: 8px;
-}
-
-.file label {
-  display: block;
-  font-weight: bold;
-  margin-bottom: 8px;
-}
-
-.publish {
-  width: 100%;
-  background: #1877f2;
-  color: white;
-  padding: 14px;
-  font-size: 16px;
-}
-
-@media(max-width:700px) {
-
-  .files {
-    grid-template-columns: 1fr;
-  }
-
-  .stats {
-    flex-direction: column;
-  }
-
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="container">
-
-  <div class="top">
-
-    <div>
-
-      <h1>
-        Meta Multi Page Publisher
-      </h1>
-
-      <div class="subtitle">
-        Connect Facebook accounts and publish
-        to multiple Pages.
+    <div class="topbar">
+      <div>
+        <div class="brand">${APP_NAME}</div>
+        <div class="subtitle">
+          Publish to multiple Facebook Pages
+        </div>
       </div>
 
+      <a class="connect-btn" href="/auth/meta">
+        + Connect Facebook Account
+      </a>
     </div>
 
-    <a
-      class="connect"
-      href="/auth/meta"
-    >
-      + Connect Facebook Account
-    </a>
+    <div class="container">
 
-  </div>
+      ${accountHtml}
 
-  <div class="stats">
+      ${
+        accounts.length > 0 && pages.length > 0
+          ? `
+        <section class="publisher-card">
 
-    <div class="stat">
+          <div class="publisher-header">
+            <h2>Create Post</h2>
+            <div id="selected-count">
+              0 Pages Selected
+            </div>
+          </div>
 
-      <strong>
-        ${accounts.length}
-      </strong>
-
-      Connected Facebook Accounts
-
-    </div>
-
-    <div class="stat">
-
-      <strong>
-        ${pages.length}
-      </strong>
-
-      Connected Pages
-
-    </div>
-
-  </div>
-
-  <form
-    id="publish-form"
-    method="POST"
-    action="/publish"
-    enctype="multipart/form-data"
-  >
-
-    ${accountHtml}
-
-    <div class="publisher">
-
-      <h2>
-        Create Post
-      </h2>
-
-      <input
-        id="search"
-        class="search"
-        type="text"
-        placeholder="Search Pages..."
-      >
-
-      <div class="tools">
-
-        <button
-          type="button"
-          onclick="selectAll()"
-        >
-          Select All
-        </button>
-
-        <button
-          type="button"
-          onclick="clearAll()"
-        >
-          Clear All
-        </button>
-
-      </div>
-
-      <textarea
-        name="message"
-        placeholder="Write your post..."
-      ></textarea>
-
-      <div class="files">
-
-        <div class="file">
-
-          <label>
-            Image
-          </label>
-
-          <input
-            id="image"
-            type="file"
-            name="image"
-            accept="image/*"
+          <form
+            id="publish-form"
+            method="POST"
+            action="/publish"
+            enctype="multipart/form-data"
           >
 
-        </div>
+            <div class="field">
+              <label for="message">
+                Post Text
+              </label>
 
-        <div class="file">
+              <textarea
+                id="message"
+                name="message"
+                rows="7"
+                placeholder="Write your post..."
+              ></textarea>
+            </div>
 
-          <label>
-            Video
-          </label>
+            <div class="field">
+              <label for="media">
+                Image / Video
+              </label>
 
-          <input
-            id="video"
-            type="file"
-            name="video"
-            accept="video/*"
-          >
+              <input
+                id="media"
+                type="file"
+                name="media"
+                accept="image/*,video/*"
+              />
 
-        </div>
+              <div class="hint">
+                Leave empty for a text-only post.
+              </div>
+            </div>
 
-      </div>
+            <button
+              class="publish-btn"
+              type="submit"
+              onclick="return validatePublish()"
+            >
+              Publish to Selected Pages
+            </button>
 
-      <button
-        type="submit"
-        class="publish"
-      >
-        Publish to Selected Pages
-      </button>
+          </form>
+
+          <div id="publish-status" class="status-box"></div>
+
+        </section>
+        `
+          : ""
+      }
 
     </div>
 
-  </form>
+    <script>
+      function updateSelectedCount() {
+        const checked = document.querySelectorAll(
+          '.page-checkbox:checked'
+        );
 
-</div>
+        const counter =
+          document.getElementById('selected-count');
 
-<script>
+        if (counter) {
+          counter.textContent =
+            checked.length +
+            ' Page' +
+            (checked.length === 1 ? '' : 's') +
+            ' Selected';
+        }
+      }
 
-const form =
-  document.getElementById("publish-form");
+      function selectAccountPages(accountId, select) {
+        document
+          .querySelectorAll('.account-' + accountId)
+          .forEach(function (checkbox) {
+            checkbox.checked = select;
+          });
 
-const search =
-  document.getElementById("search");
+        updateSelectedCount();
+      }
 
-search.addEventListener(
-  "input",
-  function() {
-
-    const value =
-      this.value
-        .toLowerCase()
-        .trim();
-
-    document
-      .querySelectorAll(".page")
-      .forEach(function(item) {
-
-        const text =
-          item.innerText
-            .toLowerCase();
-
-        item.style.display =
-          !value ||
-          text.includes(value)
-            ? ""
-            : "none";
-
+      document.addEventListener('change', function(event) {
+        if (
+          event.target &&
+          event.target.classList.contains('page-checkbox')
+        ) {
+          updateSelectedCount();
+        }
       });
 
-  }
-);
+      function validatePublish() {
+        const selected =
+          document.querySelectorAll(
+            '.page-checkbox:checked'
+          );
 
-function selectAll() {
+        if (selected.length === 0) {
+          alert('Please select at least one Page.');
+          return false;
+        }
 
-  document
-    .querySelectorAll(".page-checkbox")
-    .forEach(function(box) {
+        const message =
+          document.getElementById('message').value.trim();
 
-      const item =
-        box.closest(".page");
+        const media =
+          document.getElementById('media').files.length;
 
-      if (
-        item &&
-        item.style.display !== "none"
-      ) {
-        box.checked = true;
+        if (!message && !media) {
+          alert(
+            'Please enter post text or select an image/video.'
+          );
+          return false;
+        }
+
+        return true;
       }
 
-    });
-
-}
-
-function clearAll() {
-
-  document
-    .querySelectorAll(".page-checkbox")
-    .forEach(function(box) {
-
-      box.checked = false;
-
-    });
-
-}
-
-form.addEventListener(
-  "submit",
-  function(event) {
-
-    const selected =
-      document.querySelectorAll(
-        ".page-checkbox:checked"
-      );
-
-    if (selected.length === 0) {
-
-      event.preventDefault();
-
-      alert(
-        "Please select at least one Facebook Page."
-      );
-
-      return;
-
-    }
-
-    const image =
-      document.getElementById("image");
-
-    const video =
-      document.getElementById("video");
-
-    if (
-      image.files.length > 0 &&
-      video.files.length > 0
-    ) {
-
-      event.preventDefault();
-
-      alert(
-        "Please select either Image OR Video, not both."
-      );
-
-    }
-
-  }
-);
-
-function syncAccount(id) {
-
-  if (
-    !confirm(
-      "Sync Pages for this account?"
-    )
-  ) {
-    return;
-  }
-
-  const syncForm =
-    document.createElement("form");
-
-  syncForm.method = "POST";
-  syncForm.action = "/sync-pages";
-
-  const input =
-    document.createElement("input");
-
-  input.type = "hidden";
-  input.name = "account_id";
-  input.value = id;
-
-  syncForm.appendChild(input);
-
-  document.body.appendChild(syncForm);
-
-  syncForm.submit();
-
-}
-
-function removeAccount(id) {
-
-  if (
-    !confirm(
-      "Remove this Facebook account and its Pages?"
-    )
-  ) {
-    return;
-  }
-
-  const removeForm =
-    document.createElement("form");
-
-  removeForm.method = "POST";
-  removeForm.action = "/remove-account";
-
-  const input =
-    document.createElement("input");
-
-  input.type = "hidden";
-  input.name = "account_id";
-  input.value = id;
-
-  removeForm.appendChild(input);
-
-  document.body.appendChild(removeForm);
-
-  removeForm.submit();
-
-}
-
-</script>
-
-</body>
-</html>
-    `,
-    {
-      headers: {
-        "content-type":
-          "text/html; charset=UTF-8"
-      }
-    }
+      updateSelectedCount();
+    </script>
+    `
   );
 }
 
-
 /* =========================================================
-   META LOGIN
+   FACEBOOK LOGIN
 ========================================================= */
 
 function startMetaLogin(request, env) {
-  const url = new URL(request.url);
-
   let config;
 
   try {
@@ -900,12 +505,19 @@ function startMetaLogin(request, env) {
   } catch (error) {
     return page(
       "Meta Configuration Error",
-      `<pre>${escapeHtml(error.message)}</pre>`
+      `
+      <div class="error-box">
+        <h2>Meta Configuration Error</h2>
+        <pre>${escapeHtml(error.message)}</pre>
+      </div>
+      `
     );
   }
 
+  const requestUrl = new URL(request.url);
+
   const redirectUri =
-    `${url.origin}/auth/meta/callback`;
+    `${requestUrl.origin}/auth/meta/callback`;
 
   const scope =
     "pages_show_list,pages_read_engagement,pages_manage_posts";
@@ -916,72 +528,45 @@ function startMetaLogin(request, env) {
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=${encodeURIComponent(scope)}`;
 
-  console.log(
-    "Meta Login Redirect:",
-    loginUrl.replace(
-      config.appId,
-      "***APP_ID***"
-    )
-  );
-
-  return Response.redirect(
-    loginUrl,
-    302
-  );
+  return Response.redirect(loginUrl, 302);
 }
 
-
 /* =========================================================
-   META CALLBACK
+   FACEBOOK CALLBACK
 ========================================================= */
 
 async function metaCallback(request, env) {
+  const config = getMetaConfig(env);
+
   const url = new URL(request.url);
-
-  let config;
-
-  try {
-    config = getMetaConfig(env);
-  } catch (error) {
-    return page(
-      "Meta Configuration Error",
-      `<pre>${escapeHtml(error.message)}</pre>`
-    );
-  }
-
-  const errorParam =
-    url.searchParams.get("error");
-
-  const errorReason =
-    url.searchParams.get("error_reason");
-
+  const code = url.searchParams.get("code");
+  const error = url.searchParams.get("error");
   const errorDescription =
     url.searchParams.get("error_description");
 
-  if (errorParam) {
+  if (error) {
     return page(
       "Facebook Login Error",
-      `<pre>${escapeHtml(
-        JSON.stringify(
-          {
-            error: errorParam,
-            error_reason: errorReason,
-            error_description: errorDescription
-          },
-          null,
-          2
-        )
-      )}</pre>`
+      `
+      <div class="error-box">
+        <h2>Facebook Login Error</h2>
+        <p>${escapeHtml(error)}</p>
+        <p>${escapeHtml(errorDescription || "")}</p>
+        <a class="back-btn" href="/">Back to Dashboard</a>
+      </div>
+      `
     );
   }
-
-  const code =
-    url.searchParams.get("code");
 
   if (!code) {
     return page(
       "Facebook Login Error",
-      "Authorization code was not returned by Facebook."
+      `
+      <div class="error-box">
+        <h2>No authorization code received.</h2>
+        <a class="back-btn" href="/">Back to Dashboard</a>
+      </div>
+      `
     );
   }
 
@@ -995,1056 +580,716 @@ async function metaCallback(request, env) {
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&code=${encodeURIComponent(code)}`;
 
-  const tokenResponse =
-    await fetch(tokenUrl);
+  const tokenResponse = await fetch(tokenUrl);
+  const tokenData = await tokenResponse.json();
 
-  const tokenData =
-    await tokenResponse.json();
-
-  if (
-    !tokenResponse.ok ||
-    !tokenData.access_token
-  ) {
-    return page(
-      "Facebook Token Error",
-      `<pre>${escapeHtml(
-        JSON.stringify(
-          tokenData,
-          null,
-          2
-        )
-      )}</pre>`
+  if (!tokenResponse.ok || !tokenData.access_token) {
+    throw new Error(
+      `Facebook token exchange failed: ${JSON.stringify(
+        tokenData
+      )}`
     );
   }
 
-  const userToken =
-    tokenData.access_token;
+  const userAccessToken = tokenData.access_token;
 
-  const me =
-    await facebookMe(
-      userToken,
-      env
+  const userUrl =
+    `https://graph.facebook.com/${config.graphVersion}/me` +
+    `?fields=id,name` +
+    `&access_token=${encodeURIComponent(
+      userAccessToken
+    )}`;
+
+  const userResponse = await fetch(userUrl);
+  const userData = await userResponse.json();
+
+  if (!userResponse.ok || !userData.id) {
+    throw new Error(
+      `Could not get Facebook account information: ${JSON.stringify(
+        userData
+      )}`
     );
+  }
 
-  if (!me?.id) {
-    return page(
-      "Facebook Error",
-      "Could not get Facebook account ID."
+  await env.DB.prepare(
+    `
+    INSERT INTO accounts (
+      facebook_user_id,
+      account_name,
+      access_token
+    )
+    VALUES (?, ?, ?)
+    ON CONFLICT(facebook_user_id)
+    DO UPDATE SET
+      account_name = excluded.account_name,
+      access_token = excluded.access_token
+    `
+  )
+    .bind(
+      String(userData.id),
+      userData.name || "Facebook Account",
+      userAccessToken
+    )
+    .run();
+
+  const account = await env.DB.prepare(
+    `
+    SELECT id
+    FROM accounts
+    WHERE facebook_user_id = ?
+    `
+  )
+    .bind(String(userData.id))
+    .first();
+
+  if (!account) {
+    throw new Error(
+      "Facebook account was saved but could not be found."
     );
   }
 
-  const accountName =
-    me.name ||
-    `Facebook Account ${me.id}`;
-
-  const existing =
-    await env.DB.prepare(`
-      SELECT id
-      FROM accounts
-      WHERE facebook_user_id = ?
-      LIMIT 1
-    `)
-      .bind(
-        String(me.id)
-      )
-      .first();
-
-  let accountId;
-
-  if (existing) {
-
-    accountId =
-      existing.id;
-
-    await env.DB.prepare(`
-      UPDATE accounts
-      SET
-        account_name = ?,
-        access_token = ?
-      WHERE id = ?
-    `)
-      .bind(
-        accountName,
-        userToken,
-        accountId
-      )
-      .run();
-
-  } else {
-
-    const inserted =
-      await env.DB.prepare(`
-        INSERT INTO accounts
-        (
-          facebook_user_id,
-          account_name,
-          access_token,
-          created_at
-        )
-        VALUES
-        (?, ?, ?, datetime('now'))
-      `)
-        .bind(
-          String(me.id),
-          accountName,
-          userToken
-        )
-        .run();
-
-    accountId =
-      inserted.meta.last_row_id;
-  }
-
-  try {
-
-    const pages =
-      await getFacebookPages(
-        userToken,
-        env
-      );
-
-    for (const p of pages) {
-
-      await savePage(
-        env.DB,
-        accountId,
-        p
-      );
-
-    }
-
-  } catch (error) {
-
-    console.error(
-      "Page sync after login failed",
-      error
-    );
-
-    return page(
-      "Facebook Page Sync Error",
-      `<pre>${escapeHtml(
-        error?.stack || String(error)
-      )}</pre>`
-    );
-  }
+  await syncAccountPages(
+    env,
+    Number(account.id),
+    userAccessToken,
+    config.graphVersion
+  );
 
   return Response.redirect(
     `${url.origin}/`,
-    303
+    302
   );
 }
-
 
 /* =========================================================
    SYNC PAGES
 ========================================================= */
 
 async function syncPages(request, env) {
-  const form =
-    await request.formData();
+  const form = await request.formData();
 
-  const accountId =
-    form.get("account_id");
+  const accountId = Number(
+    form.get("account_id")
+  );
 
   if (!accountId) {
-    return page(
-      "Sync Error",
-      "Account ID is missing."
-    );
+    throw new Error("Invalid account ID.");
   }
 
-  const account =
-    await env.DB.prepare(`
-      SELECT
-        id,
-        access_token
-      FROM accounts
-      WHERE id = ?
-      LIMIT 1
-    `)
-      .bind(
-        Number(accountId)
-      )
-      .first();
+  const account = await env.DB.prepare(
+    `
+    SELECT
+      id,
+      access_token
+    FROM accounts
+    WHERE id = ?
+    `
+  )
+    .bind(accountId)
+    .first();
 
   if (!account) {
-    return page(
-      "Sync Error",
-      "Account not found."
-    );
+    throw new Error("Facebook account not found.");
   }
 
-  const me =
-    await facebookMe(
-      account.access_token,
-      env
-    );
+  const config = getMetaConfig(env);
 
-  if (me?.name) {
-
-    await env.DB.prepare(`
-      UPDATE accounts
-      SET account_name = ?
-      WHERE id = ?
-    `)
-      .bind(
-        me.name,
-        account.id
-      )
-      .run();
-
-  }
-
-  const pages =
-    await getFacebookPages(
-      account.access_token,
-      env
-    );
-
-  for (const p of pages) {
-
-    await savePage(
-      env.DB,
-      account.id,
-      p
-    );
-
-  }
-
-  return Response.redirect(
-    new URL(
-      "/",
-      request.url
-    ).toString(),
-    303
+  await syncAccountPages(
+    env,
+    account.id,
+    account.access_token,
+    config.graphVersion
   );
+
+  return Response.redirect("/", 303);
 }
 
+async function syncAccountPages(
+  env,
+  accountId,
+  userAccessToken,
+  graphVersion
+) {
+  let nextUrl =
+    `https://graph.facebook.com/${graphVersion}/me/accounts` +
+    `?fields=id,name,access_token` +
+    `&limit=100` +
+    `&access_token=${encodeURIComponent(
+      userAccessToken
+    )}`;
+
+  const foundPageIds = [];
+
+  while (nextUrl) {
+    const response = await fetch(nextUrl);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        `Could not load Facebook Pages: ${JSON.stringify(
+          data
+        )}`
+      );
+    }
+
+    const pageList = data.data || [];
+
+    for (const fbPage of pageList) {
+      if (!fbPage.id || !fbPage.access_token) {
+        continue;
+      }
+
+      foundPageIds.push(String(fbPage.id));
+
+      await env.DB.prepare(
+        `
+        INSERT INTO pages (
+          facebook_page_id,
+          page_name,
+          access_token,
+          account_id
+        )
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(facebook_page_id)
+        DO UPDATE SET
+          page_name = excluded.page_name,
+          access_token = excluded.access_token,
+          account_id = excluded.account_id
+        `
+      )
+        .bind(
+          String(fbPage.id),
+          fbPage.name || "Unnamed Page",
+          fbPage.access_token,
+          Number(accountId)
+        )
+        .run();
+    }
+
+    nextUrl =
+      data.paging &&
+      data.paging.next
+        ? data.paging.next
+        : null;
+  }
+
+  if (foundPageIds.length > 0) {
+    const placeholders = foundPageIds
+      .map(() => "?")
+      .join(",");
+
+    await env.DB.prepare(
+      `
+      DELETE FROM pages
+      WHERE account_id = ?
+      AND facebook_page_id NOT IN (${placeholders})
+      `
+    )
+      .bind(Number(accountId), ...foundPageIds)
+      .run();
+  } else {
+    await env.DB.prepare(
+      `
+      DELETE FROM pages
+      WHERE account_id = ?
+      `
+    )
+      .bind(Number(accountId))
+      .run();
+  }
+}
 
 /* =========================================================
    REMOVE ACCOUNT
 ========================================================= */
 
 async function removeAccount(request, env) {
-  const form =
-    await request.formData();
+  const form = await request.formData();
 
-  const accountId =
-    form.get("account_id");
+  const accountId = Number(
+    form.get("account_id")
+  );
 
   if (!accountId) {
-    return page(
-      "Remove Error",
-      "Account ID is missing."
-    );
+    throw new Error("Invalid account ID.");
   }
 
-  await env.DB.prepare(`
+  await env.DB.prepare(
+    `
     DELETE FROM pages
     WHERE account_id = ?
-  `)
-    .bind(
-      Number(accountId)
-    )
+    `
+  )
+    .bind(accountId)
     .run();
 
-  await env.DB.prepare(`
+  await env.DB.prepare(
+    `
     DELETE FROM accounts
     WHERE id = ?
-  `)
-    .bind(
-      Number(accountId)
-    )
+    `
+  )
+    .bind(accountId)
     .run();
 
-  return Response.redirect(
-    new URL(
-      "/",
-      request.url
-    ).toString(),
-    303
-  );
+  return Response.redirect("/", 303);
 }
-
 
 /* =========================================================
    PUBLISH
 ========================================================= */
 
 async function publishPost(request, env) {
-  const form =
-    await request.formData();
+  const form = await request.formData();
 
-  const message =
-    String(
-      form.get("message") || ""
-    ).trim();
+  const message = String(
+    form.get("message") || ""
+  ).trim();
 
-  const pageIds =
-    form
-      .getAll("page_ids")
-      .map(
-        x => String(x).trim()
-      )
-      .filter(Boolean);
+  const selectedPageIds =
+    form.getAll("page_ids");
 
-  const image =
-    form.get("image");
+  const media = form.get("media");
 
-  const video =
-    form.get("video");
-
-  if (pageIds.length === 0) {
-
-    return publishResult(
+  if (!selectedPageIds.length) {
+    return page(
       "No Pages Selected",
-      "The browser submitted 0 page_ids. Select a Page and try again.",
-      []
+      `
+      <div class="error-box">
+        <h2>No Pages Selected</h2>
+        <p>Please select at least one Facebook Page.</p>
+        <a class="back-btn" href="/">Back</a>
+      </div>
+      `
     );
-
   }
 
-  const hasImage =
-    image instanceof File &&
-    image.size > 0;
-
-  const hasVideo =
-    video instanceof File &&
-    video.size > 0;
-
-  if (
-    !message &&
-    !hasImage &&
-    !hasVideo
-  ) {
-
-    return publishResult(
+  if (!message && (!media || !media.name)) {
+    return page(
       "Empty Post",
-      "Write a message or select an image/video.",
-      []
+      `
+      <div class="error-box">
+        <h2>Empty Post</h2>
+        <p>Enter text or select an image/video.</p>
+        <a class="back-btn" href="/">Back</a>
+      </div>
+      `
     );
-
   }
+
+  const numericPageIds = selectedPageIds
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+
+  if (!numericPageIds.length) {
+    throw new Error("Invalid selected Page IDs.");
+  }
+
+  const placeholders = numericPageIds
+    .map(() => "?")
+    .join(",");
+
+  const pagesResult = await env.DB.prepare(
+    `
+    SELECT
+      id,
+      facebook_page_id,
+      page_name,
+      access_token
+    FROM pages
+    WHERE id IN (${placeholders})
+    ORDER BY page_name COLLATE NOCASE ASC
+    `
+  )
+    .bind(...numericPageIds)
+    .all();
+
+  const pages = pagesResult.results || [];
+
+  if (!pages.length) {
+    throw new Error(
+      "Selected Pages were not found in the database."
+    );
+  }
+
+  const config = getMetaConfig(env);
+
+  let mediaBuffer = null;
+  let mediaType = null;
+  let mediaName = null;
 
   if (
-    hasImage &&
-    hasVideo
+    media &&
+    typeof media === "object" &&
+    media.name
   ) {
+    mediaName = media.name;
 
-    return publishResult(
-      "Invalid Post",
-      "Please select either Image OR Video.",
-      []
-    );
+    const contentType =
+      media.type || "";
 
-  }
+    if (
+      contentType.startsWith("image/")
+    ) {
+      mediaType = "image";
+    } else if (
+      contentType.startsWith("video/")
+    ) {
+      mediaType = "video";
+    } else {
+      const lower =
+        mediaName.toLowerCase();
 
-  const placeholders =
-    pageIds
-      .map(() => "?")
-      .join(",");
+      if (
+        lower.endsWith(".jpg") ||
+        lower.endsWith(".jpeg") ||
+        lower.endsWith(".png") ||
+        lower.endsWith(".gif") ||
+        lower.endsWith(".webp")
+      ) {
+        mediaType = "image";
+      } else if (
+        lower.endsWith(".mp4") ||
+        lower.endsWith(".mov") ||
+        lower.endsWith(".avi") ||
+        lower.endsWith(".mkv") ||
+        lower.endsWith(".webm")
+      ) {
+        mediaType = "video";
+      }
+    }
 
-  const result =
-    await env.DB.prepare(`
-      SELECT
-        id,
-        facebook_page_id,
-        page_name,
-        access_token,
-        account_id
-      FROM pages
-      WHERE facebook_page_id IN (${placeholders})
-    `)
-      .bind(
-        ...pageIds
-      )
-      .all();
+    if (!mediaType) {
+      throw new Error(
+        "Unsupported media type. Please upload an image or video."
+      );
+    }
 
-  const pages =
-    result.results || [];
+    mediaBuffer = await media.arrayBuffer();
 
-  if (pages.length === 0) {
-
-    return publishResult(
-      "Pages Not Found",
-      `Received ${pageIds.length} Page ID(s), but none matched the database.`,
-      []
-    );
-
+    if (mediaBuffer.byteLength > 100 * 1024 * 1024) {
+      throw new Error(
+        "File is too large. Please use a smaller file."
+      );
+    }
   }
 
   const results = [];
 
-  for (const p of pages) {
-
+  for (const fbPage of pages) {
     try {
+      let result;
 
-      let response;
-
-      if (hasVideo) {
-
-        response =
-          await postVideo(
-            p,
-            message,
-            video,
-            env
-          );
-
-      } else if (hasImage) {
-
-        response =
-          await postImage(
-            p,
-            message,
-            image,
-            env
-          );
-
+      if (!mediaBuffer) {
+        result = await publishTextPost(
+          fbPage,
+          message,
+          config.graphVersion
+        );
+      } else if (mediaType === "image") {
+        result = await publishImagePost(
+          fbPage,
+          message,
+          mediaBuffer,
+          mediaName,
+          config.graphVersion
+        );
       } else {
-
-        response =
-          await postText(
-            p,
-            message,
-            env
-          );
-
+        result = await publishVideoPost(
+          fbPage,
+          message,
+          mediaBuffer,
+          mediaName,
+          config.graphVersion
+        );
       }
 
       results.push({
-        page_name:
-          p.page_name ||
-          "Unnamed Page",
-
-        page_id:
-          p.facebook_page_id,
-
+        page: fbPage.page_name,
+        pageId: fbPage.facebook_page_id,
         success: true,
-
-        response
+        postId: result?.id || "",
       });
-
     } catch (error) {
-
       results.push({
-        page_name:
-          p.page_name ||
-          "Unnamed Page",
-
-        page_id:
-          p.facebook_page_id,
-
+        page: fbPage.page_name,
+        pageId: fbPage.facebook_page_id,
         success: false,
-
         error:
           error?.message ||
-          String(error)
+          String(error),
       });
-
     }
-
   }
 
-  const successCount =
-    results.filter(
-      r => r.success
-    ).length;
-
-  let title;
-
-  if (
-    successCount ===
-    results.length
-  ) {
-
-    title =
-      "Published Successfully";
-
-  } else if (
-    successCount > 0
-  ) {
-
-    title =
-      "Partially Published";
-
-  } else {
-
-    title =
-      "Publish Failed";
-
-  }
-
-  return publishResult(
-    title,
-    `${successCount} of ${results.length} selected Pages published successfully.`,
-    results
-  );
-}
-
-
-/* =========================================================
-   TEXT POST
-========================================================= */
-
-async function postText(
-  pageData,
-  message,
-  env
-) {
-  const config =
-    getMetaConfig(env);
-
-  const url =
-    `https://graph.facebook.com/${config.graphVersion}/` +
-    `${encodeURIComponent(pageData.facebook_page_id)}/feed`;
-
-  const response =
-    await fetch(
-      url,
-      {
-        method: "POST",
-
-        headers: {
-          "content-type":
-            "application/x-www-form-urlencoded"
-        },
-
-        body:
-          new URLSearchParams({
-            message,
-            access_token:
-              pageData.access_token
-          })
-      }
-    );
-
-  const data =
-    await response.json();
-
-  if (
-    !response.ok ||
-    data.error
-  ) {
-
-    throw new Error(
-      data.error?.message ||
-      JSON.stringify(data)
-    );
-
-  }
-
-  return data;
-}
-
-
-/* =========================================================
-   IMAGE POST
-========================================================= */
-
-async function postImage(
-  pageData,
-  message,
-  image,
-  env
-) {
-  const config =
-    getMetaConfig(env);
-
-  const url =
-    `https://graph.facebook.com/${config.graphVersion}/` +
-    `${encodeURIComponent(pageData.facebook_page_id)}/photos`;
-
-  const body =
-    new FormData();
-
-  body.append(
-    "access_token",
-    pageData.access_token
-  );
-
-  if (message) {
-
-    body.append(
-      "message",
-      message
-    );
-
-  }
-
-  body.append(
-    "source",
-    image,
-    image.name || "image"
-  );
-
-  const response =
-    await fetch(
-      url,
-      {
-        method: "POST",
-        body
-      }
-    );
-
-  const data =
-    await response.json();
-
-  if (
-    !response.ok ||
-    data.error
-  ) {
-
-    throw new Error(
-      data.error?.message ||
-      JSON.stringify(data)
-    );
-
-  }
-
-  return data;
-}
-
-
-/* =========================================================
-   VIDEO POST
-========================================================= */
-
-async function postVideo(
-  pageData,
-  message,
-  video,
-  env
-) {
-  const config =
-    getMetaConfig(env);
-
-  const url =
-    `https://graph.facebook.com/${config.graphVersion}/` +
-    `${encodeURIComponent(pageData.facebook_page_id)}/videos`;
-
-  const body =
-    new FormData();
-
-  body.append(
-    "access_token",
-    pageData.access_token
-  );
-
-  if (message) {
-
-    body.append(
-      "description",
-      message
-    );
-
-  }
-
-  body.append(
-    "source",
-    video,
-    video.name || "video"
-  );
-
-  const response =
-    await fetch(
-      url,
-      {
-        method: "POST",
-        body
-      }
-    );
-
-  const data =
-    await response.json();
-
-  if (
-    !response.ok ||
-    data.error
-  ) {
-
-    throw new Error(
-      data.error?.message ||
-      JSON.stringify(data)
-    );
-
-  }
-
-  return data;
-}
-
-
-/* =========================================================
-   FACEBOOK USER
-========================================================= */
-
-async function facebookMe(
-  accessToken,
-  env
-) {
-  const config =
-    getMetaConfig(env);
-
-  const url =
-    `https://graph.facebook.com/${config.graphVersion}/me` +
-    `?fields=id,name` +
-    `&access_token=${encodeURIComponent(accessToken)}`;
-
-  const response =
-    await fetch(url);
-
-  const data =
-    await response.json();
-
-  if (
-    !response.ok ||
-    data.error
-  ) {
-
-    throw new Error(
-      data.error?.message ||
-      JSON.stringify(data)
-    );
-
-  }
-
-  return data;
-}
-
-
-/* =========================================================
-   FACEBOOK PAGES
-========================================================= */
-
-async function getFacebookPages(
-  accessToken,
-  env
-) {
-  const config =
-    getMetaConfig(env);
-
-  const pages = [];
-
-  let next =
-    `https://graph.facebook.com/${config.graphVersion}/me/accounts` +
-    `?fields=id,name,access_token` +
-    `&limit=100` +
-    `&access_token=${encodeURIComponent(accessToken)}`;
-
-  while (next) {
-
-    const response =
-      await fetch(next);
-
-    const data =
-      await response.json();
-
-    if (
-      !response.ok ||
-      data.error
-    ) {
-
-      throw new Error(
-        data.error?.message ||
-        JSON.stringify(data)
-      );
-
-    }
-
-    if (
-      Array.isArray(data.data)
-    ) {
-
-      pages.push(
-        ...data.data
-      );
-
-    }
-
-    next =
-      data.paging?.next ||
-      null;
-  }
-
-  return pages;
-}
-
-
-/* =========================================================
-   SAVE PAGE
-========================================================= */
-
-async function savePage(
-  db,
-  accountId,
-  pageData
-) {
-  const existing =
-    await db.prepare(`
-      SELECT id
-      FROM pages
-      WHERE facebook_page_id = ?
-      LIMIT 1
-    `)
-      .bind(
-        String(pageData.id)
-      )
-      .first();
-
-  if (existing) {
-
-    await db.prepare(`
-      UPDATE pages
-      SET
-        page_name = ?,
-        access_token = ?,
-        account_id = ?
-      WHERE facebook_page_id = ?
-    `)
-      .bind(
-        pageData.name ||
-          "Unnamed Page",
-
-        pageData.access_token,
-
-        Number(accountId),
-
-        String(pageData.id)
-      )
-      .run();
-
-  } else {
-
-    await db.prepare(`
-      INSERT INTO pages
-      (
-        facebook_page_id,
-        page_name,
-        access_token,
-        account_id
-      )
-      VALUES (?, ?, ?, ?)
-    `)
-      .bind(
-        String(pageData.id),
-
-        pageData.name ||
-          "Unnamed Page",
-
-        pageData.access_token,
-
-        Number(accountId)
-      )
-      .run();
-
-  }
-}
-
-
-/* =========================================================
-   PUBLISH RESULT
-========================================================= */
-
-function publishResult(
-  title,
-  message,
-  results
-) {
-  const rows =
-    results
-      .map(r => {
-
-        if (r.success) {
-
-          return `
-            <div class="row ok">
+  return page(
+    "Publish Results",
+    `
+    <div class="results-card">
+
+      <h2>Publish Results</h2>
+
+      <div class="result-summary">
+        ${results.filter((r) => r.success).length}
+        successful /
+        ${results.length}
+        total
+      </div>
+
+      <div class="results-list">
+
+        ${results
+          .map(
+            (r) => `
+            <div class="result-row ${
+              r.success
+                ? "result-success"
+                : "result-failed"
+            }">
 
               <div>
-
                 <strong>
                   ${escapeHtml(
-                    r.page_name
+                    r.page || "Unnamed Page"
                   )}
                 </strong>
 
-                <small>
+                <div class="result-page-id">
                   Page ID:
                   ${escapeHtml(
-                    r.page_id
+                    r.pageId
                   )}
-                </small>
-
+                </div>
               </div>
 
-              <strong>
-                Published
-              </strong>
-
-            </div>
-          `;
-
-        }
-
-        return `
-          <div class="row bad">
-
-            <div>
-
-              <strong>
-                ${escapeHtml(
-                  r.page_name
-                )}
-              </strong>
-
-              <small>
-                Page ID:
-                ${escapeHtml(
-                  r.page_id
-                )}
-              </small>
-
-              <div class="error">
-                ${escapeHtml(
-                  r.error
-                )}
+              <div class="result-status">
+                ${
+                  r.success
+                    ? "✓ Published"
+                    : "✕ Failed"
+                }
               </div>
 
+              ${
+                r.success
+                  ? r.postId
+                    ? `
+                    <div class="result-error">
+                      Post ID:
+                      ${escapeHtml(
+                        r.postId
+                      )}
+                    </div>
+                    `
+                    : ""
+                  : `
+                    <div class="result-error">
+                      ${escapeHtml(
+                        r.error || ""
+                      )}
+                    </div>
+                  `
+              }
+
             </div>
+          `
+          )
+          .join("")}
 
-            <strong>
-              Failed
-            </strong>
+      </div>
 
-          </div>
-        `;
+      <a class="back-btn" href="/">
+        Back to Dashboard
+      </a>
 
-      })
-      .join("");
-
-  return new Response(
+    </div>
     `
-<!DOCTYPE html>
-<html>
-<head>
-
-<meta charset="UTF-8">
-
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1"
->
-
-<title>
-${escapeHtml(title)}
-</title>
-
-<style>
-
-body {
-  margin: 0;
-  background: #f3f4f6;
-  font-family: Arial, sans-serif;
-  padding: 30px;
-}
-
-.box {
-  max-width: 900px;
-  margin: 30px auto;
-  background: white;
-  padding: 25px;
-  border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0,0,0,.08);
-}
-
-.row {
-  padding: 15px;
-  margin-top: 10px;
-  border-radius: 8px;
-  display: flex;
-  justify-content: space-between;
-  gap: 15px;
-}
-
-.ok {
-  background: #ecfdf5;
-  border: 1px solid #bbf7d0;
-}
-
-.bad {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-}
-
-small {
-  display: block;
-  color: #6b7280;
-  margin-top: 5px;
-}
-
-.error {
-  color: #b91c1c;
-  margin-top: 8px;
-  white-space: pre-wrap;
-}
-
-.back {
-  display: inline-block;
-  margin-top: 20px;
-  background: #1877f2;
-  color: white;
-  padding: 11px 16px;
-  border-radius: 8px;
-  text-decoration: none;
-  font-weight: bold;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="box">
-
-<h1>
-${escapeHtml(title)}
-</h1>
-
-<p>
-${escapeHtml(message)}
-</p>
-
-${rows}
-
-<a
-  class="back"
-  href="/"
->
-← Back to Dashboard
-</a>
-
-</div>
-
-</body>
-</html>
-    `,
-    {
-      status:
-        title === "No Pages Selected"
-          ? 400
-          : 200,
-
-      headers: {
-        "content-type":
-          "text/html; charset=UTF-8"
-      }
-    }
   );
 }
 
+/* =========================================================
+   FACEBOOK PUBLISH HELPERS
+========================================================= */
+
+async function publishTextPost(
+  fbPage,
+  message,
+  graphVersion
+) {
+  const url =
+    `https://graph.facebook.com/${graphVersion}/${fbPage.facebook_page_id}/feed`;
+
+  const body = new URLSearchParams();
+
+  body.set(
+    "message",
+    message
+  );
+
+  body.set(
+    "access_token",
+    fbPage.access_token
+  );
+
+  return graphPost(url, body);
+}
+
+async function publishImagePost(
+  fbPage,
+  message,
+  mediaBuffer,
+  mediaName,
+  graphVersion
+) {
+  const url =
+    `https://graph.facebook.com/${graphVersion}/${fbPage.facebook_page_id}/photos`;
+
+  const form = new FormData();
+
+  form.append(
+    "access_token",
+    fbPage.access_token
+  );
+
+  if (message) {
+    form.append(
+      "caption",
+      message
+    );
+  }
+
+  form.append(
+    "source",
+    new File(
+      [mediaBuffer],
+      mediaName || "image.jpg"
+    )
+  );
+
+  return graphPostFormData(
+    url,
+    form
+  );
+}
+
+async function publishVideoPost(
+  fbPage,
+  message,
+  mediaBuffer,
+  mediaName,
+  graphVersion
+) {
+  const url =
+    `https://graph.facebook.com/${graphVersion}/${fbPage.facebook_page_id}/videos`;
+
+  const form = new FormData();
+
+  form.append(
+    "access_token",
+    fbPage.access_token
+  );
+
+  if (message) {
+    form.append(
+      "description",
+      message
+    );
+  }
+
+  form.append(
+    "source",
+    new File(
+      [mediaBuffer],
+      mediaName || "video.mp4"
+    )
+  );
+
+  return graphPostFormData(
+    url,
+    form
+  );
+}
+
+async function graphPost(
+  url,
+  body
+) {
+  const response = await fetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/x-www-form-urlencoded",
+      },
+      body,
+    }
+  );
+
+  const data =
+    await response.json();
+
+  if (!response.ok || data.error) {
+    throw new Error(
+      formatGraphError(data)
+    );
+  }
+
+  return data;
+}
+
+async function graphPostFormData(
+  url,
+  form
+) {
+  const response = await fetch(
+    url,
+    {
+      method: "POST",
+      body: form,
+    }
+  );
+
+  const data =
+    await response.json();
+
+  if (!response.ok || data.error) {
+    throw new Error(
+      formatGraphError(data)
+    );
+  }
+
+  return data;
+}
+
+function formatGraphError(data) {
+  if (
+    data &&
+    data.error
+  ) {
+    const e = data.error;
+
+    return [
+      e.message,
+      e.type
+        ? `Type: ${e.type}`
+        : "",
+      e.code !== undefined
+        ? `Code: ${e.code}`
+        : "",
+      e.error_subcode !== undefined
+        ? `Subcode: ${e.error_subcode}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  return JSON.stringify(data);
+}
 
 /* =========================================================
-   GENERIC PAGE
+   HTML
 ========================================================= */
 
 function page(
@@ -2054,115 +1299,519 @@ function page(
   return new Response(
     `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
 
-<meta charset="UTF-8">
+  <title>
+    ${escapeHtml(title)} - ${APP_NAME}
+  </title>
 
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1"
->
+  <style>
 
-<title>
-${escapeHtml(title)}
-</title>
+    * {
+      box-sizing: border-box;
+    }
 
-<style>
+    body {
+      margin: 0;
+      background: #f4f7fb;
+      color: #172033;
+      font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+    }
 
-body {
-  margin: 0;
-  padding: 30px;
-  background: #f3f4f6;
-  font-family: Arial, sans-serif;
-}
+    .topbar {
+      background: #ffffff;
+      border-bottom: 1px solid #e2e7ef;
+      padding: 20px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
 
-.box {
-  max-width: 900px;
-  margin: 40px auto;
-  background: white;
-  padding: 25px;
-  border-radius: 12px;
-}
+    .brand {
+      font-size: 23px;
+      font-weight: 800;
+    }
 
-a {
-  display: inline-block;
-  margin-top: 20px;
-  background: #1877f2;
-  color: white;
-  padding: 10px 15px;
-  border-radius: 7px;
-  text-decoration: none;
-}
+    .subtitle {
+      margin-top: 4px;
+      color: #687386;
+      font-size: 13px;
+    }
 
-pre {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
+    .connect-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #1877f2;
+      color: white;
+      text-decoration: none;
+      padding: 12px 18px;
+      border-radius: 8px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
 
-</style>
+    .connect-btn:hover {
+      opacity: .92;
+    }
 
+    .container {
+      max-width: 1100px;
+      margin: 30px auto;
+      padding: 0 18px 60px;
+    }
+
+    .account-card,
+    .publisher-card,
+    .results-card,
+    .empty-box,
+    .error-box {
+      background: white;
+      border: 1px solid #e1e6ee;
+      border-radius: 14px;
+      box-shadow:
+        0 5px 20px rgba(20, 30, 50, .05);
+      margin-bottom: 24px;
+    }
+
+    .account-card {
+      overflow: hidden;
+    }
+
+    .account-header {
+      padding: 22px;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: center;
+      border-bottom: 1px solid #edf0f5;
+    }
+
+    .account-header h2 {
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
+
+    .facebook-id {
+      color: #697589;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    code {
+      background: #f0f3f7;
+      padding: 3px 6px;
+      border-radius: 5px;
+      font-size: 12px;
+      color: #27344a;
+      word-break: break-all;
+    }
+
+    .page-count {
+      display: inline-block;
+      background: #eef5ff;
+      color: #1769d2;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 20px;
+    }
+
+    .account-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .account-actions form {
+      margin: 0;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 7px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .btn-blue {
+      background: #1877f2;
+      color: white;
+    }
+
+    .btn-red {
+      background: #fff0f0;
+      color: #d32f2f;
+      border: 1px solid #ffd1d1;
+    }
+
+    .pages-section {
+      padding: 20px 22px 24px;
+    }
+
+    .list-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      gap: 15px;
+    }
+
+    .select-actions {
+      display: flex;
+      gap: 7px;
+    }
+
+    .small-btn {
+      background: #f4f6f9;
+      color: #27344a;
+      border: 1px solid #dfe4eb;
+      border-radius: 6px;
+      padding: 7px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .page-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .page-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: 68px;
+      padding: 13px 15px;
+      background: #fafbfd;
+      border: 1px solid #e5e9f0;
+      border-radius: 9px;
+      cursor: pointer;
+      transition:
+        border-color .15s,
+        background .15s,
+        transform .15s;
+    }
+
+    .page-row:hover {
+      background: #f5f9ff;
+      border-color: #b8d3f7;
+    }
+
+    .page-row:has(
+      .page-checkbox:checked
+    ) {
+      background: #f0f7ff;
+      border-color: #76aef1;
+    }
+
+    .page-checkbox {
+      width: 19px;
+      height: 19px;
+      flex: 0 0 auto;
+      cursor: pointer;
+    }
+
+    .page-info {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .page-name {
+      font-size: 15px;
+      font-weight: 750;
+      margin-bottom: 6px;
+      color: #1c2738;
+    }
+
+    .page-id {
+      font-size: 12px;
+      color: #758095;
+    }
+
+    .page-id code {
+      background: transparent;
+      padding: 0;
+      color: #687386;
+    }
+
+    .no-pages {
+      padding: 20px;
+      background: #f8fafc;
+      border-radius: 8px;
+      color: #697589;
+      text-align: center;
+    }
+
+    .publisher-card {
+      padding: 24px;
+    }
+
+    .publisher-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 22px;
+    }
+
+    .publisher-header h2 {
+      margin: 0;
+    }
+
+    #selected-count {
+      background: #eef5ff;
+      color: #1769d2;
+      border-radius: 20px;
+      padding: 7px 11px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .field {
+      margin-bottom: 20px;
+    }
+
+    .field label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    textarea {
+      width: 100%;
+      resize: vertical;
+      border: 1px solid #dce2eb;
+      border-radius: 8px;
+      padding: 13px;
+      font: inherit;
+      outline: none;
+    }
+
+    textarea:focus {
+      border-color: #1877f2;
+      box-shadow:
+        0 0 0 3px rgba(24,119,242,.10);
+    }
+
+    input[type="file"] {
+      width: 100%;
+      border: 1px solid #dce2eb;
+      border-radius: 8px;
+      padding: 11px;
+      background: white;
+    }
+
+    .hint {
+      color: #7a8495;
+      font-size: 12px;
+      margin-top: 7px;
+    }
+
+    .publish-btn {
+      width: 100%;
+      border: 0;
+      background: #1877f2;
+      color: white;
+      padding: 14px;
+      border-radius: 9px;
+      font-size: 15px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .publish-btn:hover {
+      opacity: .93;
+    }
+
+    .empty-box,
+    .error-box,
+    .results-card {
+      padding: 28px;
+    }
+
+    .error-box {
+      max-width: 900px;
+      margin: 50px auto;
+    }
+
+    .error-box h2 {
+      margin-top: 0;
+    }
+
+    pre {
+      background: #f5f6f8;
+      padding: 15px;
+      border-radius: 8px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .back-btn {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 11px 16px;
+      background: #1877f2;
+      color: white;
+      text-decoration: none;
+      border-radius: 7px;
+      font-weight: 700;
+    }
+
+    .result-summary {
+      margin: 12px 0 20px;
+      font-weight: 700;
+      color: #536075;
+    }
+
+    .results-list {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .result-row {
+      border: 1px solid #e1e6ee;
+      border-radius: 9px;
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px 15px;
+    }
+
+    .result-success {
+      background: #f6fff8;
+      border-color: #cdebd5;
+    }
+
+    .result-failed {
+      background: #fff8f8;
+      border-color: #f1d0d0;
+    }
+
+    .result-page-id {
+      margin-top: 5px;
+      color: #7b8596;
+      font-size: 12px;
+    }
+
+    .result-status {
+      font-weight: 800;
+    }
+
+    .result-success .result-status {
+      color: #218838;
+    }
+
+    .result-failed .result-status {
+      color: #d32f2f;
+    }
+
+    .result-error {
+      grid-column: 1 / -1;
+      color: #697589;
+      font-size: 12px;
+      word-break: break-word;
+    }
+
+    @media (max-width: 700px) {
+
+      .topbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .connect-btn {
+        width: 100%;
+      }
+
+      .account-header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .account-actions {
+        width: 100%;
+      }
+
+      .account-actions form {
+        flex: 1;
+      }
+
+      .account-actions button {
+        width: 100%;
+      }
+
+      .list-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .select-actions {
+        width: 100%;
+      }
+
+      .small-btn {
+        flex: 1;
+      }
+
+      .publisher-header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .result-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+  </style>
 </head>
 
 <body>
 
-<div class="box">
-
-<h1>
-${escapeHtml(title)}
-</h1>
-
-<div>
 ${content}
-</div>
-
-<a href="/">
-← Back to Dashboard
-</a>
-
-</div>
 
 </body>
 </html>
     `,
     {
-      status: 400,
-
       headers: {
-        "content-type":
-          "text/html; charset=UTF-8"
-      }
+        "Content-Type":
+          "text/html; charset=UTF-8",
+        "Cache-Control":
+          "no-store",
+      },
     }
   );
 }
-
 
 /* =========================================================
    ESCAPE HTML
 ========================================================= */
 
 function escapeHtml(value) {
-  return String(
-    value ?? ""
-  )
-    .replace(
-      /&/g,
-      "&amp;"
-    )
-    .replace(
-      /</g,
-      "&lt;"
-    )
-    .replace(
-      />/g,
-      "&gt;"
-    )
-    .replace(
-      /"/g,
-      "&quot;"
-    )
-    .replace(
-      /'/g,
-      "&#039;"
-    );
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
