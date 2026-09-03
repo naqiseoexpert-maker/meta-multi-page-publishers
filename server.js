@@ -75,15 +75,15 @@ export default {
 
                   <button
                     type="button"
-                    class="btn btn-blue"
-                    onclick="selectAccount(${JSON.stringify(String(account.id))})">
+                    class="btn btn-blue account-select-btn"
+                    data-account-id="${escapeHtml(String(account.id))}">
                     ☑️ Select Account
                   </button>
 
                   <button
                     type="button"
-                    class="btn btn-gray"
-                    onclick="unselectAccount(${JSON.stringify(String(account.id))})">
+                    class="btn btn-gray account-unselect-btn"
+                    data-account-id="${escapeHtml(String(account.id))}">
                     ⬜ Unselect
                   </button>
 
@@ -109,7 +109,7 @@ export default {
                     method="POST"
                     action="/remove-account"
                     class="action-form"
-                    onsubmit="return confirm('Are you sure you want to remove this Facebook account from the publisher?');">
+                    onsubmit="return confirmRemoveAccount();">
 
                     <input
                       type="hidden"
@@ -155,7 +155,6 @@ export default {
                                 <input
                                   type="checkbox"
                                   class="page-checkbox account-${escapeHtml(String(account.id))}"
-                                  name="page_ids"
                                   value="${escapeHtml(String(page.page_id))}"
                                   data-account-id="${escapeHtml(String(account.id))}">
                               </td>
@@ -197,7 +196,8 @@ export default {
           }),
           {
             headers: {
-              "content-type": "text/html; charset=UTF-8"
+              "content-type": "text/html; charset=UTF-8",
+              "cache-control": "no-store"
             }
           }
         );
@@ -232,12 +232,8 @@ export default {
         request.method === "GET" &&
         path === "/auth/meta/callback"
       ) {
-        const code =
-          url.searchParams.get("code");
-
-        const error =
-          url.searchParams.get("error");
-
+        const code = url.searchParams.get("code");
+        const error = url.searchParams.get("error");
         const errorDescription =
           url.searchParams.get("error_description");
 
@@ -246,6 +242,7 @@ export default {
             "Facebook Login Error",
             `
               <p><b>Error:</b> ${escapeHtml(error)}</p>
+
               <p>
                 ${escapeHtml(
                   errorDescription ||
@@ -254,9 +251,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -271,9 +266,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -289,11 +282,8 @@ export default {
           `&redirect_uri=${encodeURIComponent(redirectUri)}` +
           `&code=${encodeURIComponent(code)}`;
 
-        const tokenResponse =
-          await fetch(tokenUrl);
-
-        const tokenData =
-          await tokenResponse.json();
+        const tokenResponse = await fetch(tokenUrl);
+        const tokenData = await tokenResponse.json();
 
         if (
           !tokenResponse.ok ||
@@ -307,17 +297,11 @@ export default {
               </p>
 
               <pre>${escapeHtml(
-                JSON.stringify(
-                  tokenData,
-                  null,
-                  2
-                )
+                JSON.stringify(tokenData, null, 2)
               )}</pre>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -326,17 +310,16 @@ export default {
         const userAccessToken =
           tokenData.access_token;
 
-        // Get Facebook user ID
+        // =====================================================
+        // GET FACEBOOK USER ID
+        // =====================================================
         const meUrl =
           `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
           `?fields=id` +
           `&access_token=${encodeURIComponent(userAccessToken)}`;
 
-        const meResponse =
-          await fetch(meUrl);
-
-        const meData =
-          await meResponse.json();
+        const meResponse = await fetch(meUrl);
+        const meData = await meResponse.json();
 
         if (
           !meResponse.ok ||
@@ -350,17 +333,11 @@ export default {
               </p>
 
               <pre>${escapeHtml(
-                JSON.stringify(
-                  meData,
-                  null,
-                  2
-                )
+                JSON.stringify(meData, null, 2)
               )}</pre>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -371,9 +348,7 @@ export default {
 
         // =====================================================
         // SAVE / UPDATE FACEBOOK ACCOUNT
-        // No ON CONFLICT dependency
         // =====================================================
-
         let account =
           await env.DB.prepare(`
             SELECT
@@ -454,9 +429,8 @@ export default {
         }
 
         // =====================================================
-        // GET ALL FACEBOOK PAGES
+        // GET FACEBOOK PAGES
         // =====================================================
-
         let accountsUrl =
           `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me/accounts` +
           `?fields=id,name,access_token&limit=100` +
@@ -514,10 +488,6 @@ export default {
 
             pageCount++;
 
-            // =================================================
-            // CHECK WHETHER PAGE ALREADY EXISTS
-            // =================================================
-
             const existingPage =
               await env.DB.prepare(`
                 SELECT id
@@ -533,7 +503,6 @@ export default {
                 .first();
 
             if (existingPage) {
-              // UPDATE EXISTING PAGE
               await env.DB.prepare(`
                 UPDATE facebook_pages
                 SET
@@ -550,7 +519,6 @@ export default {
 
               updatedPages++;
             } else {
-              // INSERT NEW PAGE
               await env.DB.prepare(`
                 INSERT INTO facebook_pages
                   (
@@ -574,8 +542,7 @@ export default {
           }
 
           accountsUrl =
-            pagesData.paging?.next ||
-            null;
+            pagesData.paging?.next || null;
         }
 
         return htmlResult(
@@ -589,9 +556,7 @@ export default {
 
               <p>
                 Facebook User ID:
-                <b>
-                  ${escapeHtml(facebookUserId)}
-                </b>
+                <b>${escapeHtml(facebookUserId)}</b>
               </p>
 
               <p>
@@ -612,9 +577,7 @@ export default {
             </div>
 
             <p>
-              <a
-                class="main-link"
-                href="/">
+              <a class="main-link" href="/">
                 ← Back to Dashboard
               </a>
             </p>
@@ -633,7 +596,7 @@ export default {
           await request.formData();
 
         const accountId =
-          formData.get("account_id");
+          String(formData.get("account_id") || "").trim();
 
         if (!accountId) {
           return htmlResult(
@@ -644,9 +607,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -674,9 +635,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -697,9 +656,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -823,16 +780,13 @@ export default {
             }
 
             accountsUrl =
-              data.paging?.next ||
-              null;
+              data.paging?.next || null;
           }
         } catch (error) {
           return htmlResult(
             "Sync Error",
             `
-              <h2>
-                ❌ Sync Failed
-              </h2>
+              <h2>❌ Sync Failed</h2>
 
               <p>
                 ${escapeHtml(
@@ -842,9 +796,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -862,9 +814,7 @@ export default {
               <p>
                 Facebook Account:
                 <b>
-                  ${escapeHtml(
-                    account.facebook_user_id
-                  )}
+                  ${escapeHtml(account.facebook_user_id)}
                 </b>
               </p>
 
@@ -891,9 +841,7 @@ export default {
             </div>
 
             <p>
-              <a
-                class="main-link"
-                href="/">
+              <a class="main-link" href="/">
                 ← Back to Dashboard
               </a>
             </p>
@@ -912,7 +860,7 @@ export default {
           await request.formData();
 
         const accountId =
-          formData.get("account_id");
+          String(formData.get("account_id") || "").trim();
 
         if (!accountId) {
           return htmlResult(
@@ -923,9 +871,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -952,9 +898,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -986,9 +930,7 @@ export default {
               <p>
                 Facebook User ID:
                 <b>
-                  ${escapeHtml(
-                    account.facebook_user_id
-                  )}
+                  ${escapeHtml(account.facebook_user_id)}
                 </b>
               </p>
 
@@ -998,16 +940,13 @@ export default {
               </p>
 
               <p>
-                This does not delete the
-                Facebook account itself.
+                This does not delete the Facebook account itself.
               </p>
 
             </div>
 
             <p>
-              <a
-                class="main-link"
-                href="/">
+              <a class="main-link" href="/">
                 ← Back to Dashboard
               </a>
             </p>
@@ -1063,9 +1002,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -1085,9 +1022,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -1106,9 +1041,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -1149,9 +1082,7 @@ export default {
               </p>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
             `
           );
@@ -1215,8 +1146,7 @@ export default {
               body.append(
                 "source",
                 videoBlob,
-                video.name ||
-                  "video.mp4"
+                video.name || "video.mp4"
               );
 
               body.append(
@@ -1259,8 +1189,7 @@ export default {
               body.append(
                 "source",
                 imageBlob,
-                image.name ||
-                  "image.jpg"
+                image.name || "image.jpg"
               );
 
               body.append(
@@ -1402,16 +1331,13 @@ export default {
                 color: #1877f2;
               }
             </style>
-
           </head>
 
           <body>
 
             <div class="box">
 
-              <h2>
-                ❌ Worker Error
-              </h2>
+              <h2>❌ Worker Error</h2>
 
               <pre>${escapeHtml(
                 error?.stack ||
@@ -1420,9 +1346,7 @@ export default {
               )}</pre>
 
               <p>
-                <a href="/">
-                  ← Back to Dashboard
-                </a>
+                <a href="/">← Back to Dashboard</a>
               </p>
 
             </div>
@@ -1837,16 +1761,12 @@ function dashboardHtml({
       <div class="stats">
 
         <div class="stat">
-          <strong>
-            ${totalAccounts}
-          </strong>
+          <strong>${totalAccounts}</strong>
           Connected Facebook Account${totalAccounts === 1 ? "" : "s"}
         </div>
 
         <div class="stat">
-          <strong>
-            ${totalPages}
-          </strong>
+          <strong>${totalPages}</strong>
           Connected Page${totalPages === 1 ? "" : "s"}
         </div>
 
@@ -1903,22 +1823,21 @@ function dashboardHtml({
                 type="text"
                 class="search-box"
                 id="pageSearch"
-                placeholder="🔎 Search Page Name or Page ID..."
-                oninput="searchPages()">
+                placeholder="🔎 Search Page Name or Page ID...">
 
               <div class="selection-buttons">
 
                 <button
                   type="button"
                   class="small-btn"
-                  onclick="selectAllPages()">
+                  id="selectAllPagesButton">
                   ☑️ Select All
                 </button>
 
                 <button
                   type="button"
                   class="small-btn"
-                  onclick="unselectAllPages()">
+                  id="unselectAllPagesButton">
                   ⬜ Unselect All
                 </button>
 
@@ -1965,6 +1884,8 @@ function dashboardHtml({
 
               </div>
 
+              <div id="selectedPagesContainer"></div>
+
               <button
                 type="submit"
                 class="publish-btn"
@@ -1983,6 +1904,10 @@ function dashboardHtml({
 
   <script>
 
+    // =========================================================
+    // PAGE CHECKBOX HELPERS
+    // =========================================================
+
     function getPageCheckboxes() {
       return Array.from(
         document.querySelectorAll(".page-checkbox")
@@ -1991,9 +1916,7 @@ function dashboardHtml({
 
     function selectAllPages() {
       getPageCheckboxes().forEach(function (checkbox) {
-
-        const row =
-          checkbox.closest(".page-row");
+        const row = checkbox.closest(".page-row");
 
         if (
           !row ||
@@ -2001,7 +1924,6 @@ function dashboardHtml({
         ) {
           checkbox.checked = true;
         }
-
       });
     }
 
@@ -2015,7 +1937,7 @@ function dashboardHtml({
       document
         .querySelectorAll(
           '.page-checkbox[data-account-id="' +
-          accountId +
+          CSS.escape(String(accountId)) +
           '"]'
         )
         .forEach(function (checkbox) {
@@ -2027,7 +1949,7 @@ function dashboardHtml({
       document
         .querySelectorAll(
           '.page-checkbox[data-account-id="' +
-          accountId +
+          CSS.escape(String(accountId)) +
           '"]'
         )
         .forEach(function (checkbox) {
@@ -2035,43 +1957,123 @@ function dashboardHtml({
         });
     }
 
-    function searchPages() {
+    // =========================================================
+    // ACCOUNT BUTTONS
+    // =========================================================
 
-      const input =
-        document.getElementById("pageSearch");
+    document
+      .querySelectorAll(".account-select-btn")
+      .forEach(function (button) {
 
-      if (!input) {
-        return;
-      }
+        button.addEventListener(
+          "click",
+          function () {
 
-      const search =
-        input.value
-          .trim()
-          .toLowerCase();
+            const accountId =
+              button.dataset.accountId;
 
-      document
-        .querySelectorAll(".page-row")
-        .forEach(function (row) {
+            selectAccount(accountId);
 
-          const pageName =
-            row.dataset.pageName || "";
+          }
+        );
 
-          const pageId =
-            row.dataset.pageId || "";
+      });
 
-          const match =
-            pageName
-              .toLowerCase()
-              .includes(search) ||
-            pageId
-              .toLowerCase()
-              .includes(search);
+    document
+      .querySelectorAll(".account-unselect-btn")
+      .forEach(function (button) {
 
-          row.style.display =
-            match ? "" : "none";
+        button.addEventListener(
+          "click",
+          function () {
 
-        });
+            const accountId =
+              button.dataset.accountId;
+
+            unselectAccount(accountId);
+
+          }
+        );
+
+      });
+
+    // =========================================================
+    // SELECT ALL / UNSELECT ALL
+    // =========================================================
+
+    const selectAllButton =
+      document.getElementById(
+        "selectAllPagesButton"
+      );
+
+    if (selectAllButton) {
+      selectAllButton.addEventListener(
+        "click",
+        selectAllPages
+      );
     }
+
+    const unselectAllButton =
+      document.getElementById(
+        "unselectAllPagesButton"
+      );
+
+    if (unselectAllButton) {
+      unselectAllButton.addEventListener(
+        "click",
+        unselectAllPages
+      );
+    }
+
+    // =========================================================
+    // SEARCH
+    // =========================================================
+
+    const pageSearch =
+      document.getElementById("pageSearch");
+
+    if (pageSearch) {
+
+      pageSearch.addEventListener(
+        "input",
+        function () {
+
+          const search =
+            pageSearch.value
+              .trim()
+              .toLowerCase();
+
+          document
+            .querySelectorAll(".page-row")
+            .forEach(function (row) {
+
+              const pageName =
+                row.dataset.pageName || "";
+
+              const pageId =
+                row.dataset.pageId || "";
+
+              const match =
+                pageName
+                  .toLowerCase()
+                  .includes(search) ||
+                pageId
+                  .toLowerCase()
+                  .includes(search);
+
+              row.style.display =
+                match ? "" : "none";
+
+            });
+
+        }
+      );
+
+    }
+
+    // =========================================================
+    // IMAGE / VIDEO
+    // =========================================================
 
     const imageInput =
       document.getElementById("image");
@@ -2115,6 +2117,10 @@ function dashboardHtml({
 
     }
 
+    // =========================================================
+    // PUBLISH
+    // =========================================================
+
     const publishForm =
       document.getElementById("publishForm");
 
@@ -2124,10 +2130,40 @@ function dashboardHtml({
         "submit",
         function (event) {
 
+          // ---------------------------------------------------
+          // IMPORTANT:
+          // Page checkboxes are outside publishForm.
+          // Copy selected page IDs into hidden inputs.
+          // ---------------------------------------------------
+
           const selectedPages =
             document.querySelectorAll(
               ".page-checkbox:checked"
             );
+
+          const hiddenContainer =
+            document.getElementById(
+              "selectedPagesContainer"
+            );
+
+          if (hiddenContainer) {
+            hiddenContainer.innerHTML = "";
+
+            selectedPages.forEach(
+              function (checkbox) {
+
+                const hidden =
+                  document.createElement("input");
+
+                hidden.type = "hidden";
+                hidden.name = "page_ids";
+                hidden.value = checkbox.value;
+
+                hiddenContainer.appendChild(hidden);
+
+              }
+            );
+          }
 
           const message =
             document
@@ -2200,13 +2236,17 @@ function dashboardHtml({
 
     }
 
+    // =========================================================
+    // SYNC / REMOVE BUTTONS
+    // =========================================================
+
     document
       .querySelectorAll(".action-form")
       .forEach(function (form) {
 
         form.addEventListener(
           "submit",
-          function () {
+          function (event) {
 
             const button =
               form.querySelector(
@@ -2214,15 +2254,50 @@ function dashboardHtml({
               );
 
             if (button) {
-              button.disabled = true;
-              button.textContent =
-                "⏳ Please wait...";
+
+              if (
+                form.action.includes(
+                  "/remove-account"
+                )
+              ) {
+
+                if (
+                  !window.confirm(
+                    "Are you sure you want to remove this Facebook account from the publisher?"
+                  )
+                ) {
+                  event.preventDefault();
+                  return;
+                }
+
+                button.disabled = true;
+                button.textContent =
+                  "⏳ Removing...";
+
+              } else {
+
+                button.disabled = true;
+                button.textContent =
+                  "⏳ Syncing...";
+
+              }
+
             }
 
           }
         );
 
       });
+
+    // =========================================================
+    // REMOVE CONFIRM
+    // =========================================================
+
+    function confirmRemoveAccount() {
+      // Confirmation is handled by the submit listener.
+      // Return true here so the form can continue normally.
+      return true;
+    }
 
   </script>
 
@@ -2510,7 +2585,8 @@ function htmlResult(
     {
       headers: {
         "content-type":
-          "text/html; charset=UTF-8"
+          "text/html; charset=UTF-8",
+        "cache-control": "no-store"
       }
     }
   );
