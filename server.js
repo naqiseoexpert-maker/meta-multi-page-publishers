@@ -83,6 +83,28 @@ export default {
 
     if (url.pathname === "/") {
 
+      // -------------------------------------------------------
+      // GET ALL FACEBOOK ACCOUNTS
+      // -------------------------------------------------------
+
+      const accountsResult =
+        await env.DB.prepare(`
+          SELECT
+            id,
+            facebook_user_id
+          FROM facebook_accounts
+          ORDER BY id DESC
+        `).all();
+
+
+      const accounts =
+        accountsResult.results || [];
+
+
+      // -------------------------------------------------------
+      // GET ALL PAGES
+      // -------------------------------------------------------
+
       const pagesResult =
         await env.DB.prepare(`
           SELECT
@@ -111,6 +133,30 @@ export default {
 
       const accountGroups = {};
 
+
+      // -------------------------------------------------------
+      // FIRST CREATE ALL ACCOUNTS
+      // -------------------------------------------------------
+
+      for (const account of accounts) {
+
+        const accountId =
+          String(account.id);
+
+
+        accountGroups[accountId] = {
+          facebook_user_id:
+            account.facebook_user_id,
+
+          pages: []
+        };
+
+      }
+
+
+      // -------------------------------------------------------
+      // THEN ADD PAGES
+      // -------------------------------------------------------
 
       for (const page of allPages) {
 
@@ -267,6 +313,29 @@ export default {
 
                 <form
                   method="POST"
+                  action="/sync-pages"
+                  style="display:inline"
+                  onsubmit="return syncAccount(this);"
+                >
+
+                  <input
+                    type="hidden"
+                    name="account_id"
+                    value="${escapeHtml(accountId)}"
+                  >
+
+                  <button
+                    type="submit"
+                    class="small-button sync-button"
+                  >
+                    🔄 Sync Pages
+                  </button>
+
+                </form>
+
+
+                <form
+                  method="POST"
                   action="/remove-account"
                   style="display:inline"
                   onsubmit="return confirm('Is Facebook account aur is ke tamam Pages ko remove karna hai?');"
@@ -292,36 +361,54 @@ export default {
             </div>
 
 
-            <table>
+            ${
+              groupPages.length
+                ? `
+                  <table>
 
-              <thead>
+                    <thead>
 
-                <tr>
+                      <tr>
 
-                  <th style="width:70px">
-                    Select
-                  </th>
+                        <th style="width:70px">
+                          Select
+                        </th>
 
-                  <th>
-                    Page Name
-                  </th>
+                        <th>
+                          Page Name
+                        </th>
 
-                  <th>
-                    Page ID
-                  </th>
+                        <th>
+                          Page ID
+                        </th>
 
-                </tr>
+                      </tr>
 
-              </thead>
+                    </thead>
 
 
-              <tbody>
+                    <tbody>
 
-                ${pageRows}
+                      ${pageRows}
 
-              </tbody>
+                    </tbody>
 
-            </table>
+                  </table>
+                `
+                : `
+                  <div
+                    style="
+                      padding:20px;
+                      color:#6b7280;
+                      background:#fafafa;
+                    "
+                  >
+                    No Pages connected yet.
+                    Click <strong>🔄 Sync Pages</strong>
+                    to load this account's Facebook Pages.
+                  </div>
+                `
+            }
 
           </div>
         `;
@@ -408,6 +495,13 @@ export default {
               border: none;
               cursor: pointer;
               font-size: 15px;
+            }
+
+
+            .button:disabled,
+            .small-button:disabled {
+              opacity: .6;
+              cursor: not-allowed;
             }
 
 
@@ -502,6 +596,11 @@ export default {
 
             .small-button.gray {
               background: #6b7280;
+            }
+
+
+            .sync-button {
+              background: #7c3aed;
             }
 
 
@@ -706,9 +805,7 @@ export default {
 
               👤 Connected Facebook Accounts:
               <strong>
-                ${Object.keys(
-                  accountGroups
-                ).length}
+                ${accounts.length}
               </strong>
 
 
@@ -1203,6 +1300,36 @@ export default {
 
 
                   // =================================================
+                  // SYNC ACCOUNT
+                  // =================================================
+
+                  function syncAccount(
+                    form
+                  ) {
+
+                    const button =
+                      form.querySelector(
+                        "button"
+                      );
+
+
+                    if (button) {
+
+                      button.disabled =
+                        true;
+
+                      button.textContent =
+                        "⏳ Syncing Pages...";
+
+                    }
+
+
+                    return true;
+
+                  }
+
+
+                  // =================================================
                   // FORM SUBMIT PROTECTION
                   // =================================================
 
@@ -1281,6 +1408,23 @@ export default {
                   <p>
                     Connect a Facebook account to load its Pages.
                   </p>
+
+                  ${
+                    accounts.length
+                      ? `
+                        <p>
+                          Facebook account connected hai.
+                          Dashboard se
+                          <strong>🔄 Sync Pages</strong>
+                          click karke Pages load karein.
+                        </p>
+
+                        <div id="accountsContainer">
+                          ${accountHtml}
+                        </div>
+                      `
+                      : ""
+                  }
 
                 </div>
 
@@ -1641,141 +1785,166 @@ export default {
       // GET FACEBOOK PAGES
       // =======================================================
 
-      const pagesUrl =
+      let pagesUrl =
         `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me/accounts` +
         `?fields=id,name,access_token` +
+        `&limit=100` +
         `&access_token=${encodeURIComponent(
           userAccessToken
         )}`;
 
 
-      const pagesResponse =
-        await fetch(
-          pagesUrl
-        );
-
-
-      const pagesData =
-        await pagesResponse.json();
-
-
-      if (
-        !pagesResponse.ok ||
-        pagesData.error
-      ) {
-
-        return new Response(
-          `
-          <pre>${escapeHtml(
-            JSON.stringify(
-              pagesData,
-              null,
-              2
-            )
-          )}</pre>
-          `,
-          {
-            status: 400,
-            headers: {
-              "content-type":
-                "text/html;charset=UTF-8"
-            }
-          }
-        );
-
-      }
+      let savedPages = 0;
+      let totalPagesFound = 0;
 
 
       // =======================================================
-      // SAVE / UPDATE PAGES
+      // PAGINATION LOOP
       // =======================================================
 
-      let savedPages =
-        0;
+      while (pagesUrl) {
+
+        const pagesResponse =
+          await fetch(
+            pagesUrl
+          );
 
 
-      for (
-        const page
-        of pagesData.data || []
-      ) {
+        const pagesData =
+          await pagesResponse.json();
+
 
         if (
-          !page.id ||
-          !page.name ||
-          !page.access_token
+          !pagesResponse.ok ||
+          pagesData.error
         ) {
 
-          continue;
+          return new Response(
+            `
+            <pre>${escapeHtml(
+              JSON.stringify(
+                pagesData,
+                null,
+                2
+              )
+            )}</pre>
+            `,
+            {
+              status: 400,
+              headers: {
+                "content-type":
+                  "text/html;charset=UTF-8"
+              }
+            }
+          );
 
         }
 
 
-        const existingPage =
-          await env.DB.prepare(`
-            SELECT
-              id
-            FROM facebook_pages
-            WHERE account_id = ?
-              AND page_id = ?
-          `)
-          .bind(
-            accountId,
-            page.id
-          )
-          .first();
+        const currentPages =
+          pagesData.data || [];
 
 
-        // -----------------------------------------------------
-        // UPDATE EXISTING PAGE
-        // -----------------------------------------------------
-
-        if (existingPage) {
-
-          await env.DB.prepare(`
-            UPDATE facebook_pages
-            SET
-              page_name = ?,
-              page_access_token = ?
-            WHERE id = ?
-          `)
-            .bind(
-              page.name,
-              page.access_token,
-              existingPage.id
-            )
-            .run();
-
-        }
+        totalPagesFound +=
+          currentPages.length;
 
 
-        // -----------------------------------------------------
-        // INSERT NEW PAGE
-        // -----------------------------------------------------
+        // =====================================================
+        // SAVE / UPDATE PAGES
+        // =====================================================
 
-        else {
+        for (
+          const page
+          of currentPages
+        ) {
 
-          await env.DB.prepare(`
-            INSERT INTO facebook_pages
-            (
-              account_id,
-              page_id,
-              page_name,
-              page_access_token
-            )
-            VALUES (?, ?, ?, ?)
-          `)
+          if (
+            !page.id ||
+            !page.name ||
+            !page.access_token
+          ) {
+
+            continue;
+
+          }
+
+
+          const existingPage =
+            await env.DB.prepare(`
+              SELECT
+                id
+              FROM facebook_pages
+              WHERE account_id = ?
+                AND page_id = ?
+            `)
             .bind(
               accountId,
-              page.id,
-              page.name,
-              page.access_token
+              page.id
             )
-            .run();
+            .first();
+
+
+          // ---------------------------------------------------
+          // UPDATE EXISTING PAGE
+          // ---------------------------------------------------
+
+          if (existingPage) {
+
+            await env.DB.prepare(`
+              UPDATE facebook_pages
+              SET
+                page_name = ?,
+                page_access_token = ?
+              WHERE id = ?
+            `)
+              .bind(
+                page.name,
+                page.access_token,
+                existingPage.id
+              )
+              .run();
+
+          }
+
+
+          // ---------------------------------------------------
+          // INSERT NEW PAGE
+          // ---------------------------------------------------
+
+          else {
+
+            await env.DB.prepare(`
+              INSERT INTO facebook_pages
+              (
+                account_id,
+                page_id,
+                page_name,
+                page_access_token
+              )
+              VALUES (?, ?, ?, ?)
+            `)
+              .bind(
+                accountId,
+                page.id,
+                page.name,
+                page.access_token
+              )
+              .run();
+
+          }
+
+
+          savedPages++;
 
         }
 
 
-        savedPages++;
+        // -----------------------------------------------------
+        // NEXT PAGE
+        // -----------------------------------------------------
+
+        pagesUrl =
+          pagesData.paging?.next || null;
 
       }
 
@@ -1831,10 +2000,7 @@ export default {
             Pages found:
 
             <strong>
-              ${
-                pagesData.data?.length ||
-                0
-              }
+              ${totalPagesFound}
             </strong>
 
           </p>
@@ -1842,7 +2008,7 @@ export default {
 
           <p>
 
-            Pages saved:
+            Pages saved / updated:
 
             <strong>
               ${savedPages}
@@ -1876,6 +2042,433 @@ export default {
           }
         }
       );
+
+    }
+
+
+    // =========================================================
+    // SYNC FACEBOOK PAGES
+    // =========================================================
+
+    if (
+      url.pathname === "/sync-pages" &&
+      request.method === "POST"
+    ) {
+
+      try {
+
+        const formData =
+          await request.formData();
+
+
+        const accountId =
+          String(
+            formData.get(
+              "account_id"
+            ) || ""
+          ).trim();
+
+
+        // -----------------------------------------------------
+        // VALIDATE ACCOUNT ID
+        // -----------------------------------------------------
+
+        if (!accountId) {
+
+          return htmlResult(
+            "Invalid Account",
+            "Facebook account ID is missing.",
+            true
+          );
+
+        }
+
+
+        // -----------------------------------------------------
+        // GET SAVED ACCOUNT TOKEN
+        // -----------------------------------------------------
+
+        const account =
+          await env.DB.prepare(`
+            SELECT
+              id,
+              facebook_user_id,
+              access_token
+            FROM facebook_accounts
+            WHERE id = ?
+          `)
+          .bind(
+            accountId
+          )
+          .first();
+
+
+        if (!account) {
+
+          return htmlResult(
+            "Account Not Found",
+            "The Facebook account was not found.",
+            true
+          );
+
+        }
+
+
+        if (
+          !account.access_token
+        ) {
+
+          return htmlResult(
+            "Access Token Missing",
+            "This Facebook account does not have a saved access token. Please reconnect the Facebook account.",
+            true
+          );
+
+        }
+
+
+        // =====================================================
+        // GET PAGES FROM FACEBOOK
+        // =====================================================
+
+        let pagesUrl =
+          `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me/accounts` +
+          `?fields=id,name,access_token` +
+          `&limit=100` +
+          `&access_token=${encodeURIComponent(
+            account.access_token
+          )}`;
+
+
+        let totalPagesFound = 0;
+        let savedPages = 0;
+        let newPages = 0;
+        let updatedPages = 0;
+
+
+        // =====================================================
+        // PAGINATION
+        // =====================================================
+
+        while (pagesUrl) {
+
+          const pagesResponse =
+            await fetch(
+              pagesUrl
+            );
+
+
+          const pagesData =
+            await pagesResponse.json();
+
+
+          // ---------------------------------------------------
+          // FACEBOOK API ERROR
+          // ---------------------------------------------------
+
+          if (
+            !pagesResponse.ok ||
+            pagesData.error
+          ) {
+
+            const apiMessage =
+              pagesData?.error?.message ||
+              "Facebook API returned an error.";
+
+
+            return htmlResult(
+              "Sync Failed",
+              apiMessage +
+                " Please reconnect this Facebook account if the access token has expired.",
+              true
+            );
+
+          }
+
+
+          const currentPages =
+            pagesData.data || [];
+
+
+          totalPagesFound +=
+            currentPages.length;
+
+
+          // ===================================================
+          // SAVE / UPDATE EACH PAGE
+          // ===================================================
+
+          for (
+            const page
+            of currentPages
+          ) {
+
+            if (
+              !page.id ||
+              !page.name ||
+              !page.access_token
+            ) {
+
+              continue;
+
+            }
+
+
+            const existingPage =
+              await env.DB.prepare(`
+                SELECT
+                  id
+                FROM facebook_pages
+                WHERE account_id = ?
+                  AND page_id = ?
+              `)
+              .bind(
+                account.id,
+                page.id
+              )
+              .first();
+
+
+            // -------------------------------------------------
+            // UPDATE EXISTING PAGE
+            // -------------------------------------------------
+
+            if (existingPage) {
+
+              await env.DB.prepare(`
+                UPDATE facebook_pages
+                SET
+                  page_name = ?,
+                  page_access_token = ?
+                WHERE id = ?
+              `)
+                .bind(
+                  page.name,
+                  page.access_token,
+                  existingPage.id
+                )
+                .run();
+
+
+              updatedPages++;
+
+            }
+
+
+            // -------------------------------------------------
+            // INSERT NEW PAGE
+            // -------------------------------------------------
+
+            else {
+
+              await env.DB.prepare(`
+                INSERT INTO facebook_pages
+                (
+                  account_id,
+                  page_id,
+                  page_name,
+                  page_access_token
+                )
+                VALUES (?, ?, ?, ?)
+              `)
+                .bind(
+                  account.id,
+                  page.id,
+                  page.name,
+                  page.access_token
+                )
+                .run();
+
+
+              newPages++;
+
+            }
+
+
+            savedPages++;
+
+          }
+
+
+          // ---------------------------------------------------
+          // NEXT PAGE FROM FACEBOOK
+          // ---------------------------------------------------
+
+          pagesUrl =
+            pagesData.paging?.next || null;
+
+        }
+
+
+        // =====================================================
+        // SUCCESS
+        // =====================================================
+
+        return new Response(
+          `
+          <!DOCTYPE html>
+
+          <html>
+
+          <head>
+
+            <title>
+              Pages Synced
+            </title>
+
+            <meta
+              name="viewport"
+              content="width=device-width, initial-scale=1"
+            >
+
+          </head>
+
+
+          <body
+            style="
+              font-family:Arial;
+              padding:30px;
+              background:#f5f7fb;
+            "
+          >
+
+            <div
+              style="
+                background:white;
+                padding:25px;
+                border-radius:12px;
+                max-width:700px;
+                margin:auto;
+              "
+            >
+
+              <h2>
+                Pages Synced Successfully ✅
+              </h2>
+
+
+              <p>
+
+                Facebook Account:
+
+                <strong>
+                  ${escapeHtml(
+                    account.facebook_user_id
+                  )}
+                </strong>
+
+              </p>
+
+
+              <hr>
+
+
+              <p>
+
+                📄 Pages found on Facebook:
+
+                <strong>
+                  ${totalPagesFound}
+                </strong>
+
+              </p>
+
+
+              <p>
+
+                🆕 New Pages added:
+
+                <strong>
+                  ${newPages}
+                </strong>
+
+              </p>
+
+
+              <p>
+
+                🔄 Existing Pages updated:
+
+                <strong>
+                  ${updatedPages}
+                </strong>
+
+              </p>
+
+
+              <p>
+
+                💾 Total Pages saved / updated:
+
+                <strong>
+                  ${savedPages}
+                </strong>
+
+              </p>
+
+
+              <p
+                style="
+                  color:#166534;
+                  background:#f0fdf4;
+                  padding:12px;
+                  border-radius:8px;
+                "
+              >
+
+                New Facebook Pages have been
+                synchronized with your publisher.
+
+              </p>
+
+
+              <p>
+
+                <a
+                  href="/"
+                  style="
+                    display:inline-block;
+                    background:#1877f2;
+                    color:white;
+                    padding:12px 18px;
+                    border-radius:8px;
+                    text-decoration:none;
+                  "
+                >
+                  ← Back to Dashboard
+                </a>
+
+              </p>
+
+            </div>
+
+          </body>
+
+          </html>
+          `,
+          {
+            headers: {
+              "content-type":
+                "text/html;charset=UTF-8"
+            }
+          }
+        );
+
+      }
+
+
+      catch (
+        error
+      ) {
+
+        return htmlResult(
+          "Sync Pages Error",
+          error.message ||
+            "Unable to synchronize Facebook Pages.",
+          true
+        );
+
+      }
 
     }
 
