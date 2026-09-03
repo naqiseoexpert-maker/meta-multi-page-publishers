@@ -1,4 +1,3 @@
-```javascript
 export default {
   async fetch(request, env) {
     try {
@@ -35,7 +34,7 @@ export default {
 
         const accounts = accountsResult.results || [];
 
-        // Always refresh real Facebook account names.
+        // Refresh real Facebook account names.
         for (const account of accounts) {
           await refreshStoredFacebookAccountName(
             env.DB,
@@ -68,7 +67,8 @@ export default {
             status: 200,
             headers: {
               "content-type": "text/html; charset=UTF-8",
-              "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+              "cache-control":
+                "no-store, no-cache, must-revalidate, proxy-revalidate",
               "pragma": "no-cache",
               "expires": "0"
             }
@@ -102,10 +102,14 @@ export default {
       // =========================================================
       // META CALLBACK
       // =========================================================
-      if (request.method === "GET" && path === "/auth/meta/callback") {
+      if (
+        request.method === "GET" &&
+        path === "/auth/meta/callback"
+      ) {
         const code = url.searchParams.get("code");
         const oauthError = url.searchParams.get("error");
-        const oauthErrorReason = url.searchParams.get("error_reason");
+        const oauthErrorReason =
+          url.searchParams.get("error_reason");
         const oauthErrorDescription =
           url.searchParams.get("error_description");
 
@@ -146,7 +150,6 @@ export default {
         const redirectUri =
           `${url.origin}/auth/meta/callback`;
 
-        // Exchange code for user access token.
         const tokenUrl =
           `https://graph.facebook.com/${env.META_GRAPH_VERSION}/oauth/access_token` +
           `?client_id=${encodeURIComponent(env.META_APP_ID)}` +
@@ -181,7 +184,6 @@ export default {
         const userAccessToken =
           tokenData.access_token;
 
-        // Get Facebook user ID and real name.
         const meData =
           await getFacebookMe(
             userAccessToken,
@@ -228,7 +230,6 @@ export default {
             facebookUserId;
         }
 
-        // Check existing account.
         const existingAccountResult =
           await env.DB.prepare(`
             SELECT id
@@ -280,14 +281,12 @@ export default {
             insertResult.meta.last_row_id;
         }
 
-        // Get all Facebook Pages.
         const pages =
           await fetchAllFacebookPages(
             userAccessToken,
             env.META_GRAPH_VERSION
           );
 
-        // Save/update Pages.
         for (const page of pages) {
           if (!page.id) continue;
 
@@ -382,7 +381,10 @@ export default {
       // =========================================================
       // SYNC PAGES
       // =========================================================
-      if (request.method === "POST" && path === "/sync-pages") {
+      if (
+        request.method === "POST" &&
+        path === "/sync-pages"
+      ) {
         const formData =
           await request.formData();
 
@@ -552,7 +554,10 @@ export default {
       // =========================================================
       // REMOVE ACCOUNT
       // =========================================================
-      if (request.method === "POST" && path === "/remove-account") {
+      if (
+        request.method === "POST" &&
+        path === "/remove-account"
+      ) {
         const formData =
           await request.formData();
 
@@ -605,7 +610,10 @@ export default {
       // =========================================================
       // PUBLISH
       // =========================================================
-      if (request.method === "POST" && path === "/publish") {
+      if (
+        request.method === "POST" &&
+        path === "/publish"
+      ) {
         const formData =
           await request.formData();
 
@@ -620,33 +628,62 @@ export default {
         const video =
           formData.get("video");
 
-        /*
-         * IMPORTANT:
-         * Accept page IDs from both:
-         * 1. normal checkbox inputs
-         * 2. hidden page_ids inputs created by JavaScript
-         *
-         * This makes mobile submission reliable.
-         */
-        let rawPageIds =
-          formData.getAll("page_ids");
+        // -------------------------------------------------------
+        // Collect Page IDs from every possible submission field.
+        // -------------------------------------------------------
 
-        // Also support selected_page_ids as a fallback.
-        const fallbackPageIds =
-          formData.getAll("selected_page_ids");
-
-        rawPageIds = [
-          ...rawPageIds,
-          ...fallbackPageIds
+        const rawPageIds = [
+          ...formData.getAll("page_ids"),
+          ...formData.getAll("selected_page_ids"),
+          ...formData.getAll("page_id")
         ];
 
-        const pageIds = [
+        let pageIds = [];
+
+        for (const value of rawPageIds) {
+          const stringValue =
+            String(value || "").trim();
+
+          if (!stringValue) continue;
+
+          // Support JSON arrays if submitted.
+          if (
+            stringValue.startsWith("[") &&
+            stringValue.endsWith("]")
+          ) {
+            try {
+              const parsed =
+                JSON.parse(stringValue);
+
+              if (Array.isArray(parsed)) {
+                pageIds.push(
+                  ...parsed.map((item) =>
+                    String(item || "").trim()
+                  )
+                );
+                continue;
+              }
+            } catch (_) {}
+          }
+
+          // Support comma-separated IDs.
+          if (stringValue.includes(",")) {
+            pageIds.push(
+              ...stringValue
+                .split(",")
+                .map((item) =>
+                  String(item || "").trim()
+                )
+                .filter(Boolean)
+            );
+          } else {
+            pageIds.push(stringValue);
+          }
+        }
+
+        pageIds = [
           ...new Set(
-            rawPageIds
-              .map((value) =>
-                String(value).trim()
-              )
-              .filter(Boolean)
+            pageIds.filter(Boolean)
           )
         ];
 
@@ -662,7 +699,7 @@ export default {
                 </p>
 
                 <p style="color:#667085;font-size:13px;">
-                  The server did not receive any selected Page IDs.
+                  No Page ID was received by the Worker.
                 </p>
               </div>
 
@@ -876,7 +913,7 @@ export default {
             }
 
             // ---------------------------------------------------
-            // TEXT
+            // TEXT ONLY
             // ---------------------------------------------------
             else {
               const publishUrl =
@@ -1361,6 +1398,7 @@ function dashboardHtml(
                         value="${escapeHtmlAttribute(
                           page.page_id
                         )}"
+                        form="publish-form"
                         data-account-id="${escapeHtmlAttribute(
                           account.id
                         )}"
@@ -1954,11 +1992,6 @@ function dashboardHtml(
         id="publish-form"
       >
 
-        <!--
-          This hidden container is intentionally used during submit.
-          JavaScript copies every checked Page ID here so the server
-          receives selected pages reliably on both mobile and desktop.
-        -->
         <div
           id="selected-page-inputs"
           style="display:none;"
@@ -2056,29 +2089,19 @@ function dashboardHtml(
     // =========================================================
 
     const publishForm =
-      document.getElementById(
-        "publish-form"
-      );
+      document.getElementById("publish-form");
 
     const selectedPageInputs =
-      document.getElementById(
-        "selected-page-inputs"
-      );
+      document.getElementById("selected-page-inputs");
 
     const selectedCount =
-      document.getElementById(
-        "selected-count"
-      );
+      document.getElementById("selected-count");
 
     const imageInput =
-      document.getElementById(
-        "image"
-      );
+      document.getElementById("image");
 
     const videoInput =
-      document.getElementById(
-        "video"
-      );
+      document.getElementById("video");
 
 
     // =========================================================
@@ -2087,15 +2110,13 @@ function dashboardHtml(
 
     function getPageCheckboxes() {
       return Array.from(
-        document.querySelectorAll(
-          ".page-checkbox"
-        )
+        document.querySelectorAll(".page-checkbox")
       );
     }
 
 
     // =========================================================
-    // UPDATE SELECTED COUNT
+    // UPDATE COUNT
     // =========================================================
 
     function updateSelectedCount() {
@@ -2109,9 +2130,7 @@ function dashboardHtml(
       if (selectedCount) {
         selectedCount.textContent =
           `${selected.length} Page${
-            selected.length === 1
-              ? ""
-              : "s"
+            selected.length === 1 ? "" : "s"
           } Selected`;
       }
     }
@@ -2135,9 +2154,7 @@ function dashboardHtml(
     // =========================================================
 
     document
-      .querySelectorAll(
-        ".btn-select-account"
-      )
+      .querySelectorAll(".btn-select-account")
       .forEach((button) => {
         button.addEventListener(
           "click",
@@ -2152,8 +2169,7 @@ function dashboardHtml(
                     checkbox.dataset.accountId
                   ) === String(accountId)
                 ) {
-                  checkbox.checked =
-                    true;
+                  checkbox.checked = true;
                 }
               });
 
@@ -2168,9 +2184,7 @@ function dashboardHtml(
     // =========================================================
 
     document
-      .querySelectorAll(
-        ".btn-unselect-account"
-      )
+      .querySelectorAll(".btn-unselect-account")
       .forEach((button) => {
         button.addEventListener(
           "click",
@@ -2185,8 +2199,7 @@ function dashboardHtml(
                     checkbox.dataset.accountId
                   ) === String(accountId)
                 ) {
-                  checkbox.checked =
-                    false;
+                  checkbox.checked = false;
                 }
               });
 
@@ -2201,9 +2214,7 @@ function dashboardHtml(
     // =========================================================
 
     const selectAllButton =
-      document.getElementById(
-        "select-all"
-      );
+      document.getElementById("select-all");
 
     if (selectAllButton) {
       selectAllButton.addEventListener(
@@ -2212,18 +2223,13 @@ function dashboardHtml(
           getPageCheckboxes()
             .forEach((checkbox) => {
               const row =
-                checkbox.closest(
-                  ".page-row"
-                );
+                checkbox.closest(".page-row");
 
               if (
                 !row ||
-                !row.classList.contains(
-                  "hidden"
-                )
+                !row.classList.contains("hidden")
               ) {
-                checkbox.checked =
-                  true;
+                checkbox.checked = true;
               }
             });
 
@@ -2238,9 +2244,7 @@ function dashboardHtml(
     // =========================================================
 
     const unselectAllButton =
-      document.getElementById(
-        "unselect-all"
-      );
+      document.getElementById("unselect-all");
 
     if (unselectAllButton) {
       unselectAllButton.addEventListener(
@@ -2248,8 +2252,7 @@ function dashboardHtml(
         () => {
           getPageCheckboxes()
             .forEach((checkbox) => {
-              checkbox.checked =
-                false;
+              checkbox.checked = false;
             });
 
           updateSelectedCount();
@@ -2263,9 +2266,7 @@ function dashboardHtml(
     // =========================================================
 
     const pageSearch =
-      document.getElementById(
-        "page-search"
-      );
+      document.getElementById("page-search");
 
     if (pageSearch) {
       pageSearch.addEventListener(
@@ -2277,30 +2278,22 @@ function dashboardHtml(
               .toLowerCase();
 
           document
-            .querySelectorAll(
-              ".page-row"
-            )
+            .querySelectorAll(".page-row")
             .forEach((row) => {
               const pageName =
                 (
-                  row.dataset.pageName ||
-                  ""
+                  row.dataset.pageName || ""
                 ).toLowerCase();
 
               const pageId =
                 (
-                  row.dataset.pageId ||
-                  ""
+                  row.dataset.pageId || ""
                 ).toLowerCase();
 
               const matches =
                 !query ||
-                pageName.includes(
-                  query
-                ) ||
-                pageId.includes(
-                  query
-                );
+                pageName.includes(query) ||
+                pageId.includes(query);
 
               row.classList.toggle(
                 "hidden",
@@ -2347,16 +2340,21 @@ function dashboardHtml(
 
 
     // =========================================================
-    // PUBLISH FORM SUBMIT
+    // PUBLISH SUBMIT
     // =========================================================
     //
-    // MAIN FIX:
+    // IMPORTANT FIX:
     //
-    // Before the form is submitted, we explicitly create hidden
-    // page_ids inputs for EVERY checked Page.
+    // The Page checkboxes are outside the publish form.
     //
-    // This guarantees that the Worker receives page IDs even
-    // when mobile browser form submission behaves differently.
+    // Each checkbox now has:
+    //
+    //     form="publish-form"
+    //
+    // Therefore the browser itself submits checked Page IDs.
+    //
+    // We ALSO create hidden page_ids inputs as a second
+    // fallback. This gives us two ways to send Page IDs.
     // =========================================================
 
     if (publishForm) {
@@ -2372,27 +2370,24 @@ function dashboardHtml(
 
           const message =
             document
-              .getElementById(
-                "message"
-              )
+              .getElementById("message")
               ?.value
               .trim() || "";
 
           const hasImage =
             imageInput &&
             imageInput.files &&
-            imageInput.files.length >
-              0;
+            imageInput.files.length > 0;
 
           const hasVideo =
             videoInput &&
             videoInput.files &&
-            videoInput.files.length >
-              0;
+            videoInput.files.length > 0;
 
-          // -----------------------------------------------
-          // Validate selected pages
-          // -----------------------------------------------
+
+          // ---------------------------------------------------
+          // Selected pages validation
+          // ---------------------------------------------------
 
           if (!selected.length) {
             event.preventDefault();
@@ -2406,9 +2401,10 @@ function dashboardHtml(
             return;
           }
 
-          // -----------------------------------------------
-          // Validate content
-          // -----------------------------------------------
+
+          // ---------------------------------------------------
+          // Content validation
+          // ---------------------------------------------------
 
           if (
             !message &&
@@ -2424,9 +2420,10 @@ function dashboardHtml(
             return;
           }
 
-          // -----------------------------------------------
-          // Validate media
-          // -----------------------------------------------
+
+          // ---------------------------------------------------
+          // Media validation
+          // ---------------------------------------------------
 
           if (
             hasImage &&
@@ -2441,35 +2438,22 @@ function dashboardHtml(
             return;
           }
 
-          // -----------------------------------------------
-          // IMPORTANT:
-          // Remove old hidden page inputs.
-          // -----------------------------------------------
+
+          // ---------------------------------------------------
+          // Create backup hidden Page ID fields.
+          // ---------------------------------------------------
 
           if (selectedPageInputs) {
-            selectedPageInputs.innerHTML =
-              "";
-
-            // ---------------------------------------------
-            // Explicitly create one hidden page_ids input
-            // for every selected Page.
-            // ---------------------------------------------
+            selectedPageInputs.innerHTML = "";
 
             selected.forEach(
               (checkbox) => {
                 const hidden =
-                  document.createElement(
-                    "input"
-                  );
+                  document.createElement("input");
 
-                hidden.type =
-                  "hidden";
-
-                hidden.name =
-                  "page_ids";
-
-                hidden.value =
-                  checkbox.value;
+                hidden.type = "hidden";
+                hidden.name = "selected_page_ids";
+                hidden.value = checkbox.value;
 
                 selectedPageInputs.appendChild(
                   hidden
@@ -2478,23 +2462,13 @@ function dashboardHtml(
             );
           }
 
-          // -----------------------------------------------
-          // Disable visible checkbox fields after copying
-          // them into hidden inputs.
+
+          // ---------------------------------------------------
+          // Do NOT disable checkboxes.
           //
-          // This prevents duplicate/strange browser behavior.
-          // -----------------------------------------------
-
-          selected.forEach(
-            (checkbox) => {
-              checkbox.disabled =
-                true;
-            }
-          );
-
-          // -----------------------------------------------
-          // Disable publish button.
-          // -----------------------------------------------
+          // Because they now have form="publish-form",
+          // the browser itself will submit them normally.
+          // ---------------------------------------------------
 
           const button =
             document.getElementById(
@@ -2502,15 +2476,12 @@ function dashboardHtml(
             );
 
           if (button) {
-            button.disabled =
-              true;
-
+            button.disabled = true;
             button.textContent =
               "⏳ Publishing...";
           }
 
-          // Do NOT preventDefault.
-          // Let the normal multipart form submit continue.
+          // Allow normal multipart form submission.
         }
       );
     }
@@ -2927,4 +2898,3 @@ function escapeHtml(value) {
 function escapeHtmlAttribute(value) {
   return escapeHtml(value);
 }
-```
