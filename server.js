@@ -1,3 +1,4 @@
+```javascript
 export default {
   async fetch(request, env) {
     try {
@@ -17,7 +18,6 @@ export default {
         return new Response("DB D1 binding is missing.", { status: 500 });
       }
 
-      // Make sure the account name column exists.
       await ensureAccountNameColumn(env.DB);
 
       const url = new URL(request.url);
@@ -32,6 +32,7 @@ export default {
             id,
             facebook_user_id,
             account_name,
+            access_token,
             created_at
           FROM facebook_accounts
           ORDER BY id DESC
@@ -50,6 +51,44 @@ export default {
         const accounts = accountsResult.results || [];
         const pages = pagesResult.results || [];
 
+        // ---------------------------------------------------------
+        // Refresh missing Facebook account names
+        // ---------------------------------------------------------
+        for (const account of accounts) {
+          if (!account.account_name && account.access_token) {
+            try {
+              const meUrl =
+                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
+                `?fields=id,name` +
+                `&access_token=${encodeURIComponent(account.access_token)}`;
+
+              const meResponse = await fetch(meUrl);
+              const meData = await meResponse.json();
+
+              if (
+                meResponse.ok &&
+                meData.id &&
+                meData.name
+              ) {
+                account.account_name = String(meData.name);
+
+                await env.DB.prepare(`
+                  UPDATE facebook_accounts
+                  SET account_name = ?
+                  WHERE id = ?
+                `)
+                  .bind(
+                    account.account_name,
+                    account.id
+                  )
+                  .run();
+              }
+            } catch (error) {
+              // Keep dashboard working if name refresh fails.
+            }
+          }
+        }
+
         const pagesByAccount = {};
 
         for (const page of pages) {
@@ -60,23 +99,25 @@ export default {
           pagesByAccount[page.account_id].push(page);
         }
 
-        const accountCards = accounts.map((account, index) => {
-          const accountPages = pagesByAccount[account.id] || [];
+        const accountCards = accounts.map((account) => {
+          const accountPages =
+            pagesByAccount[account.id] || [];
 
+          // IMPORTANT:
+          // Never use "Facebook Account 1", "Account 1", etc.
+          // If name is unavailable, use Facebook ID.
           const accountName =
             account.account_name ||
-            `Facebook Account ${index + 1}`;
+            account.facebook_user_id;
 
           return `
-            <div class="account-card">
+            <div
+              class="account-card"
+              data-account-card-id="${escapeHtml(String(account.id))}">
 
               <div class="account-header">
 
                 <div class="account-info">
-
-                  <div class="account-number">
-                    ACCOUNT ${index + 1}
-                  </div>
 
                   <h3 class="facebook-name">
                     👤 ${escapeHtml(accountName)}
@@ -90,6 +131,12 @@ export default {
                   <div class="account-pages-count">
                     📄 ${accountPages.length}
                     Page${accountPages.length === 1 ? "" : "s"}
+                  </div>
+
+                  <div
+                    class="account-selection-status"
+                    data-account-status="${escapeHtml(String(account.id))}">
+                    ⬜ Account not selected
                   </div>
 
                 </div>
@@ -107,7 +154,7 @@ export default {
                     type="button"
                     class="btn btn-gray account-unselect-btn"
                     data-account-id="${escapeHtml(String(account.id))}">
-                    ⬜ Unselect
+                    ⬜ Unselect Account
                   </button>
 
                   <form
@@ -154,8 +201,30 @@ export default {
                 accountPages.length
                   ? `
                     <div class="account-pages-heading">
-                      📄 Pages connected with
-                      <b>${escapeHtml(accountName)}</b>
+
+                      <div>
+                        📄 Pages connected with
+                        <b>${escapeHtml(accountName)}</b>
+                      </div>
+
+                      <div class="account-page-selection-buttons">
+
+                        <button
+                          type="button"
+                          class="page-action-btn select-account-pages-btn"
+                          data-account-id="${escapeHtml(String(account.id))}">
+                          ☑️ Select All Pages
+                        </button>
+
+                        <button
+                          type="button"
+                          class="page-action-btn unselect-account-pages-btn"
+                          data-account-id="${escapeHtml(String(account.id))}">
+                          ⬜ Unselect All Pages
+                        </button>
+
+                      </div>
+
                     </div>
 
                     <div class="account-page-table-wrap">
@@ -377,7 +446,7 @@ export default {
         const facebookAccountName =
           String(
             meData.name ||
-            `Facebook Account ${facebookUserId}`
+            facebookUserId
           );
 
         // =====================================================
@@ -439,8 +508,7 @@ export default {
           if (!accountId) {
             const newAccount =
               await env.DB.prepare(`
-                SELECT
-                  id
+                SELECT id
                 FROM facebook_accounts
                 WHERE facebook_user_id = ?
                 LIMIT 1
@@ -707,6 +775,40 @@ export default {
               </p>
             `
           );
+        }
+
+        // ---------------------------------------------------------
+        // Refresh account name during sync
+        // ---------------------------------------------------------
+        try {
+          const meUrl =
+            `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
+            `?fields=id,name` +
+            `&access_token=${encodeURIComponent(account.access_token)}`;
+
+          const meResponse = await fetch(meUrl);
+          const meData = await meResponse.json();
+
+          if (
+            meResponse.ok &&
+            meData.name
+          ) {
+            account.account_name =
+              String(meData.name);
+
+            await env.DB.prepare(`
+              UPDATE facebook_accounts
+              SET account_name = ?
+              WHERE id = ?
+            `)
+              .bind(
+                account.account_name,
+                account.id
+              )
+              .run();
+          }
+        } catch (error) {
+          // Continue page sync even if name refresh fails.
         }
 
         let accountsUrl =
@@ -990,7 +1092,7 @@ export default {
                 <b>
                   ${escapeHtml(
                     account.account_name ||
-                    "Facebook Account"
+                    account.facebook_user_id
                   )}
                 </b>
               </p>
@@ -1593,14 +1695,6 @@ function dashboardHtml({
       min-width: 0;
     }
 
-    .account-number {
-      font-size: 11px;
-      font-weight: bold;
-      color: #1877f2;
-      letter-spacing: .7px;
-      margin-bottom: 6px;
-    }
-
     .facebook-name {
       margin: 0 0 8px;
       font-size: 21px;
@@ -1618,6 +1712,22 @@ function dashboardHtml({
       color: #687386;
       font-size: 14px;
       font-weight: 600;
+    }
+
+    .account-selection-status {
+      display: inline-block;
+      margin-top: 9px;
+      padding: 5px 9px;
+      border-radius: 6px;
+      background: #f1f5f9;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .account-selection-status.selected {
+      background: #dcfce7;
+      color: #166534;
     }
 
     .account-actions {
@@ -1678,6 +1788,32 @@ function dashboardHtml({
       border-bottom: 1px solid #edf0f5;
       color: #4b5565;
       font-size: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+
+    .account-page-selection-buttons {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .page-action-btn {
+      border: 1px solid #d8dee8;
+      background: white;
+      color: #293244;
+      border-radius: 7px;
+      padding: 7px 10px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    .page-action-btn:hover {
+      background: #f4f7fb;
     }
 
     .account-page-table-wrap {
@@ -1880,6 +2016,14 @@ function dashboardHtml({
         font-size: 19px;
       }
 
+      .account-page-selection-buttons {
+        width: 100%;
+      }
+
+      .page-action-btn {
+        flex: 1;
+      }
+
     }
 
   </style>
@@ -1932,8 +2076,9 @@ function dashboardHtml({
             </h2>
 
             <div class="accounts-subtitle">
-              Har Facebook account alag hai. Account ke
-              <b>Select / Unselect</b> buttons sirf us account ke Pages ko affect karte hain.
+              <b>Select Account</b> sirf Facebook account ko select karega.
+              Pages ko select karne ke liye har account ke neeche
+              <b>Select All Pages / Unselect All Pages</b> use karein.
             </div>
 
             ${accountCards}
@@ -2071,9 +2216,22 @@ function dashboardHtml({
       );
     }
 
+    function getAccountPageCheckboxes(accountId) {
+      return getPageCheckboxes().filter(function (checkbox) {
+        return String(
+          checkbox.dataset.accountId
+        ) === String(accountId);
+      });
+    }
+
+    // ---------------------------------------------------------
+    // GLOBAL PAGE SELECT ALL
+    // ---------------------------------------------------------
+
     function selectAllPages() {
       getPageCheckboxes().forEach(function (checkbox) {
-        const row = checkbox.closest(".page-row");
+        const row =
+          checkbox.closest(".page-row");
 
         if (
           !row ||
@@ -2084,38 +2242,84 @@ function dashboardHtml({
       });
     }
 
+    // ---------------------------------------------------------
+    // GLOBAL PAGE UNSELECT ALL
+    // ---------------------------------------------------------
+
     function unselectAllPages() {
       getPageCheckboxes().forEach(function (checkbox) {
         checkbox.checked = false;
       });
     }
 
+    // =========================================================
+    // ACCOUNT SELECTION
+    // =========================================================
+    //
+    // IMPORTANT:
+    // These functions DO NOT touch page checkboxes.
+    //
+    // Account selection is completely separate from Page selection.
+    // =========================================================
+
     function selectAccount(accountId) {
-      getPageCheckboxes()
-        .filter(function (checkbox) {
-          return String(
-            checkbox.dataset.accountId
-          ) === String(accountId);
-        })
-        .forEach(function (checkbox) {
-          checkbox.checked = true;
-        });
+
+      const status =
+        document.querySelector(
+          '[data-account-status="' +
+          accountId +
+          '"]'
+        );
+
+      if (status) {
+        status.textContent =
+          "☑️ Account selected";
+
+        status.classList.add("selected");
+      }
+
+      const card =
+        document.querySelector(
+          '[data-account-card-id="' +
+          accountId +
+          '"]'
+        );
+
+      if (card) {
+        card.classList.add("account-selected");
+      }
     }
 
     function unselectAccount(accountId) {
-      getPageCheckboxes()
-        .filter(function (checkbox) {
-          return String(
-            checkbox.dataset.accountId
-          ) === String(accountId);
-        })
-        .forEach(function (checkbox) {
-          checkbox.checked = false;
-        });
+
+      const status =
+        document.querySelector(
+          '[data-account-status="' +
+          accountId +
+          '"]'
+        );
+
+      if (status) {
+        status.textContent =
+          "⬜ Account not selected";
+
+        status.classList.remove("selected");
+      }
+
+      const card =
+        document.querySelector(
+          '[data-account-card-id="' +
+          accountId +
+          '"]'
+        );
+
+      if (card) {
+        card.classList.remove("account-selected");
+      }
     }
 
     // =========================================================
-    // ACCOUNT SELECT BUTTONS
+    // ACCOUNT BUTTONS
     // =========================================================
 
     document
@@ -2129,6 +2333,8 @@ function dashboardHtml({
             const accountId =
               button.dataset.accountId;
 
+            // ONLY select account.
+            // NO PAGE CHECKBOX IS TOUCHED HERE.
             selectAccount(accountId);
 
           }
@@ -2147,6 +2353,8 @@ function dashboardHtml({
             const accountId =
               button.dataset.accountId;
 
+            // ONLY unselect account.
+            // NO PAGE CHECKBOX IS TOUCHED HERE.
             unselectAccount(accountId);
 
           }
@@ -2155,7 +2363,67 @@ function dashboardHtml({
       });
 
     // =========================================================
-    // SELECT ALL / UNSELECT ALL
+    // ACCOUNT-SPECIFIC PAGE SELECT ALL
+    // =========================================================
+
+    document
+      .querySelectorAll(".select-account-pages-btn")
+      .forEach(function (button) {
+
+        button.addEventListener(
+          "click",
+          function () {
+
+            const accountId =
+              button.dataset.accountId;
+
+            getAccountPageCheckboxes(accountId)
+              .forEach(function (checkbox) {
+
+                const row =
+                  checkbox.closest(".page-row");
+
+                if (
+                  !row ||
+                  row.style.display !== "none"
+                ) {
+                  checkbox.checked = true;
+                }
+
+              });
+
+          }
+        );
+
+      });
+
+    // =========================================================
+    // ACCOUNT-SPECIFIC PAGE UNSELECT ALL
+    // =========================================================
+
+    document
+      .querySelectorAll(".unselect-account-pages-btn")
+      .forEach(function (button) {
+
+        button.addEventListener(
+          "click",
+          function () {
+
+            const accountId =
+              button.dataset.accountId;
+
+            getAccountPageCheckboxes(accountId)
+              .forEach(function (checkbox) {
+                checkbox.checked = false;
+              });
+
+          }
+        );
+
+      });
+
+    // =========================================================
+    // GLOBAL SELECT ALL / UNSELECT ALL
     // =========================================================
 
     const selectAllButton =
@@ -2746,3 +3014,4 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+```
