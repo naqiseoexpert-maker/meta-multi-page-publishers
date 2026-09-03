@@ -27,73 +27,38 @@ export default {
       // =========================================================
       if (request.method === "GET" && path === "/") {
         const accountsResult = await env.DB.prepare(`
-          SELECT
-            id,
-            facebook_user_id,
-            account_name,
-            access_token,
-            created_at
+          SELECT id, facebook_user_id, account_name, access_token, created_at
           FROM facebook_accounts
-          ORDER BY id DESC
-        `).all();
-
-        const pagesResult = await env.DB.prepare(`
-          SELECT
-            id,
-            account_id,
-            page_id,
-            page_name
-          FROM facebook_pages
-          ORDER BY page_name COLLATE NOCASE ASC
+          ORDER BY id ASC
         `).all();
 
         const accounts = accountsResult.results || [];
-        const pages = pagesResult.results || [];
 
-        // ---------------------------------------------------------
-        // IMPORTANT:
-        // Always try to get the REAL Facebook account name from
-        // Meta for every connected account.
-        //
-        // This fixes old values such as:
-        // Facebook Account 1
-        // Facebook Account 2
-        // Account 1
-        // Account 2
-        // ---------------------------------------------------------
+        /*
+         * IMPORTANT:
+         * Always refresh the Facebook account name from Meta.
+         *
+         * The old code refreshed only when the stored name looked
+         * like "Facebook Account 1". If the database contained that
+         * value and the refresh failed once, it could remain there.
+         *
+         * Now every dashboard load tries to refresh every account.
+         */
         for (const account of accounts) {
-          if (!account.access_token) {
-            continue;
-          }
-
-          try {
-            const refreshedName =
-              await getFacebookAccountName(
-                account.access_token,
-                env.META_GRAPH_VERSION
-              );
-
-            if (
-              refreshedName &&
-              !isPlaceholderAccountName(refreshedName)
-            ) {
-              account.account_name = refreshedName;
-
-              await env.DB.prepare(`
-                UPDATE facebook_accounts
-                SET account_name = ?
-                WHERE id = ?
-              `)
-                .bind(
-                  refreshedName,
-                  account.id
-                )
-                .run();
-            }
-          } catch (error) {
-            // Keep dashboard working even if Meta name refresh fails.
-          }
+          await refreshStoredFacebookAccountName(
+            env.DB,
+            account,
+            env.META_GRAPH_VERSION
+          );
         }
+
+        const pagesResult = await env.DB.prepare(`
+          SELECT id, account_id, page_id, page_name
+          FROM facebook_pages
+          ORDER BY id ASC
+        `).all();
+
+        const pages = pagesResult.results || [];
 
         const pagesByAccount = {};
 
@@ -105,208 +70,22 @@ export default {
           pagesByAccount[page.account_id].push(page);
         }
 
-        const accountCards = accounts.map((account) => {
-          const accountPages =
-            pagesByAccount[account.id] || [];
-
-          const accountName =
-            getSafeAccountDisplayName(
-              account.account_name,
-              account.facebook_user_id
-            );
-
-          return `
-            <div
-              class="account-card"
-              data-account-card-id="${escapeHtml(String(account.id))}">
-
-              <div class="account-header">
-
-                <div class="account-info">
-
-                  <h3 class="facebook-name">
-                    👤 ${escapeHtml(accountName)}
-                  </h3>
-
-                  <div class="account-id">
-                    Facebook ID:
-                    <b>${escapeHtml(account.facebook_user_id)}</b>
-                  </div>
-
-                  <div class="account-pages-count">
-                    📄 ${accountPages.length}
-                    Page${accountPages.length === 1 ? "" : "s"}
-                  </div>
-
-                  <div
-                    class="account-selection-status"
-                    data-account-status="${escapeHtml(String(account.id))}">
-                    ⬜ Account not selected
-                  </div>
-
-                </div>
-
-                <div class="account-actions">
-
-                  <button
-                    type="button"
-                    class="btn btn-blue account-select-btn"
-                    data-account-id="${escapeHtml(String(account.id))}">
-                    ☑️ Select Account
-                  </button>
-
-                  <button
-                    type="button"
-                    class="btn btn-gray account-unselect-btn"
-                    data-account-id="${escapeHtml(String(account.id))}">
-                    ⬜ Unselect Account
-                  </button>
-
-                  <form
-                    method="POST"
-                    action="/sync-pages"
-                    class="action-form">
-
-                    <input
-                      type="hidden"
-                      name="account_id"
-                      value="${escapeHtml(String(account.id))}">
-
-                    <button
-                      type="submit"
-                      class="btn btn-orange">
-                      🔄 Sync Pages
-                    </button>
-
-                  </form>
-
-                  <form
-                    method="POST"
-                    action="/remove-account"
-                    class="action-form">
-
-                    <input
-                      type="hidden"
-                      name="account_id"
-                      value="${escapeHtml(String(account.id))}">
-
-                    <button
-                      type="submit"
-                      class="btn btn-red">
-                      🗑️ Remove Account
-                    </button>
-
-                  </form>
-
-                </div>
-
-              </div>
-
-              ${
-                accountPages.length
-                  ? `
-                    <div class="account-pages-heading">
-
-                      <div>
-                        📄 Pages connected with
-                        <b>${escapeHtml(accountName)}</b>
-                      </div>
-
-                      <div class="account-page-selection-buttons">
-
-                        <button
-                          type="button"
-                          class="page-action-btn select-account-pages-btn"
-                          data-account-id="${escapeHtml(String(account.id))}">
-                          ☑️ Select All Pages
-                        </button>
-
-                        <button
-                          type="button"
-                          class="page-action-btn unselect-account-pages-btn"
-                          data-account-id="${escapeHtml(String(account.id))}">
-                          ⬜ Unselect All Pages
-                        </button>
-
-                      </div>
-
-                    </div>
-
-                    <div class="account-page-table-wrap">
-
-                      <table class="page-table">
-
-                        <thead>
-                          <tr>
-                            <th style="width:70px;">Select</th>
-                            <th>Page Name</th>
-                            <th>Page ID</th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-
-                          ${accountPages.map((page) => `
-                            <tr
-                              class="page-row"
-                              data-page-name="${escapeHtml(page.page_name || "")}"
-                              data-page-id="${escapeHtml(page.page_id || "")}"
-                              data-account-id="${escapeHtml(String(account.id))}">
-
-                              <td>
-                                <input
-                                  type="checkbox"
-                                  class="page-checkbox"
-                                  value="${escapeHtml(String(page.page_id))}"
-                                  data-account-id="${escapeHtml(String(account.id))}">
-                              </td>
-
-                              <td class="page-name">
-                                ${escapeHtml(page.page_name || "")}
-                              </td>
-
-                              <td class="page-id">
-                                ${escapeHtml(page.page_id || "")}
-                              </td>
-
-                            </tr>
-                          `).join("")}
-
-                        </tbody>
-
-                      </table>
-
-                    </div>
-                  `
-                  : `
-                    <div class="no-pages">
-                      No Pages found for this Facebook account.
-                      Click <b>🔄 Sync Pages</b> after adding Pages to this account.
-                    </div>
-                  `
-              }
-
-            </div>
-          `;
-        }).join("");
-
         return new Response(
-          dashboardHtml({
-            accountCards,
-            totalAccounts: accounts.length,
-            totalPages: pages.length
-          }),
+          dashboardHtml(accounts, pagesByAccount),
           {
+            status: 200,
             headers: {
               "content-type": "text/html; charset=UTF-8",
-              "cache-control": "no-store"
+              "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+              "pragma": "no-cache",
+              "expires": "0"
             }
           }
         );
       }
 
       // =========================================================
-      // FACEBOOK LOGIN
+      // META LOGIN
       // =========================================================
       if (request.method === "GET" && path === "/auth/meta") {
         const redirectUri =
@@ -322,40 +101,34 @@ export default {
           `https://www.facebook.com/${env.META_GRAPH_VERSION}/dialog/oauth` +
           `?client_id=${encodeURIComponent(env.META_APP_ID)}` +
           `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-          `&scope=${encodeURIComponent(scopes)}`;
+          `&scope=${encodeURIComponent(scopes)}` +
+          `&response_type=code`;
 
         return Response.redirect(authUrl, 302);
       }
 
       // =========================================================
-      // FACEBOOK CALLBACK
+      // META CALLBACK
       // =========================================================
-      if (
-        request.method === "GET" &&
-        path === "/auth/meta/callback"
-      ) {
+      if (request.method === "GET" && path === "/auth/meta/callback") {
         const code = url.searchParams.get("code");
-        const error = url.searchParams.get("error");
-        const errorDescription =
+        const oauthError = url.searchParams.get("error");
+        const oauthErrorReason = url.searchParams.get("error_reason");
+        const oauthErrorDescription =
           url.searchParams.get("error_description");
 
-        if (error) {
+        if (oauthError) {
           return htmlResult(
             "Facebook Login Error",
             `
-              <p><b>Error:</b> ${escapeHtml(error)}</p>
+              <div class="error-box">
+                <h2>Facebook Login Failed</h2>
+                <p>${escapeHtml(oauthErrorDescription || oauthErrorReason || oauthError)}</p>
+              </div>
 
-              <p>
-                ${escapeHtml(
-                  errorDescription ||
-                  "Facebook Login failed."
-                )}
-              </p>
-
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back to Dashboard</a>
+            `,
+            400
           );
         }
 
@@ -363,20 +136,23 @@ export default {
           return htmlResult(
             "Facebook Login Error",
             `
-              <p>
-                Facebook did not return an authorization code.
-              </p>
+              <div class="error-box">
+                <h2>Missing OAuth Code</h2>
+                <p>Facebook did not return an authorization code.</p>
+              </div>
 
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back to Dashboard</a>
+            `,
+            400
           );
         }
 
         const redirectUri =
           `${url.origin}/auth/meta/callback`;
 
+        // ---------------------------------------------------------
+        // Exchange OAuth code for user access token
+        // ---------------------------------------------------------
         const tokenUrl =
           `https://graph.facebook.com/${env.META_GRAPH_VERSION}/oauth/access_token` +
           `?client_id=${encodeURIComponent(env.META_APP_ID)}` +
@@ -389,322 +165,211 @@ export default {
 
         if (
           !tokenResponse.ok ||
+          tokenData.error ||
           !tokenData.access_token
         ) {
           return htmlResult(
-            "Facebook Token Error",
+            "Facebook Login Error",
             `
-              <p>
-                Could not get Facebook access token.
-              </p>
+              <div class="error-box">
+                <h2>Could Not Get Facebook Access Token</h2>
+                <pre>${escapeHtml(JSON.stringify(tokenData, null, 2))}</pre>
+              </div>
 
-              <pre>${escapeHtml(
-                JSON.stringify(tokenData, null, 2)
-              )}</pre>
-
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back to Dashboard</a>
+            `,
+            500
           );
         }
 
-        const userAccessToken =
-          tokenData.access_token;
+        const userAccessToken = tokenData.access_token;
 
-        // =====================================================
-        // GET FACEBOOK USER ID + REAL NAME
-        // =====================================================
-        const meUrl =
-          `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
-          `?fields=id,name` +
-          `&access_token=${encodeURIComponent(userAccessToken)}`;
+        // ---------------------------------------------------------
+        // Get Facebook user ID + REAL NAME
+        // ---------------------------------------------------------
+        const meData = await getFacebookMe(
+          userAccessToken,
+          env.META_GRAPH_VERSION
+        );
 
-        const meResponse = await fetch(meUrl);
-        const meData = await meResponse.json();
-
-        if (
-          !meResponse.ok ||
-          !meData.id
-        ) {
+        if (!meData || !meData.id) {
           return htmlResult(
-            "Facebook User Error",
+            "Facebook Login Error",
             `
-              <p>
-                Could not identify the Facebook account.
-              </p>
+              <div class="error-box">
+                <h2>Could Not Read Facebook Account</h2>
+                <p>Meta did not return a valid Facebook account ID.</p>
+              </div>
 
-              <pre>${escapeHtml(
-                JSON.stringify(meData, null, 2)
-              )}</pre>
-
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back to Dashboard</a>
+            `,
+            500
           );
         }
 
-        const facebookUserId =
-          String(meData.id);
+        const facebookUserId = String(meData.id);
 
-        const facebookAccountName =
-          String(
-            meData.name ||
-            facebookUserId
-          ).trim();
+        /*
+         * Only use the real Meta name when Meta actually returned one.
+         * Otherwise use Facebook ID as the safe stored fallback.
+         */
+        let facebookAccountName = null;
 
-        // =====================================================
-        // SAVE / UPDATE FACEBOOK ACCOUNT
-        // =====================================================
-        let account =
-          await env.DB.prepare(`
-            SELECT
-              id,
-              facebook_user_id,
-              account_name,
-              access_token
-            FROM facebook_accounts
-            WHERE facebook_user_id = ?
-            LIMIT 1
-          `)
-            .bind(facebookUserId)
-            .first();
+        if (meData.name) {
+          const candidateName = String(meData.name).trim();
+
+          if (
+            candidateName &&
+            !isPlaceholderAccountName(candidateName)
+          ) {
+            facebookAccountName = candidateName;
+          }
+        }
+
+        if (!facebookAccountName) {
+          facebookAccountName = facebookUserId;
+        }
+
+        // ---------------------------------------------------------
+        // Check whether account already exists
+        // ---------------------------------------------------------
+        const existingAccountResult = await env.DB.prepare(`
+          SELECT id
+          FROM facebook_accounts
+          WHERE facebook_user_id = ?
+          LIMIT 1
+        `)
+          .bind(facebookUserId)
+          .all();
+
+        const existingAccount =
+          existingAccountResult.results?.[0] || null;
 
         let accountId;
 
-        if (account) {
+        if (existingAccount) {
+          accountId = existingAccount.id;
+
           await env.DB.prepare(`
             UPDATE facebook_accounts
-            SET
-              account_name = ?,
-              access_token = ?
+            SET account_name = ?,
+                access_token = ?
             WHERE id = ?
           `)
             .bind(
               facebookAccountName,
               userAccessToken,
-              account.id
+              accountId
+            )
+            .run();
+        } else {
+          const insertResult = await env.DB.prepare(`
+            INSERT INTO facebook_accounts
+              (facebook_user_id, account_name, access_token, created_at)
+            VALUES
+              (?, ?, ?, datetime('now'))
+          `)
+            .bind(
+              facebookUserId,
+              facebookAccountName,
+              userAccessToken
             )
             .run();
 
-          accountId = account.id;
-        } else {
-          const insertResult =
-            await env.DB.prepare(`
-              INSERT INTO facebook_accounts
-                (
-                  facebook_user_id,
-                  account_name,
-                  access_token
-                )
-              VALUES (?, ?, ?)
-            `)
-              .bind(
-                facebookUserId,
-                facebookAccountName,
-                userAccessToken
-              )
-              .run();
-
-          accountId =
-            insertResult.meta?.last_row_id;
-
-          if (!accountId) {
-            const newAccount =
-              await env.DB.prepare(`
-                SELECT id
-                FROM facebook_accounts
-                WHERE facebook_user_id = ?
-                LIMIT 1
-              `)
-                .bind(facebookUserId)
-                .first();
-
-            if (!newAccount) {
-              return htmlResult(
-                "Database Error",
-                `
-                  <p>
-                    Facebook account could not be saved.
-                  </p>
-
-                  <p>
-                    <a href="/">
-                      ← Back to Dashboard
-                    </a>
-                  </p>
-                `
-              );
-            }
-
-            accountId = newAccount.id;
-          }
+          accountId = insertResult.meta.last_row_id;
         }
 
-        // =====================================================
-        // GET FACEBOOK PAGES
-        // =====================================================
-        let accountsUrl =
-          `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me/accounts` +
-          `?fields=id,name,access_token&limit=100` +
-          `&access_token=${encodeURIComponent(userAccessToken)}`;
+        // ---------------------------------------------------------
+        // Get all Facebook Pages
+        // ---------------------------------------------------------
+        const pages = await fetchAllFacebookPages(
+          userAccessToken,
+          env.META_GRAPH_VERSION
+        );
 
-        let pageCount = 0;
-        let newPages = 0;
-        let updatedPages = 0;
+        // ---------------------------------------------------------
+        // Save / update pages
+        // ---------------------------------------------------------
+        for (const page of pages) {
+          if (!page.id) continue;
 
-        while (accountsUrl) {
-          const pagesResponse =
-            await fetch(accountsUrl);
+          const pageId = String(page.id);
+          const pageName =
+            page.name
+              ? String(page.name)
+              : pageId;
 
-          const pagesData =
-            await pagesResponse.json();
+          const pageAccessToken =
+            page.access_token
+              ? String(page.access_token)
+              : "";
 
-          if (
-            !pagesResponse.ok ||
-            pagesData.error
-          ) {
-            return htmlResult(
-              "Facebook Pages Error",
-              `
-                <h2>❌ Facebook Pages Error</h2>
+          const existingPageResult = await env.DB.prepare(`
+            SELECT id
+            FROM facebook_pages
+            WHERE account_id = ?
+              AND page_id = ?
+            LIMIT 1
+          `)
+            .bind(accountId, pageId)
+            .all();
 
-                <p>
-                  Facebook account was connected,
-                  but Pages could not be fetched.
-                </p>
+          const existingPage =
+            existingPageResult.results?.[0] || null;
 
-                <pre>${escapeHtml(
-                  JSON.stringify(
-                    pagesData,
-                    null,
-                    2
-                  )
-                )}</pre>
-
-                <p>
-                  <a href="/">
-                    ← Back to Dashboard
-                  </a>
-                </p>
-              `
-            );
+          if (existingPage) {
+            await env.DB.prepare(`
+              UPDATE facebook_pages
+              SET page_name = ?,
+                  access_token = ?
+              WHERE id = ?
+            `)
+              .bind(
+                pageName,
+                pageAccessToken,
+                existingPage.id
+              )
+              .run();
+          } else {
+            await env.DB.prepare(`
+              INSERT INTO facebook_pages
+                (account_id, page_id, page_name, access_token)
+              VALUES
+                (?, ?, ?, ?)
+            `)
+              .bind(
+                accountId,
+                pageId,
+                pageName,
+                pageAccessToken
+              )
+              .run();
           }
-
-          for (const page of pagesData.data || []) {
-            if (
-              !page.id ||
-              !page.access_token
-            ) {
-              continue;
-            }
-
-            pageCount++;
-
-            const existingPage =
-              await env.DB.prepare(`
-                SELECT id
-                FROM facebook_pages
-                WHERE account_id = ?
-                  AND page_id = ?
-                LIMIT 1
-              `)
-                .bind(
-                  accountId,
-                  String(page.id)
-                )
-                .first();
-
-            if (existingPage) {
-              await env.DB.prepare(`
-                UPDATE facebook_pages
-                SET
-                  page_name = ?,
-                  page_access_token = ?
-                WHERE id = ?
-              `)
-                .bind(
-                  page.name || "",
-                  page.access_token,
-                  existingPage.id
-                )
-                .run();
-
-              updatedPages++;
-            } else {
-              await env.DB.prepare(`
-                INSERT INTO facebook_pages
-                  (
-                    account_id,
-                    page_id,
-                    page_name,
-                    page_access_token
-                  )
-                VALUES (?, ?, ?, ?)
-              `)
-                .bind(
-                  accountId,
-                  String(page.id),
-                  page.name || "",
-                  page.access_token
-                )
-                .run();
-
-              newPages++;
-            }
-          }
-
-          accountsUrl =
-            pagesData.paging?.next || null;
         }
 
         return htmlResult(
           "Facebook Account Connected",
           `
             <div class="success-box">
-
-              <h2>
-                ✅ Facebook Account Connected
-              </h2>
+              <h2>✅ Facebook Account Connected</h2>
 
               <p>
-                Facebook Account:
-                <b>${escapeHtml(
-                  getSafeAccountDisplayName(
-                    facebookAccountName,
-                    facebookUserId
-                  )
-                )}</b>
+                <strong>Account:</strong>
+                ${escapeHtml(facebookAccountName)}
               </p>
 
               <p>
-                Facebook User ID:
-                <b>${escapeHtml(facebookUserId)}</b>
+                <strong>Facebook ID:</strong>
+                ${escapeHtml(facebookUserId)}
               </p>
 
               <p>
-                Pages found:
-                <b>${pageCount}</b>
+                <strong>Pages found:</strong>
+                ${pages.length}
               </p>
-
-              <p>
-                New Pages:
-                <b>${newPages}</b>
-              </p>
-
-              <p>
-                Updated Pages:
-                <b>${updatedPages}</b>
-              </p>
-
             </div>
 
-            <p>
-              <a class="main-link" href="/">
-                ← Back to Dashboard
-              </a>
-            </p>
+            <a class="btn" href="/">← Back to Dashboard</a>
           `
         );
       }
@@ -712,57 +377,48 @@ export default {
       // =========================================================
       // SYNC PAGES
       // =========================================================
-      if (
-        request.method === "POST" &&
-        path === "/sync-pages"
-      ) {
-        const formData =
-          await request.formData();
+      if (request.method === "POST" && path === "/sync-pages") {
+        const formData = await request.formData();
 
-        const accountId =
-          String(formData.get("account_id") || "").trim();
+        const accountId = formData.get("account_id");
 
         if (!accountId) {
           return htmlResult(
             "Sync Error",
             `
-              <p>
-                Facebook account ID is missing.
-              </p>
+              <div class="error-box">
+                <h2>Missing Account</h2>
+                <p>No Facebook account was selected.</p>
+              </div>
 
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back</a>
+            `,
+            400
           );
         }
 
-        const account =
-          await env.DB.prepare(`
-            SELECT
-              id,
-              facebook_user_id,
-              account_name,
-              access_token
-            FROM facebook_accounts
-            WHERE id = ?
-            LIMIT 1
-          `)
-            .bind(accountId)
-            .first();
+        const accountResult = await env.DB.prepare(`
+          SELECT id, facebook_user_id, account_name, access_token
+          FROM facebook_accounts
+          WHERE id = ?
+          LIMIT 1
+        `)
+          .bind(accountId)
+          .all();
+
+        const account = accountResult.results?.[0];
 
         if (!account) {
           return htmlResult(
             "Sync Error",
             `
-              <p>
-                Facebook account was not found.
-              </p>
+              <div class="error-box">
+                <h2>Account Not Found</h2>
+              </div>
 
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back</a>
+            `,
+            404
           );
         }
 
@@ -770,251 +426,109 @@ export default {
           return htmlResult(
             "Sync Error",
             `
-              <p>
-                This account does not have a saved access token.
-              </p>
+              <div class="error-box">
+                <h2>Missing Access Token</h2>
+                <p>Please reconnect this Facebook account.</p>
+              </div>
 
-              <p>
-                <a href="/auth/meta">
-                  Reconnect Facebook
-                </a>
-              </p>
-
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back</a>
+            `,
+            400
           );
         }
 
-        // ---------------------------------------------------------
-        // Refresh actual Facebook account name during sync
-        // ---------------------------------------------------------
-        try {
-          const refreshedName =
-            await getFacebookAccountName(
-              account.access_token,
-              env.META_GRAPH_VERSION
-            );
+        // Refresh actual Facebook account name
+        await refreshStoredFacebookAccountName(
+          env.DB,
+          account,
+          env.META_GRAPH_VERSION
+        );
 
-          if (
-            refreshedName &&
-            !isPlaceholderAccountName(refreshedName)
-          ) {
-            account.account_name =
-              refreshedName;
+        const pages = await fetchAllFacebookPages(
+          account.access_token,
+          env.META_GRAPH_VERSION
+        );
 
+        for (const page of pages) {
+          if (!page.id) continue;
+
+          const pageId = String(page.id);
+
+          const pageName =
+            page.name
+              ? String(page.name)
+              : pageId;
+
+          const pageAccessToken =
+            page.access_token
+              ? String(page.access_token)
+              : "";
+
+          const existingPageResult = await env.DB.prepare(`
+            SELECT id
+            FROM facebook_pages
+            WHERE account_id = ?
+              AND page_id = ?
+            LIMIT 1
+          `)
+            .bind(account.id, pageId)
+            .all();
+
+          const existingPage =
+            existingPageResult.results?.[0] || null;
+
+          if (existingPage) {
             await env.DB.prepare(`
-              UPDATE facebook_accounts
-              SET account_name = ?
+              UPDATE facebook_pages
+              SET page_name = ?,
+                  access_token = ?
               WHERE id = ?
             `)
               .bind(
-                refreshedName,
-                account.id
+                pageName,
+                pageAccessToken,
+                existingPage.id
+              )
+              .run();
+          } else {
+            await env.DB.prepare(`
+              INSERT INTO facebook_pages
+                (account_id, page_id, page_name, access_token)
+              VALUES
+                (?, ?, ?, ?)
+            `)
+              .bind(
+                account.id,
+                pageId,
+                pageName,
+                pageAccessToken
               )
               .run();
           }
-        } catch (error) {
-          // Continue page sync even if name refresh fails.
         }
-
-        let accountsUrl =
-          `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me/accounts` +
-          `?fields=id,name,access_token&limit=100` +
-          `&access_token=${encodeURIComponent(account.access_token)}`;
-
-        let found = 0;
-        let saved = 0;
-        let newPages = 0;
-        let updatedPages = 0;
-
-        try {
-          while (accountsUrl) {
-            const response =
-              await fetch(accountsUrl);
-
-            const data =
-              await response.json();
-
-            if (
-              !response.ok ||
-              data.error
-            ) {
-              return htmlResult(
-                "Sync Error",
-                `
-                  <h2>
-                    ❌ Facebook Page Sync Failed
-                  </h2>
-
-                  <pre>${escapeHtml(
-                    JSON.stringify(
-                      data,
-                      null,
-                      2
-                    )
-                  )}</pre>
-
-                  <p>
-                    <a href="/auth/meta">
-                      Reconnect Facebook
-                    </a>
-                  </p>
-
-                  <p>
-                    <a href="/">
-                      ← Back to Dashboard
-                    </a>
-                  </p>
-                `
-              );
-            }
-
-            for (const page of data.data || []) {
-              if (
-                !page.id ||
-                !page.access_token
-              ) {
-                continue;
-              }
-
-              found++;
-
-              const existing =
-                await env.DB.prepare(`
-                  SELECT id
-                  FROM facebook_pages
-                  WHERE account_id = ?
-                    AND page_id = ?
-                  LIMIT 1
-                `)
-                  .bind(
-                    account.id,
-                    String(page.id)
-                  )
-                  .first();
-
-              if (existing) {
-                await env.DB.prepare(`
-                  UPDATE facebook_pages
-                  SET
-                    page_name = ?,
-                    page_access_token = ?
-                  WHERE id = ?
-                `)
-                  .bind(
-                    page.name || "",
-                    page.access_token,
-                    existing.id
-                  )
-                  .run();
-
-                updatedPages++;
-              } else {
-                await env.DB.prepare(`
-                  INSERT INTO facebook_pages
-                    (
-                      account_id,
-                      page_id,
-                      page_name,
-                      page_access_token
-                    )
-                  VALUES (?, ?, ?, ?)
-                `)
-                  .bind(
-                    account.id,
-                    String(page.id),
-                    page.name || "",
-                    page.access_token
-                  )
-                  .run();
-
-                newPages++;
-              }
-
-              saved++;
-            }
-
-            accountsUrl =
-              data.paging?.next || null;
-          }
-        } catch (error) {
-          return htmlResult(
-            "Sync Error",
-            `
-              <h2>❌ Sync Failed</h2>
-
-              <p>
-                ${escapeHtml(
-                  error?.message ||
-                  String(error)
-                )}
-              </p>
-
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
-          );
-        }
-
-        const safeAccountName =
-          getSafeAccountDisplayName(
-            account.account_name,
-            account.facebook_user_id
-          );
 
         return htmlResult(
           "Pages Synced",
           `
             <div class="success-box">
-
-              <h2>
-                ✅ Pages Synced Successfully
-              </h2>
-
+              <h2>✅ Pages Synced</h2>
               <p>
-                Facebook Account:
-                <b>
-                  ${escapeHtml(safeAccountName)}
-                </b>
+                <strong>Facebook Account:</strong>
+                ${escapeHtml(
+                  getSafeAccountDisplayName(
+                    account.account_name,
+                    account.facebook_user_id
+                  )
+                )}
               </p>
 
               <p>
-                Facebook ID:
-                <b>
-                  ${escapeHtml(account.facebook_user_id)}
-                </b>
+                <strong>Pages found:</strong>
+                ${pages.length}
               </p>
-
-              <p>
-                Pages Found:
-                <b>${found}</b>
-              </p>
-
-              <p>
-                New Pages:
-                <b>${newPages}</b>
-              </p>
-
-              <p>
-                Updated Pages:
-                <b>${updatedPages}</b>
-              </p>
-
-              <p>
-                Saved:
-                <b>${saved}</b>
-              </p>
-
             </div>
 
-            <p>
-              <a class="main-link" href="/">
-                ← Back to Dashboard
-              </a>
-            </p>
+            <a class="btn" href="/">← Back to Dashboard</a>
           `
         );
       }
@@ -1022,56 +536,21 @@ export default {
       // =========================================================
       // REMOVE ACCOUNT
       // =========================================================
-      if (
-        request.method === "POST" &&
-        path === "/remove-account"
-      ) {
-        const formData =
-          await request.formData();
-
-        const accountId =
-          String(formData.get("account_id") || "").trim();
+      if (request.method === "POST" && path === "/remove-account") {
+        const formData = await request.formData();
+        const accountId = formData.get("account_id");
 
         if (!accountId) {
           return htmlResult(
-            "Remove Account Error",
+            "Remove Error",
             `
-              <p>
-                Account ID is missing.
-              </p>
+              <div class="error-box">
+                <h2>Missing Account</h2>
+              </div>
 
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
-          );
-        }
-
-        const account =
-          await env.DB.prepare(`
-            SELECT
-              id,
-              facebook_user_id,
-              account_name
-            FROM facebook_accounts
-            WHERE id = ?
-            LIMIT 1
-          `)
-            .bind(accountId)
-            .first();
-
-        if (!account) {
-          return htmlResult(
-            "Remove Account Error",
-            `
-              <p>
-                Facebook account was not found.
-              </p>
-
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back</a>
+            `,
+            400
           );
         }
 
@@ -1079,61 +558,25 @@ export default {
           DELETE FROM facebook_pages
           WHERE account_id = ?
         `)
-          .bind(account.id)
+          .bind(accountId)
           .run();
 
         await env.DB.prepare(`
           DELETE FROM facebook_accounts
           WHERE id = ?
         `)
-          .bind(account.id)
+          .bind(accountId)
           .run();
-
-        const safeAccountName =
-          getSafeAccountDisplayName(
-            account.account_name,
-            account.facebook_user_id
-          );
 
         return htmlResult(
           "Account Removed",
           `
             <div class="success-box">
-
-              <h2>
-                ✅ Facebook Account Removed
-              </h2>
-
-              <p>
-                Facebook Account:
-                <b>
-                  ${escapeHtml(safeAccountName)}
-                </b>
-              </p>
-
-              <p>
-                Facebook User ID:
-                <b>
-                  ${escapeHtml(account.facebook_user_id)}
-                </b>
-              </p>
-
-              <p>
-                Account and its saved Pages
-                were removed from this publisher.
-              </p>
-
-              <p>
-                This does not delete the Facebook account itself.
-              </p>
-
+              <h2>✅ Facebook Account Removed</h2>
+              <p>The account and its connected pages were removed.</p>
             </div>
 
-            <p>
-              <a class="main-link" href="/">
-                ← Back to Dashboard
-              </a>
-            </p>
+            <a class="btn" href="/">← Back to Dashboard</a>
           `
         );
       }
@@ -1141,23 +584,11 @@ export default {
       // =========================================================
       // PUBLISH
       // =========================================================
-      if (
-        request.method === "POST" &&
-        path === "/publish"
-      ) {
-        const formData =
-          await request.formData();
+      if (request.method === "POST" && path === "/publish") {
+        const formData = await request.formData();
 
         const message =
-          String(
-            formData.get("message") || ""
-          ).trim();
-
-        const pageIds =
-          formData
-            .getAll("page_ids")
-            .map((id) => String(id))
-            .filter(Boolean);
+          String(formData.get("message") || "").trim();
 
         const image =
           formData.get("image");
@@ -1165,304 +596,300 @@ export default {
         const video =
           formData.get("video");
 
-        const hasImage =
-          image &&
-          typeof image === "object" &&
-          typeof image.arrayBuffer === "function" &&
-          image.size > 0;
+        const rawPageIds =
+          formData.getAll("page_ids");
 
-        const hasVideo =
-          video &&
-          typeof video === "object" &&
-          typeof video.arrayBuffer === "function" &&
-          video.size > 0;
+        const pageIds = [
+          ...new Set(
+            rawPageIds
+              .map((value) => String(value).trim())
+              .filter(Boolean)
+          )
+        ];
 
         if (pageIds.length === 0) {
           return htmlResult(
             "Publish Error",
             `
-              <p>
-                Please select at least one Facebook Page.
-              </p>
+              <div class="error-box">
+                <h2>No Pages Selected</h2>
+                <p>Please select at least one Facebook Page.</p>
+              </div>
 
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back</a>
+            `,
+            400
           );
         }
 
-        if (
-          !message &&
-          !hasImage &&
-          !hasVideo
-        ) {
+        const hasImage =
+          image &&
+          typeof image === "object" &&
+          "size" in image &&
+          image.size > 0;
+
+        const hasVideo =
+          video &&
+          typeof video === "object" &&
+          "size" in video &&
+          video.size > 0;
+
+        if (!message && !hasImage && !hasVideo) {
           return htmlResult(
             "Publish Error",
             `
-              <p>
-                Please enter a message
-                or select an image/video.
-              </p>
+              <div class="error-box">
+                <h2>Nothing to Publish</h2>
+                <p>
+                  Enter a message or select an image/video.
+                </p>
+              </div>
 
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back</a>
+            `,
+            400
           );
         }
 
-        if (
-          hasImage &&
-          hasVideo
-        ) {
+        if (hasImage && hasVideo) {
           return htmlResult(
             "Publish Error",
             `
-              <p>
-                Please select either an image
-                OR a video, not both.
-              </p>
+              <div class="error-box">
+                <h2>Choose One Media Type</h2>
+                <p>
+                  Please select either an image OR a video.
+                </p>
+              </div>
 
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+              <a class="btn" href="/">← Back</a>
+            `,
+            400
           );
         }
 
         const placeholders =
           pageIds.map(() => "?").join(",");
 
-        const selectedPagesResult =
-          await env.DB.prepare(`
-            SELECT
-              id,
-              account_id,
-              page_id,
-              page_name,
-              page_access_token
-            FROM facebook_pages
-            WHERE page_id IN (${placeholders})
-            ORDER BY page_name COLLATE NOCASE ASC
-          `)
-            .bind(...pageIds)
-            .all();
+        const pagesResult = await env.DB.prepare(`
+          SELECT
+            id,
+            account_id,
+            page_id,
+            page_name,
+            access_token
+          FROM facebook_pages
+          WHERE page_id IN (${placeholders})
+        `)
+          .bind(...pageIds)
+          .all();
 
-        const selectedPages =
-          selectedPagesResult.results || [];
+        const pages = pagesResult.results || [];
 
-        if (selectedPages.length === 0) {
-          return htmlResult(
-            "Publish Error",
-            `
-              <p>
-                None of the selected Pages
-                were found in the database.
-              </p>
+        const pageMap = new Map();
 
-              <p>
-                Please sync your Facebook account first.
-              </p>
-
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-            `
+        for (const page of pages) {
+          pageMap.set(
+            String(page.page_id),
+            page
           );
         }
 
         const results = [];
 
-        let imageBuffer = null;
-        let videoBuffer = null;
+        for (const pageId of pageIds) {
+          const page = pageMap.get(pageId);
 
-        if (hasImage) {
-          imageBuffer =
-            await image.arrayBuffer();
-        }
+          if (!page) {
+            results.push({
+              pageId,
+              pageName: pageId,
+              success: false,
+              message: "Page not found in database."
+            });
 
-        if (hasVideo) {
-          videoBuffer =
-            await video.arrayBuffer();
-        }
+            continue;
+          }
 
-        for (const page of selectedPages) {
+          if (!page.access_token) {
+            results.push({
+              pageId,
+              pageName: page.page_name,
+              success: false,
+              message: "Page access token is missing."
+            });
+
+            continue;
+          }
+
           try {
-            if (!page.page_access_token) {
-              results.push({
-                pageName: page.page_name,
-                pageId: page.page_id,
-                success: false,
-                error:
-                  "Page access token is missing."
-              });
-
-              continue;
-            }
-
             let response;
+            let data;
 
+            // ---------------------------------------------------
+            // VIDEO
+            // ---------------------------------------------------
             if (hasVideo) {
-              const endpoint =
-                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${page.page_id}/videos`;
+              const publishUrl =
+                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${encodeURIComponent(page.page_id)}/videos`;
 
-              const body =
+              const publishForm =
                 new FormData();
 
+              publishForm.append(
+                "source",
+                video,
+                video.name || "video.mp4"
+              );
+
               if (message) {
-                body.append(
+                publishForm.append(
                   "description",
                   message
                 );
               }
 
-              const videoBlob =
-                new Blob(
-                  [videoBuffer],
-                  {
-                    type:
-                      video.type ||
-                      "video/mp4"
-                  }
-                );
-
-              body.append(
-                "source",
-                videoBlob,
-                video.name || "video.mp4"
-              );
-
-              body.append(
+              publishForm.append(
                 "access_token",
-                page.page_access_token
+                page.access_token
               );
 
               response =
                 await fetch(
-                  endpoint,
+                  publishUrl,
                   {
                     method: "POST",
-                    body
+                    body: publishForm
                   }
                 );
-            } else if (hasImage) {
-              const endpoint =
-                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${page.page_id}/photos`;
 
-              const body =
+              data = await response.json();
+            }
+
+            // ---------------------------------------------------
+            // IMAGE
+            // ---------------------------------------------------
+            else if (hasImage) {
+              const publishUrl =
+                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${encodeURIComponent(page.page_id)}/photos`;
+
+              const publishForm =
                 new FormData();
 
+              publishForm.append(
+                "source",
+                image,
+                image.name || "image.jpg"
+              );
+
               if (message) {
-                body.append(
+                publishForm.append(
                   "caption",
                   message
                 );
               }
 
-              const imageBlob =
-                new Blob(
-                  [imageBuffer],
-                  {
-                    type:
-                      image.type ||
-                      "image/jpeg"
-                  }
-                );
-
-              body.append(
-                "source",
-                imageBlob,
-                image.name || "image.jpg"
-              );
-
-              body.append(
+              publishForm.append(
                 "access_token",
-                page.page_access_token
+                page.access_token
               );
 
               response =
                 await fetch(
-                  endpoint,
+                  publishUrl,
                   {
                     method: "POST",
-                    body
+                    body: publishForm
                   }
                 );
-            } else {
-              const endpoint =
-                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${page.page_id}/feed`;
 
-              const body =
+              data = await response.json();
+            }
+
+            // ---------------------------------------------------
+            // TEXT
+            // ---------------------------------------------------
+            else {
+              const publishUrl =
+                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${encodeURIComponent(page.page_id)}/feed`;
+
+              const publishParams =
                 new URLSearchParams();
 
-              body.set(
+              publishParams.set(
                 "message",
                 message
               );
 
-              body.set(
+              publishParams.set(
                 "access_token",
-                page.page_access_token
+                page.access_token
               );
 
               response =
                 await fetch(
-                  endpoint,
+                  publishUrl,
                   {
                     method: "POST",
                     headers: {
                       "content-type":
                         "application/x-www-form-urlencoded"
                     },
-                    body
+                    body:
+                      publishParams.toString()
                   }
                 );
+
+              data = await response.json();
             }
 
-            const data =
-              await response.json();
-
             if (
-              !response.ok ||
-              data.error
+              response.ok &&
+              !data.error
             ) {
               results.push({
+                pageId,
                 pageName: page.page_name,
-                pageId: page.page_id,
-                success: false,
-                error:
-                  data?.error?.message ||
-                  `Facebook API error (HTTP ${response.status})`
+                success: true,
+                message:
+                  data.id
+                    ? `Published successfully. Post ID: ${data.id}`
+                    : "Published successfully."
               });
             } else {
               results.push({
+                pageId,
                 pageName: page.page_name,
-                pageId: page.page_id,
-                success: true,
-                postId:
-                  data.id ||
-                  data.post_id ||
-                  "Published"
+                success: false,
+                message:
+                  data?.error?.message ||
+                  "Facebook API returned an error.",
+                details: data
               });
             }
           } catch (error) {
             results.push({
+              pageId,
               pageName: page.page_name,
-              pageId: page.page_id,
               success: false,
-              error:
-                error?.message ||
-                String(error)
+              message:
+                error instanceof Error
+                  ? error.message
+                  : String(error)
             });
           }
         }
 
-        return publishResultsPage(
-          results,
-          message,
-          hasImage,
-          hasVideo
+        return new Response(
+          publishResultsPage(results),
+          {
+            status: 200,
+            headers: {
+              "content-type":
+                "text/html; charset=UTF-8",
+              "cache-control": "no-store"
+            }
+          }
         );
       }
 
@@ -1476,68 +903,55 @@ export default {
           }
         }
       );
-
     } catch (error) {
       return new Response(
         `
-          <!DOCTYPE html>
-          <html>
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Worker Error</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              padding: 40px;
+              background: #f5f5f5;
+            }
 
-          <head>
-            <meta charset="UTF-8">
-            <title>Worker Error</title>
+            .box {
+              max-width: 900px;
+              margin: auto;
+              background: white;
+              padding: 30px;
+              border-radius: 14px;
+              box-shadow: 0 4px 20px rgba(0,0,0,.08);
+            }
 
-            <style>
-              body {
-                font-family: Arial, sans-serif;
-                padding: 40px;
-                background: #f5f5f5;
-              }
+            pre {
+              white-space: pre-wrap;
+              word-break: break-word;
+              background: #f3f3f3;
+              padding: 15px;
+              border-radius: 8px;
+            }
+          </style>
+        </head>
 
-              .box {
-                max-width: 900px;
-                margin: auto;
-                background: white;
-                padding: 30px;
-                border-radius: 12px;
-                box-shadow: 0 4px 20px rgba(0,0,0,.08);
-              }
+        <body>
+          <div class="box">
+            <h1>Worker Error</h1>
+            <pre>${escapeHtml(
+              error instanceof Error
+                ? error.stack || error.message
+                : String(error)
+            )}</pre>
 
-              pre {
-                white-space: pre-wrap;
-                word-break: break-word;
-                background: #f1f1f1;
-                padding: 15px;
-                border-radius: 8px;
-              }
-
-              a {
-                color: #1877f2;
-              }
-            </style>
-          </head>
-
-          <body>
-
-            <div class="box">
-
-              <h2>❌ Worker Error</h2>
-
-              <pre>${escapeHtml(
-                error?.stack ||
-                error?.message ||
-                String(error)
-              )}</pre>
-
-              <p>
-                <a href="/">← Back to Dashboard</a>
-              </p>
-
-            </div>
-
-          </body>
-
-          </html>
+            <p>
+              <a href="/">Back to dashboard</a>
+            </p>
+          </div>
+        </body>
+        </html>
         `,
         {
           status: 500,
@@ -1553,8 +967,39 @@ export default {
 
 
 // =============================================================
-// GET FACEBOOK ACCOUNT NAME
+// FACEBOOK HELPERS
 // =============================================================
+
+async function getFacebookMe(
+  accessToken,
+  graphVersion
+) {
+  if (!accessToken) {
+    return null;
+  }
+
+  const meUrl =
+    `https://graph.facebook.com/${graphVersion}/me` +
+    `?fields=id,name` +
+    `&access_token=${encodeURIComponent(accessToken)}`;
+
+  const response =
+    await fetch(meUrl);
+
+  const data =
+    await response.json();
+
+  if (
+    !response.ok ||
+    data.error ||
+    !data.id
+  ) {
+    return null;
+  }
+
+  return data;
+}
+
 
 async function getFacebookAccountName(
   accessToken,
@@ -1578,7 +1023,6 @@ async function getFacebookAccountName(
   if (
     !response.ok ||
     data.error ||
-    !data.id ||
     !data.name
   ) {
     return null;
@@ -1591,13 +1035,70 @@ async function getFacebookAccountName(
     return null;
   }
 
+  if (isPlaceholderAccountName(name)) {
+    return null;
+  }
+
   return name;
 }
 
 
-// =============================================================
-// DETECT OLD / GENERIC ACCOUNT NAMES
-// =============================================================
+/*
+ * THIS IS THE MAIN FIX.
+ *
+ * Every time the dashboard is opened, the Worker asks Meta
+ * for the real Facebook account name and saves it into D1.
+ */
+async function refreshStoredFacebookAccountName(
+  db,
+  account,
+  graphVersion
+) {
+  if (
+    !account ||
+    !account.id ||
+    !account.access_token
+  ) {
+    return null;
+  }
+
+  try {
+    const realName =
+      await getFacebookAccountName(
+        account.access_token,
+        graphVersion
+      );
+
+    if (
+      realName &&
+      !isPlaceholderAccountName(realName)
+    ) {
+      account.account_name =
+        realName;
+
+      await db.prepare(`
+        UPDATE facebook_accounts
+        SET account_name = ?
+        WHERE id = ?
+      `)
+        .bind(
+          realName,
+          account.id
+        )
+        .run();
+
+      return realName;
+    }
+  } catch (error) {
+    /*
+     * Do not break the whole dashboard just because
+     * Meta temporarily failed to return the profile name.
+     */
+  }
+
+  return null;
+}
+
 
 function isPlaceholderAccountName(name) {
   if (!name) {
@@ -1611,12 +1112,6 @@ function isPlaceholderAccountName(name) {
     return true;
   }
 
-  // Facebook Account 1
-  // Facebook Account 2
-  // Facebook Account 01
-  // Account 1
-  // Account 2
-  // Account 01
   if (
     /^facebook\s+account\s+\d+$/i.test(value)
   ) {
@@ -1633,39 +1128,83 @@ function isPlaceholderAccountName(name) {
 }
 
 
-// =============================================================
-// SAFE ACCOUNT DISPLAY NAME
-// =============================================================
-
 function getSafeAccountDisplayName(
   accountName,
   facebookUserId
 ) {
-  const name =
-    String(accountName || "").trim();
-
   if (
-    name &&
-    !isPlaceholderAccountName(name)
+    accountName &&
+    !isPlaceholderAccountName(accountName)
   ) {
-    return name;
+    return String(accountName);
   }
 
   return String(
-    facebookUserId || "Facebook Account"
+    facebookUserId ||
+    "Facebook Account"
   );
 }
 
 
 // =============================================================
-// ENSURE ACCOUNT NAME COLUMN
+// FACEBOOK PAGE FETCHING
+// =============================================================
+
+async function fetchAllFacebookPages(
+  userAccessToken,
+  graphVersion
+) {
+  const allPages = [];
+
+  let nextUrl =
+    `https://graph.facebook.com/${graphVersion}/me/accounts` +
+    `?fields=id,name,access_token` +
+    `&limit=100` +
+    `&access_token=${encodeURIComponent(userAccessToken)}`;
+
+  while (nextUrl) {
+    const response =
+      await fetch(nextUrl);
+
+    const data =
+      await response.json();
+
+    if (
+      !response.ok ||
+      data.error
+    ) {
+      throw new Error(
+        data?.error?.message ||
+        "Could not fetch Facebook Pages."
+      );
+    }
+
+    if (
+      Array.isArray(data.data)
+    ) {
+      allPages.push(
+        ...data.data
+      );
+    }
+
+    nextUrl =
+      data?.paging?.next ||
+      null;
+  }
+
+  return allPages;
+}
+
+
+// =============================================================
+// D1 SCHEMA
 // =============================================================
 
 async function ensureAccountNameColumn(db) {
   const columnsResult =
-    await db.prepare(`
-      PRAGMA table_info(facebook_accounts)
-    `).all();
+    await db.prepare(
+      `PRAGMA table_info(facebook_accounts)`
+    ).all();
 
   const columns =
     columnsResult.results || [];
@@ -1689,1015 +1228,911 @@ async function ensureAccountNameColumn(db) {
 // DASHBOARD HTML
 // =============================================================
 
-function dashboardHtml({
-  accountCards,
-  totalAccounts,
-  totalPages
-}) {
+function dashboardHtml(
+  accounts,
+  pagesByAccount
+) {
+  const totalPages =
+    Object.values(pagesByAccount)
+      .reduce(
+        (total, pages) =>
+          total + pages.length,
+        0
+      );
+
+  let accountCards = "";
+
+  if (accounts.length === 0) {
+    accountCards = `
+      <div class="empty-box">
+        <h2>No Facebook Accounts Connected</h2>
+        <p>
+          Connect your Facebook account to load its Pages.
+        </p>
+      </div>
+    `;
+  } else {
+    accounts.forEach(
+      (account, accountIndex) => {
+        const pages =
+          pagesByAccount[account.id] ||
+          [];
+
+        const accountName =
+          getSafeAccountDisplayName(
+            account.account_name,
+            account.facebook_user_id
+          );
+
+        const accountLabel =
+          `ACCOUNT ${accountIndex + 1}`;
+
+        const pageRows =
+          pages.length
+            ? pages.map(
+                (page) => `
+                  <tr
+                    class="page-row"
+                    data-page-name="${escapeHtmlAttribute(
+                      page.page_name
+                    )}"
+                    data-page-id="${escapeHtmlAttribute(
+                      page.page_id
+                    )}"
+                  >
+                    <td>
+                      <input
+                        type="checkbox"
+                        class="page-checkbox account-${escapeHtmlAttribute(
+                          account.id
+                        )}"
+                        name="page_ids"
+                        value="${escapeHtmlAttribute(
+                          page.page_id
+                        )}"
+                        data-account-id="${escapeHtmlAttribute(
+                          account.id
+                        )}"
+                        data-page-name="${escapeHtmlAttribute(
+                          page.page_name
+                        )}"
+                      >
+                    </td>
+
+                    <td>
+                      ${escapeHtml(
+                        page.page_name
+                      )}
+                    </td>
+
+                    <td>
+                      <code>
+                        ${escapeHtml(
+                          page.page_id
+                        )}
+                      </code>
+                    </td>
+                  </tr>
+                `
+              ).join("")
+            : `
+              <tr>
+                <td colspan="3">
+                  <div class="empty-pages">
+                    No Pages connected to this account.
+                  </div>
+                </td>
+              </tr>
+            `;
+
+        accountCards += `
+          <section
+            class="account-card"
+            data-account-card="${escapeHtmlAttribute(
+              account.id
+            )}"
+          >
+            <div class="account-header">
+              <div>
+                <div class="account-label">
+                  ${escapeHtml(accountLabel)}
+                </div>
+
+                <h2>
+                  👤 ${escapeHtml(accountName)}
+                </h2>
+
+                <div class="account-id">
+                  Facebook ID:
+                  <code>
+                    ${escapeHtml(
+                      account.facebook_user_id
+                    )}
+                  </code>
+                </div>
+
+                <div class="page-count">
+                  📄 ${pages.length} Pages
+                </div>
+              </div>
+
+              <div class="account-actions">
+                <button
+                  type="button"
+                  class="btn btn-select-account"
+                  data-account-id="${escapeHtmlAttribute(
+                    account.id
+                  )}"
+                >
+                  ☑️ Select Account
+                </button>
+
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-unselect-account"
+                  data-account-id="${escapeHtmlAttribute(
+                    account.id
+                  )}"
+                >
+                  ⬜ Unselect
+                </button>
+              </div>
+            </div>
+
+            <div class="account-tools">
+              <form
+                method="POST"
+                action="/sync-pages"
+                class="inline-form"
+              >
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${escapeHtmlAttribute(
+                    account.id
+                  )}"
+                >
+
+                <button
+                  type="submit"
+                  class="btn btn-sync"
+                >
+                  🔄 Sync Pages
+                </button>
+              </form>
+
+              <form
+                method="POST"
+                action="/remove-account"
+                class="inline-form"
+                onsubmit="return confirm('Remove this Facebook account and all its connected Pages?');"
+              >
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${escapeHtmlAttribute(
+                    account.id
+                  )}"
+                >
+
+                <button
+                  type="submit"
+                  class="btn btn-danger"
+                >
+                  🗑️ Remove Account
+                </button>
+              </form>
+            </div>
+
+            <div class="pages-title">
+              📄 Pages connected with
+              ${escapeHtml(accountName)}
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:70px;">
+                      Select
+                    </th>
+
+                    <th>
+                      Page Name
+                    </th>
+
+                    <th>
+                      Page ID
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  ${pageRows}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        `;
+      }
+    );
+  }
+
   return `
-<!DOCTYPE html>
-
-<html>
-
+<!doctype html>
+<html lang="en">
 <head>
-
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
 
   <meta
     name="viewport"
-    content="width=device-width, initial-scale=1.0">
+    content="width=device-width, initial-scale=1"
+  >
 
-  <title>
-    Meta Multi Page Publisher
-  </title>
+  <title>Meta Multi Page Publisher</title>
 
   <style>
-
     * {
       box-sizing: border-box;
     }
 
     body {
       margin: 0;
-      font-family: Arial, Helvetica, sans-serif;
-      background: #f4f7fb;
+      font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+      background: #f5f7fb;
       color: #172033;
     }
 
     .container {
-      max-width: 1250px;
+      width: min(1450px, calc(100% - 32px));
       margin: 0 auto;
-      padding: 25px;
+      padding: 30px 0 60px;
     }
 
-    .topbar {
-      background: white;
-      border-radius: 14px;
-      padding: 22px;
-      margin-bottom: 22px;
-      box-shadow: 0 4px 18px rgba(0,0,0,.06);
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 25px;
     }
 
-    .topbar h1 {
+    .top h1 {
       margin: 0 0 8px;
-      font-size: 28px;
+      font-size: 30px;
     }
 
     .subtitle {
-      color: #687386;
-      margin-bottom: 18px;
+      color: #667085;
+      font-size: 15px;
     }
 
     .stats {
       display: flex;
-      gap: 15px;
+      gap: 12px;
       flex-wrap: wrap;
+      margin-bottom: 24px;
     }
 
     .stat {
-      background: #f4f7fb;
-      border-radius: 10px;
-      padding: 12px 18px;
-      min-width: 160px;
+      background: white;
+      border: 1px solid #e4e7ec;
+      border-radius: 12px;
+      padding: 15px 20px;
+      box-shadow: 0 2px 8px rgba(16, 24, 40, .04);
     }
 
     .stat strong {
-      display: block;
       font-size: 22px;
-      margin-bottom: 4px;
+      display: block;
+      margin-bottom: 3px;
     }
 
-    .connect-btn {
-      display: inline-block;
-      text-decoration: none;
+    .stat span {
+      color: #667085;
+      font-size: 13px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 0;
+      border-radius: 9px;
+      padding: 10px 15px;
       background: #1877f2;
       color: white;
-      padding: 12px 18px;
-      border-radius: 8px;
-      font-weight: bold;
-      margin-top: 18px;
-    }
-
-    .accounts-section {
-      margin-bottom: 25px;
-    }
-
-    .accounts-title {
-      margin: 0 0 14px;
-      font-size: 22px;
-    }
-
-    .accounts-subtitle {
-      color: #687386;
-      margin-bottom: 18px;
-    }
-
-    .account-card {
-      background: white;
-      border-radius: 14px;
-      margin-bottom: 20px;
-      overflow: hidden;
-      box-shadow: 0 4px 18px rgba(0,0,0,.06);
-      border: 1px solid #edf0f5;
-    }
-
-    .account-header {
-      padding: 20px;
-      display: flex;
-      justify-content: space-between;
-      gap: 20px;
-      align-items: center;
-      border-bottom: 1px solid #edf0f5;
-    }
-
-    .account-info {
-      min-width: 0;
-    }
-
-    .facebook-name {
-      margin: 0 0 8px;
-      font-size: 21px;
-      word-break: break-word;
-    }
-
-    .account-id {
-      color: #687386;
-      font-size: 13px;
-      margin-bottom: 8px;
-      word-break: break-all;
-    }
-
-    .account-pages-count {
-      color: #687386;
+      text-decoration: none;
+      cursor: pointer;
       font-size: 14px;
       font-weight: 600;
     }
 
-    .account-selection-status {
-      display: inline-block;
-      margin-top: 9px;
-      padding: 5px 9px;
-      border-radius: 6px;
-      background: #f1f5f9;
-      color: #64748b;
-      font-size: 12px;
-      font-weight: bold;
+    .btn:hover {
+      opacity: .9;
     }
 
-    .account-selection-status.selected {
-      background: #dcfce7;
-      color: #166534;
+    .btn-secondary {
+      background: #667085;
+    }
+
+    .btn-sync {
+      background: #344054;
+    }
+
+    .btn-danger {
+      background: #d92d20;
+    }
+
+    .btn-publish {
+      background: #1877f2;
+      width: 100%;
+      font-size: 16px;
+      padding: 13px;
+    }
+
+    .account-card,
+    .publisher {
+      background: white;
+      border: 1px solid #e4e7ec;
+      border-radius: 15px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 15px rgba(16, 24, 40, .05);
+      overflow: hidden;
+    }
+
+    .account-header {
+      padding: 22px;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+      border-bottom: 1px solid #eaecf0;
+    }
+
+    .account-label {
+      color: #667085;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .7px;
+      margin-bottom: 6px;
+    }
+
+    .account-header h2 {
+      margin: 0 0 10px;
+      font-size: 22px;
+    }
+
+    .account-id {
+      color: #667085;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .page-count {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    code {
+      background: #f2f4f7;
+      border-radius: 5px;
+      padding: 2px 5px;
+      font-size: 12px;
     }
 
     .account-actions {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
-      justify-content: flex-end;
-      align-items: center;
     }
 
-    .action-form {
+    .account-tools {
+      display: flex;
+      gap: 8px;
+      padding: 15px 22px;
+      background: #fafafa;
+      border-bottom: 1px solid #eaecf0;
+    }
+
+    .inline-form {
+      display: inline;
       margin: 0;
-      padding: 0;
-      display: inline-block;
     }
 
-    .btn {
-      border: 0;
-      border-radius: 7px;
-      padding: 9px 12px;
-      cursor: pointer;
-      font-weight: bold;
-      font-size: 13px;
+    .pages-title {
+      padding: 18px 22px;
+      font-size: 15px;
+      font-weight: 700;
     }
 
-    .btn:hover {
-      opacity: .88;
-    }
-
-    .btn:disabled {
-      opacity: .6;
-      cursor: wait;
-    }
-
-    .btn-blue {
-      background: #1877f2;
-      color: white;
-    }
-
-    .btn-gray {
-      background: #e9edf3;
-      color: #293244;
-    }
-
-    .btn-orange {
-      background: #f59e0b;
-      color: white;
-    }
-
-    .btn-red {
-      background: #dc2626;
-      color: white;
-    }
-
-    .account-pages-heading {
-      padding: 15px 20px;
-      background: #fafbfc;
-      border-bottom: 1px solid #edf0f5;
-      color: #4b5565;
-      font-size: 14px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 15px;
-      flex-wrap: wrap;
-    }
-
-    .account-page-selection-buttons {
-      display: flex;
-      gap: 7px;
-      flex-wrap: wrap;
-    }
-
-    .page-action-btn {
-      border: 1px solid #d8dee8;
-      background: white;
-      color: #293244;
-      border-radius: 7px;
-      padding: 7px 10px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 12px;
-    }
-
-    .page-action-btn:hover {
-      background: #f4f7fb;
-    }
-
-    .account-page-table-wrap {
+    .table-wrap {
       overflow-x: auto;
     }
 
-    .page-table {
+    table {
       width: 100%;
       border-collapse: collapse;
     }
 
-    .page-table th,
-    .page-table td {
-      padding: 13px 16px;
-      border-bottom: 1px solid #edf0f5;
+    th,
+    td {
+      padding: 12px 18px;
+      border-top: 1px solid #eaecf0;
       text-align: left;
+      font-size: 14px;
     }
 
-    .page-table tr:last-child td {
-      border-bottom: 0;
-    }
-
-    .page-table th {
-      background: white;
-      font-size: 13px;
+    th {
+      background: #fafafa;
       color: #667085;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .4px;
     }
 
-    .page-name {
-      font-weight: 600;
+    tr.page-row:hover {
+      background: #f8fbff;
     }
 
-    .page-id {
-      color: #687386;
-      font-family: monospace;
-      font-size: 13px;
-    }
-
-    .no-pages {
+    .empty-box,
+    .empty-pages {
       padding: 25px;
-      color: #687386;
-      background: #fafbfc;
+      color: #667085;
+      text-align: center;
     }
 
-    .publisher-card {
-      background: white;
-      border-radius: 14px;
-      padding: 22px;
-      margin-top: 25px;
-      box-shadow: 0 4px 18px rgba(0,0,0,.06);
+    .publisher {
+      padding: 24px;
     }
 
-    .publisher-card h2 {
+    .publisher h2 {
       margin-top: 0;
+      margin-bottom: 18px;
     }
 
-    .search-box {
+    .search-row {
+      margin-bottom: 14px;
+    }
+
+    .search-row input {
       width: 100%;
-      padding: 12px 14px;
-      border: 1px solid #d8dee8;
-      border-radius: 8px;
-      font-size: 15px;
-      margin-bottom: 15px;
-      outline: none;
     }
 
-    .search-box:focus {
-      border-color: #1877f2;
-    }
-
-    .selection-buttons {
+    .global-actions {
       display: flex;
       gap: 8px;
+      margin-bottom: 18px;
       flex-wrap: wrap;
-      margin-bottom: 15px;
     }
 
-    .small-btn {
-      padding: 8px 12px;
-      border: 1px solid #d8dee8;
-      background: white;
-      border-radius: 7px;
-      cursor: pointer;
-      font-weight: 600;
+    .field {
+      margin-bottom: 18px;
     }
 
-    .small-btn:hover {
-      background: #f4f7fb;
-    }
-
-    .message-label {
+    label {
       display: block;
-      font-weight: bold;
       margin-bottom: 7px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    input[type="text"],
+    textarea,
+    input[type="file"] {
+      width: 100%;
+      border: 1px solid #d0d5dd;
+      border-radius: 9px;
+      padding: 11px 12px;
+      background: white;
+      font: inherit;
     }
 
     textarea {
-      width: 100%;
-      min-height: 140px;
+      min-height: 150px;
       resize: vertical;
-      border: 1px solid #d8dee8;
-      border-radius: 9px;
-      padding: 13px;
-      font-family: inherit;
-      font-size: 15px;
-      outline: none;
     }
 
-    textarea:focus {
-      border-color: #1877f2;
+    .file-note {
+      color: #667085;
+      font-size: 12px;
+      margin-top: 6px;
     }
 
-    .upload-row {
-      display: flex;
-      gap: 15px;
-      flex-wrap: wrap;
-      margin-top: 15px;
+    .connect-area {
+      margin-bottom: 25px;
     }
 
-    .upload-box {
-      flex: 1;
-      min-width: 250px;
-      border: 1px dashed #cbd3df;
-      border-radius: 9px;
-      padding: 15px;
-      background: #fafbfc;
+    .account-list {
+      margin-top: 5px;
     }
 
-    .upload-box label {
-      display: block;
-      font-weight: bold;
-      margin-bottom: 8px;
-    }
-
-    input[type="file"] {
-      width: 100%;
-    }
-
-    .publish-btn {
-      width: 100%;
-      margin-top: 20px;
-      padding: 14px;
-      border: 0;
-      border-radius: 9px;
-      background: #1877f2;
-      color: white;
-      font-size: 16px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    .publish-btn:hover {
-      opacity: .9;
-    }
-
-    .empty {
-      background: white;
-      padding: 35px;
-      border-radius: 14px;
-      text-align: center;
-      box-shadow: 0 4px 18px rgba(0,0,0,.06);
-    }
-
-    .success-box {
-      background: #ecfdf3;
-      border: 1px solid #a7f3d0;
-      padding: 20px;
-      border-radius: 10px;
-    }
-
-    .main-link {
-      color: #1877f2;
-      text-decoration: none;
-      font-weight: bold;
+    .hidden {
+      display: none !important;
     }
 
     @media (max-width: 800px) {
-
-      .container {
-        padding: 12px;
-      }
-
+      .top,
       .account-header {
         flex-direction: column;
-        align-items: flex-start;
       }
 
       .account-actions {
-        justify-content: flex-start;
         width: 100%;
       }
 
-      .account-actions .btn,
-      .account-actions form,
-      .account-actions form .btn {
-        width: 100%;
-      }
-
-      .facebook-name {
-        font-size: 19px;
-      }
-
-      .account-page-selection-buttons {
-        width: 100%;
-      }
-
-      .page-action-btn {
+      .account-actions .btn {
         flex: 1;
       }
 
+      .container {
+        width: min(100% - 20px, 1450px);
+        padding-top: 18px;
+      }
     }
-
   </style>
-
 </head>
 
 <body>
-
   <div class="container">
 
-    <div class="topbar">
+    <div class="top">
+      <div>
+        <h1>📣 Meta Multi Page Publisher</h1>
 
-      <h1>
-        📣 Meta Multi Page Publisher
-      </h1>
-
-      <div class="subtitle">
-        Publish text, images or videos to multiple Facebook Pages.
+        <div class="subtitle">
+          Publish text, images or videos to multiple Facebook Pages.
+        </div>
       </div>
 
-      <div class="stats">
+      <div class="connect-area">
+        <a
+          href="/auth/meta"
+          class="btn"
+        >
+          ➕ Connect Facebook Account
+        </a>
+      </div>
+    </div>
 
-        <div class="stat">
-          <strong>${totalAccounts}</strong>
-          Connected Facebook Account${totalAccounts === 1 ? "" : "s"}
-        </div>
-
-        <div class="stat">
-          <strong>${totalPages}</strong>
-          Connected Page${totalPages === 1 ? "" : "s"}
-        </div>
-
+    <div class="stats">
+      <div class="stat">
+        <strong>${accounts.length}</strong>
+        <span>Connected Facebook Accounts</span>
       </div>
 
-      <a
-        class="connect-btn"
-        href="/auth/meta">
-        ➕ Connect Facebook Account
-      </a>
+      <div class="stat">
+        <strong>${totalPages}</strong>
+        <span>Connected Pages</span>
+      </div>
+    </div>
+
+    <div class="account-list">
+
+      <h2>👤 Facebook Accounts</h2>
+
+      <p class="subtitle">
+        Har Facebook account alag hai.
+        Account ke Select / Unselect buttons sirf us account ke Pages ko affect karte hain.
+      </p>
+
+      ${accountCards}
 
     </div>
 
-    ${
-      totalAccounts > 0
-        ? `
-          <div class="accounts-section">
+    <section class="publisher">
 
-            <h2 class="accounts-title">
-              👤 Facebook Accounts
-            </h2>
+      <h2>📝 Create Post</h2>
 
-            <div class="accounts-subtitle">
-              <b>Select Account</b> sirf Facebook account ko select karega.
-              Pages ko select karne ke liye har account ke neeche
-              <b>Select All Pages / Unselect All Pages</b> use karein.
-            </div>
+      <form
+        method="POST"
+        action="/publish"
+        enctype="multipart/form-data"
+        id="publish-form"
+      >
 
-            ${accountCards}
+        <div class="field search-row">
+          <input
+            type="text"
+            id="page-search"
+            placeholder="🔎 Search Page Name or Page ID..."
+            autocomplete="off"
+          >
+        </div>
 
-          </div>
-        `
-        : `
-          <div class="empty">
+        <div class="global-actions">
+          <button
+            type="button"
+            class="btn"
+            id="select-all"
+          >
+            ☑️ Select All
+          </button>
 
-            <h2>
-              No Facebook Accounts Connected
-            </h2>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            id="unselect-all"
+          >
+            ⬜ Unselect All
+          </button>
+        </div>
 
-            <p>
-              Connect a Facebook account to load its Pages.
-            </p>
+        <div class="field">
+          <label for="message">
+            Post Message
+          </label>
 
-            <a
-              class="connect-btn"
-              href="/auth/meta">
-              Connect Facebook
-            </a>
+          <textarea
+            id="message"
+            name="message"
+            placeholder="Write your post message..."
+          ></textarea>
+        </div>
 
-          </div>
-        `
-    }
+        <div class="field">
+          <label for="image">
+            🖼️ Image
+          </label>
 
-    ${
-      totalAccounts > 0
-        ? `
-          <div class="publisher-card">
+          <input
+            id="image"
+            type="file"
+            name="image"
+            accept="image/*"
+          >
+        </div>
 
-            <h2>
-              📝 Create Post
-            </h2>
+        <div class="field">
+          <label for="video">
+            🎥 Video
+          </label>
 
-            <form
-              method="POST"
-              action="/publish"
-              enctype="multipart/form-data"
-              id="publishForm">
+          <input
+            id="video"
+            type="file"
+            name="video"
+            accept="video/*"
+          >
+        </div>
 
-              <input
-                type="text"
-                class="search-box"
-                id="pageSearch"
-                placeholder="🔎 Search Page Name or Page ID...">
+        <button
+          type="submit"
+          class="btn btn-publish"
+          id="publish-button"
+        >
+          🚀 Publish to Selected Pages
+        </button>
 
-              <div class="selection-buttons">
+      </form>
 
-                <button
-                  type="button"
-                  class="small-btn"
-                  id="selectAllPagesButton">
-                  ☑️ Select All
-                </button>
-
-                <button
-                  type="button"
-                  class="small-btn"
-                  id="unselectAllPagesButton">
-                  ⬜ Unselect All
-                </button>
-
-              </div>
-
-              <label class="message-label">
-                Post Message
-              </label>
-
-              <textarea
-                name="message"
-                id="message"
-                placeholder="Write your Facebook post here..."></textarea>
-
-              <div class="upload-row">
-
-                <div class="upload-box">
-
-                  <label>
-                    🖼️ Image
-                  </label>
-
-                  <input
-                    type="file"
-                    name="image"
-                    id="image"
-                    accept="image/*">
-
-                </div>
-
-                <div class="upload-box">
-
-                  <label>
-                    🎥 Video
-                  </label>
-
-                  <input
-                    type="file"
-                    name="video"
-                    id="video"
-                    accept="video/*">
-
-                </div>
-
-              </div>
-
-              <div id="selectedPagesContainer"></div>
-
-              <button
-                type="submit"
-                class="publish-btn"
-                id="publishButton">
-                🚀 Publish to Selected Pages
-              </button>
-
-            </form>
-
-          </div>
-        `
-        : ""
-    }
+    </section>
 
   </div>
 
   <script>
-
     // =========================================================
-    // PAGE CHECKBOX HELPERS
-    // =========================================================
-
-    function getPageCheckboxes() {
-      return Array.from(
-        document.querySelectorAll(".page-checkbox")
-      );
-    }
-
-    function getAccountPageCheckboxes(accountId) {
-      return getPageCheckboxes().filter(function (checkbox) {
-        return String(
-          checkbox.dataset.accountId
-        ) === String(accountId);
-      });
-    }
-
-    // =========================================================
-    // GLOBAL PAGE SELECT ALL
+    // ACCOUNT SELECT / UNSELECT
     // =========================================================
 
-    function selectAllPages() {
-      getPageCheckboxes().forEach(function (checkbox) {
-        const row =
-          checkbox.closest(".page-row");
+    document.querySelectorAll(
+      ".btn-select-account"
+    ).forEach((button) => {
+      button.addEventListener(
+        "click",
+        () => {
+          const accountId =
+            button.dataset.accountId;
 
-        if (
-          !row ||
-          row.style.display !== "none"
-        ) {
-          checkbox.checked = true;
+          document
+            .querySelectorAll(
+              ".page-checkbox[data-account-id='" +
+              CSS.escape(accountId) +
+              "']"
+            )
+            .forEach((checkbox) => {
+              checkbox.checked = true;
+            });
         }
-      });
-    }
+      );
+    });
+
+    document.querySelectorAll(
+      ".btn-unselect-account"
+    ).forEach((button) => {
+      button.addEventListener(
+        "click",
+        () => {
+          const accountId =
+            button.dataset.accountId;
+
+          document
+            .querySelectorAll(
+              ".page-checkbox[data-account-id='" +
+              CSS.escape(accountId) +
+              "']"
+            )
+            .forEach((checkbox) => {
+              checkbox.checked = false;
+            });
+        }
+      );
+    });
+
 
     // =========================================================
-    // GLOBAL PAGE UNSELECT ALL
-    // =========================================================
-
-    function unselectAllPages() {
-      getPageCheckboxes().forEach(function (checkbox) {
-        checkbox.checked = false;
-      });
-    }
-
-    // =========================================================
-    // ACCOUNT SELECTION
-    // =========================================================
-
-    function selectAccount(accountId) {
-
-      const status =
-        document.querySelector(
-          '[data-account-status="' +
-          accountId +
-          '"]'
-        );
-
-      if (status) {
-        status.textContent =
-          "☑️ Account selected";
-
-        status.classList.add("selected");
-      }
-
-      const card =
-        document.querySelector(
-          '[data-account-card-id="' +
-          accountId +
-          '"]'
-        );
-
-      if (card) {
-        card.classList.add("account-selected");
-      }
-    }
-
-    function unselectAccount(accountId) {
-
-      const status =
-        document.querySelector(
-          '[data-account-status="' +
-          accountId +
-          '"]'
-        );
-
-      if (status) {
-        status.textContent =
-          "⬜ Account not selected";
-
-        status.classList.remove("selected");
-      }
-
-      const card =
-        document.querySelector(
-          '[data-account-card-id="' +
-          accountId +
-          '"]'
-        );
-
-      if (card) {
-        card.classList.remove("account-selected");
-      }
-    }
-
-    // =========================================================
-    // ACCOUNT BUTTONS
-    // =========================================================
-
-    document
-      .querySelectorAll(".account-select-btn")
-      .forEach(function (button) {
-
-        button.addEventListener(
-          "click",
-          function () {
-
-            const accountId =
-              button.dataset.accountId;
-
-            selectAccount(accountId);
-
-          }
-        );
-
-      });
-
-    document
-      .querySelectorAll(".account-unselect-btn")
-      .forEach(function (button) {
-
-        button.addEventListener(
-          "click",
-          function () {
-
-            const accountId =
-              button.dataset.accountId;
-
-            unselectAccount(accountId);
-
-          }
-        );
-
-      });
-
-    // =========================================================
-    // ACCOUNT-SPECIFIC PAGE SELECT ALL
-    // =========================================================
-
-    document
-      .querySelectorAll(".select-account-pages-btn")
-      .forEach(function (button) {
-
-        button.addEventListener(
-          "click",
-          function () {
-
-            const accountId =
-              button.dataset.accountId;
-
-            getAccountPageCheckboxes(accountId)
-              .forEach(function (checkbox) {
-
-                const row =
-                  checkbox.closest(".page-row");
-
-                if (
-                  !row ||
-                  row.style.display !== "none"
-                ) {
-                  checkbox.checked = true;
-                }
-
-              });
-
-          }
-        );
-
-      });
-
-    // =========================================================
-    // ACCOUNT-SPECIFIC PAGE UNSELECT ALL
-    // =========================================================
-
-    document
-      .querySelectorAll(".unselect-account-pages-btn")
-      .forEach(function (button) {
-
-        button.addEventListener(
-          "click",
-          function () {
-
-            const accountId =
-              button.dataset.accountId;
-
-            getAccountPageCheckboxes(accountId)
-              .forEach(function (checkbox) {
-                checkbox.checked = false;
-              });
-
-          }
-        );
-
-      });
-
-    // =========================================================
-    // GLOBAL SELECT ALL / UNSELECT ALL
+    // GLOBAL SELECT ALL
     // =========================================================
 
     const selectAllButton =
       document.getElementById(
-        "selectAllPagesButton"
+        "select-all"
       );
 
     if (selectAllButton) {
       selectAllButton.addEventListener(
         "click",
-        selectAllPages
+        () => {
+          document
+            .querySelectorAll(
+              ".page-checkbox"
+            )
+            .forEach((checkbox) => {
+              if (
+                !checkbox.closest(".page-row")
+                  ?.classList.contains("hidden")
+              ) {
+                checkbox.checked = true;
+              }
+            });
+        }
       );
     }
 
+
+    // =========================================================
+    // GLOBAL UNSELECT ALL
+    // =========================================================
+
     const unselectAllButton =
       document.getElementById(
-        "unselectAllPagesButton"
+        "unselect-all"
       );
 
     if (unselectAllButton) {
       unselectAllButton.addEventListener(
         "click",
-        unselectAllPages
+        () => {
+          document
+            .querySelectorAll(
+              ".page-checkbox"
+            )
+            .forEach((checkbox) => {
+              checkbox.checked = false;
+            });
+        }
       );
     }
 
+
     // =========================================================
-    // SEARCH
+    // PAGE SEARCH
     // =========================================================
 
     const pageSearch =
-      document.getElementById("pageSearch");
+      document.getElementById(
+        "page-search"
+      );
 
     if (pageSearch) {
-
       pageSearch.addEventListener(
         "input",
-        function () {
-
-          const search =
+        () => {
+          const query =
             pageSearch.value
               .trim()
               .toLowerCase();
 
           document
-            .querySelectorAll(".page-row")
-            .forEach(function (row) {
-
+            .querySelectorAll(
+              ".page-row"
+            )
+            .forEach((row) => {
               const pageName =
-                row.dataset.pageName || "";
+                (
+                  row.dataset.pageName ||
+                  ""
+                ).toLowerCase();
 
               const pageId =
-                row.dataset.pageId || "";
+                (
+                  row.dataset.pageId ||
+                  ""
+                ).toLowerCase();
 
-              const match =
-                pageName
-                  .toLowerCase()
-                  .includes(search) ||
-                pageId
-                  .toLowerCase()
-                  .includes(search);
+              const matches =
+                !query ||
+                pageName.includes(query) ||
+                pageId.includes(query);
 
-              row.style.display =
-                match ? "" : "none";
-
+              row.classList.toggle(
+                "hidden",
+                !matches
+              );
             });
-
         }
       );
-
     }
 
+
     // =========================================================
-    // IMAGE / VIDEO
+    // IMAGE / VIDEO MUTUALLY EXCLUSIVE
     // =========================================================
 
     const imageInput =
-      document.getElementById("image");
+      document.getElementById(
+        "image"
+      );
 
     const videoInput =
-      document.getElementById("video");
+      document.getElementById(
+        "video"
+      );
 
-    if (imageInput) {
-
+    if (imageInput && videoInput) {
       imageInput.addEventListener(
         "change",
-        function () {
-
+        () => {
           if (
-            this.files.length > 0 &&
-            videoInput
+            imageInput.files &&
+            imageInput.files.length
           ) {
             videoInput.value = "";
           }
-
         }
       );
-
-    }
-
-    if (videoInput) {
 
       videoInput.addEventListener(
         "change",
-        function () {
-
+        () => {
           if (
-            this.files.length > 0 &&
-            imageInput
+            videoInput.files &&
+            videoInput.files.length
           ) {
             imageInput.value = "";
           }
-
         }
       );
-
     }
 
+
     // =========================================================
-    // PUBLISH
+    // PUBLISH VALIDATION
     // =========================================================
 
     const publishForm =
-      document.getElementById("publishForm");
+      document.getElementById(
+        "publish-form"
+      );
 
     if (publishForm) {
-
       publishForm.addEventListener(
         "submit",
-        function (event) {
-
-          const selectedPages =
+        (event) => {
+          const selected =
             document.querySelectorAll(
               ".page-checkbox:checked"
             );
 
-          const hiddenContainer =
-            document.getElementById(
-              "selectedPagesContainer"
-            );
-
-          if (hiddenContainer) {
-            hiddenContainer.innerHTML = "";
-
-            selectedPages.forEach(
-              function (checkbox) {
-
-                const hidden =
-                  document.createElement("input");
-
-                hidden.type = "hidden";
-                hidden.name = "page_ids";
-                hidden.value = checkbox.value;
-
-                hiddenContainer.appendChild(hidden);
-
-              }
-            );
-          }
-
           const message =
             document
               .getElementById("message")
-              .value
-              .trim();
+              ?.value
+              .trim() || "";
 
           const hasImage =
             imageInput &&
@@ -2709,9 +2144,7 @@ function dashboardHtml({
             videoInput.files &&
             videoInput.files.length > 0;
 
-          if (
-            selectedPages.length === 0
-          ) {
+          if (!selected.length) {
             event.preventDefault();
 
             alert(
@@ -2729,7 +2162,7 @@ function dashboardHtml({
             event.preventDefault();
 
             alert(
-              "Please enter a post message or select an image/video."
+              "Please enter a message or select an image/video."
             );
 
             return;
@@ -2742,7 +2175,7 @@ function dashboardHtml({
             event.preventDefault();
 
             alert(
-              "Please select either an image OR a video, not both."
+              "Please select either an image OR a video."
             );
 
             return;
@@ -2750,7 +2183,7 @@ function dashboardHtml({
 
           const button =
             document.getElementById(
-              "publishButton"
+              "publish-button"
             );
 
           if (button) {
@@ -2758,69 +2191,11 @@ function dashboardHtml({
             button.textContent =
               "⏳ Publishing...";
           }
-
         }
       );
-
     }
-
-    // =========================================================
-    // SYNC / REMOVE BUTTONS
-    // =========================================================
-
-    document
-      .querySelectorAll(".action-form")
-      .forEach(function (form) {
-
-        form.addEventListener(
-          "submit",
-          function (event) {
-
-            const button =
-              form.querySelector(
-                'button[type="submit"]'
-              );
-
-            if (!button) {
-              return;
-            }
-
-            if (
-              form.action.includes(
-                "/remove-account"
-              )
-            ) {
-
-              if (
-                !window.confirm(
-                  "Are you sure you want to remove this Facebook account from the publisher?"
-                )
-              ) {
-                event.preventDefault();
-                return;
-              }
-
-              button.disabled = true;
-              button.textContent =
-                "⏳ Removing...";
-
-            } else {
-
-              button.disabled = true;
-              button.textContent =
-                "⏳ Syncing...";
-
-            }
-
-          }
-        );
-
-      });
-
   </script>
-
 </body>
-
 </html>
   `;
 }
@@ -2831,187 +2206,238 @@ function dashboardHtml({
 // =============================================================
 
 function publishResultsPage(
-  results,
-  message,
-  hasImage,
-  hasVideo
+  results
 ) {
   const successful =
     results.filter(
-      (item) => item.success
-    );
+      (result) =>
+        result.success
+    ).length;
 
   const failed =
-    results.filter(
-      (item) => !item.success
-    );
+    results.length -
+    successful;
 
-  return htmlResult(
-    "Publish Results",
-    `
-      <h2>
-        📣 Publish Results
-      </h2>
+  const rows =
+    results.map(
+      (result) => `
+        <tr>
+          <td>
+            ${
+              result.success
+                ? "✅"
+                : "❌"
+            }
+          </td>
+
+          <td>
+            ${escapeHtml(
+              result.pageName
+            )}
+          </td>
+
+          <td>
+            <code>
+              ${escapeHtml(
+                result.pageId
+              )}
+            </code>
+          </td>
+
+          <td>
+            ${escapeHtml(
+              result.message || ""
+            )}
+          </td>
+        </tr>
+      `
+    ).join("");
+
+  return `
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+
+  <title>Publish Results</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+      background: #f5f7fb;
+      color: #172033;
+    }
+
+    .container {
+      width: min(1200px, calc(100% - 30px));
+      margin: 40px auto;
+    }
+
+    .box {
+      background: white;
+      border: 1px solid #e4e7ec;
+      border-radius: 15px;
+      padding: 25px;
+      box-shadow: 0 4px 15px rgba(16, 24, 40, .05);
+    }
+
+    .stats {
+      display: flex;
+      gap: 15px;
+      margin: 20px 0;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      padding: 15px 20px;
+      border: 1px solid #e4e7ec;
+      border-radius: 10px;
+      background: #fafafa;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 22px;
+    }
+
+    .stat span {
+      color: #667085;
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 13px;
+      border-top: 1px solid #eaecf0;
+      text-align: left;
+    }
+
+    th {
+      background: #fafafa;
+      color: #667085;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .btn {
+      display: inline-block;
+      background: #1877f2;
+      color: white;
+      text-decoration: none;
+      border-radius: 9px;
+      padding: 11px 16px;
+      font-weight: 600;
+      margin-top: 20px;
+    }
+
+    code {
+      background: #f2f4f7;
+      padding: 3px 5px;
+      border-radius: 5px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="container">
+
+    <div class="box">
+
+      <h1>🚀 Publish Results</h1>
 
       <div class="stats">
-
         <div class="stat">
-          <strong>
-            ${results.length}
-          </strong>
-          Total
+          <strong>${results.length}</strong>
+          <span>Total Pages</span>
         </div>
 
         <div class="stat">
-          <strong>
-            ${successful.length}
-          </strong>
-          Successful
+          <strong>${successful}</strong>
+          <span>Successful</span>
         </div>
 
         <div class="stat">
-          <strong>
-            ${failed.length}
-          </strong>
-          Failed
+          <strong>${failed}</strong>
+          <span>Failed</span>
         </div>
-
       </div>
 
-      <br>
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Page</th>
+            <th>Page ID</th>
+            <th>Result</th>
+          </tr>
+        </thead>
 
-      ${
-        successful.length
-          ? `
-            <div class="success-box">
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
 
-              <h3>
-                ✅ Successfully Published
-              </h3>
+      <a
+        href="/"
+        class="btn"
+      >
+        ← Back to Dashboard
+      </a>
 
-              ${successful.map((item) => `
-                <p>
+    </div>
 
-                  <b>
-                    ${escapeHtml(
-                      item.pageName ||
-                      "Unnamed Page"
-                    )}
-                  </b>
+  </div>
 
-                  <br>
-
-                  Page ID:
-                  ${escapeHtml(
-                    item.pageId || ""
-                  )}
-
-                  <br>
-
-                  Post:
-                  ${escapeHtml(
-                    item.postId ||
-                    "Published"
-                  )}
-
-                </p>
-              `).join("")}
-
-            </div>
-          `
-          : ""
-      }
-
-      ${
-        failed.length
-          ? `
-            <div style="
-              margin-top:20px;
-              background:#fef2f2;
-              border:1px solid #fecaca;
-              padding:20px;
-              border-radius:10px;
-            ">
-
-              <h3>
-                ❌ Failed
-              </h3>
-
-              ${failed.map((item) => `
-                <p>
-
-                  <b>
-                    ${escapeHtml(
-                      item.pageName ||
-                      "Unnamed Page"
-                    )}
-                  </b>
-
-                  <br>
-
-                  Page ID:
-                  ${escapeHtml(
-                    item.pageId || ""
-                  )}
-
-                  <br>
-
-                  Error:
-                  ${escapeHtml(
-                    item.error ||
-                    "Unknown error"
-                  )}
-
-                </p>
-              `).join("")}
-
-            </div>
-          `
-          : ""
-      }
-
-      <p style="margin-top:25px;">
-
-        <a
-          class="main-link"
-          href="/">
-          ← Back to Dashboard
-        </a>
-
-      </p>
-    `
-  );
+</body>
+</html>
+  `;
 }
 
 
 // =============================================================
-// HTML RESULT
+// SIMPLE RESULT PAGE
 // =============================================================
 
 function htmlResult(
   title,
-  content
+  content,
+  status = 200
 ) {
   return new Response(
     `
-<!DOCTYPE html>
-
-<html>
-
+<!doctype html>
+<html lang="en">
 <head>
-
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
 
   <meta
     name="viewport"
-    content="width=device-width, initial-scale=1.0">
+    content="width=device-width, initial-scale=1"
+  >
 
-  <title>
-    ${escapeHtml(title)}
-  </title>
+  <title>${escapeHtml(title)}</title>
 
   <style>
-
     * {
       box-sizing: border-box;
     }
@@ -3019,8 +2445,11 @@ function htmlResult(
     body {
       margin: 0;
       padding: 30px;
-      background: #f4f7fb;
-      font-family: Arial, Helvetica, sans-serif;
+      font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+      background: #f5f7fb;
       color: #172033;
     }
 
@@ -3028,83 +2457,67 @@ function htmlResult(
       max-width: 900px;
       margin: 30px auto;
       background: white;
-      border-radius: 14px;
+      border: 1px solid #e4e7ec;
+      border-radius: 15px;
       padding: 30px;
-      box-shadow: 0 4px 20px rgba(0,0,0,.07);
-    }
-
-    h1,
-    h2,
-    h3 {
-      margin-top: 0;
+      box-shadow: 0 4px 15px rgba(16, 24, 40, .05);
     }
 
     .success-box {
-      background: #ecfdf3;
-      border: 1px solid #a7f3d0;
       padding: 20px;
       border-radius: 10px;
+      background: #ecfdf3;
+      border: 1px solid #abefc6;
+      margin-bottom: 20px;
+    }
+
+    .error-box {
+      padding: 20px;
+      border-radius: 10px;
+      background: #fef3f2;
+      border: 1px solid #fecdca;
+      margin-bottom: 20px;
     }
 
     pre {
-      background: #f3f4f6;
-      padding: 15px;
-      border-radius: 8px;
       white-space: pre-wrap;
       word-break: break-word;
+      background: #f2f4f7;
+      padding: 15px;
+      border-radius: 8px;
       overflow-x: auto;
     }
 
-    .stats {
-      display: flex;
-      gap: 15px;
-      flex-wrap: wrap;
-    }
-
-    .stat {
-      background: #f4f7fb;
-      border-radius: 10px;
-      padding: 12px 18px;
-      min-width: 140px;
-    }
-
-    .stat strong {
-      display: block;
-      font-size: 22px;
-      margin-bottom: 4px;
-    }
-
-    .main-link {
-      color: #1877f2;
+    .btn {
+      display: inline-block;
+      background: #1877f2;
+      color: white;
       text-decoration: none;
-      font-weight: bold;
+      border-radius: 9px;
+      padding: 11px 16px;
+      font-weight: 600;
     }
-
   </style>
-
 </head>
 
 <body>
 
   <div class="box">
-
-    <h1>
-      ${escapeHtml(title)}
-    </h1>
+    <h1>${escapeHtml(title)}</h1>
 
     ${content}
-
   </div>
 
 </body>
-
 </html>
     `,
     {
+      status,
       headers: {
         "content-type":
           "text/html; charset=UTF-8",
-        "cache-control": "no-store"
+        "cache-control":
+          "no-store, no-cache, must-revalidate"
       }
     }
   );
@@ -3112,14 +2525,19 @@ function htmlResult(
 
 
 // =============================================================
-// ESCAPE HTML
+// HTML ESCAPING
 // =============================================================
 
 function escapeHtml(value) {
   return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+
+function escapeHtmlAttribute(value) {
+  return escapeHtml(value);
 }
