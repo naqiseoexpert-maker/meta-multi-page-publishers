@@ -17,6 +17,9 @@ export default {
         return new Response("DB D1 binding is missing.", { status: 500 });
       }
 
+      // Make sure the account name column exists.
+      await ensureAccountNameColumn(env.DB);
+
       const url = new URL(request.url);
       const path = url.pathname;
 
@@ -25,13 +28,21 @@ export default {
       // =========================================================
       if (request.method === "GET" && path === "/") {
         const accountsResult = await env.DB.prepare(`
-          SELECT id, facebook_user_id, created_at
+          SELECT
+            id,
+            facebook_user_id,
+            account_name,
+            created_at
           FROM facebook_accounts
           ORDER BY id DESC
         `).all();
 
         const pagesResult = await env.DB.prepare(`
-          SELECT id, account_id, page_id, page_name
+          SELECT
+            id,
+            account_id,
+            page_id,
+            page_name
           FROM facebook_pages
           ORDER BY page_name COLLATE NOCASE ASC
         `).all();
@@ -49,26 +60,38 @@ export default {
           pagesByAccount[page.account_id].push(page);
         }
 
-        const accountCards = accounts.map((account) => {
+        const accountCards = accounts.map((account, index) => {
           const accountPages = pagesByAccount[account.id] || [];
+
+          const accountName =
+            account.account_name ||
+            `Facebook Account ${index + 1}`;
 
           return `
             <div class="account-card">
 
               <div class="account-header">
 
-                <div>
-                  <h3>
-                    Facebook Account
-                    <span class="account-id">
-                      ID: ${escapeHtml(account.facebook_user_id)}
-                    </span>
+                <div class="account-info">
+
+                  <div class="account-number">
+                    ACCOUNT ${index + 1}
+                  </div>
+
+                  <h3 class="facebook-name">
+                    👤 ${escapeHtml(accountName)}
                   </h3>
 
+                  <div class="account-id">
+                    Facebook ID:
+                    <b>${escapeHtml(account.facebook_user_id)}</b>
+                  </div>
+
                   <div class="account-pages-count">
-                    ${accountPages.length}
+                    📄 ${accountPages.length}
                     Page${accountPages.length === 1 ? "" : "s"}
                   </div>
+
                 </div>
 
                 <div class="account-actions">
@@ -108,8 +131,7 @@ export default {
                   <form
                     method="POST"
                     action="/remove-account"
-                    class="action-form"
-                    onsubmit="return confirmRemoveAccount();">
+                    class="action-form">
 
                     <input
                       type="hidden"
@@ -131,6 +153,11 @@ export default {
               ${
                 accountPages.length
                   ? `
+                    <div class="account-pages-heading">
+                      📄 Pages connected with
+                      <b>${escapeHtml(accountName)}</b>
+                    </div>
+
                     <div class="account-page-table-wrap">
 
                       <table class="page-table">
@@ -149,12 +176,13 @@ export default {
                             <tr
                               class="page-row"
                               data-page-name="${escapeHtml(page.page_name || "")}"
-                              data-page-id="${escapeHtml(page.page_id || "")}">
+                              data-page-id="${escapeHtml(page.page_id || "")}"
+                              data-account-id="${escapeHtml(String(account.id))}">
 
                               <td>
                                 <input
                                   type="checkbox"
-                                  class="page-checkbox account-${escapeHtml(String(account.id))}"
+                                  class="page-checkbox"
                                   value="${escapeHtml(String(page.page_id))}"
                                   data-account-id="${escapeHtml(String(account.id))}">
                               </td>
@@ -311,11 +339,11 @@ export default {
           tokenData.access_token;
 
         // =====================================================
-        // GET FACEBOOK USER ID
+        // GET FACEBOOK USER ID + NAME
         // =====================================================
         const meUrl =
           `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
-          `?fields=id` +
+          `?fields=id,name` +
           `&access_token=${encodeURIComponent(userAccessToken)}`;
 
         const meResponse = await fetch(meUrl);
@@ -346,6 +374,12 @@ export default {
         const facebookUserId =
           String(meData.id);
 
+        const facebookAccountName =
+          String(
+            meData.name ||
+            `Facebook Account ${facebookUserId}`
+          );
+
         // =====================================================
         // SAVE / UPDATE FACEBOOK ACCOUNT
         // =====================================================
@@ -354,6 +388,7 @@ export default {
             SELECT
               id,
               facebook_user_id,
+              account_name,
               access_token
             FROM facebook_accounts
             WHERE facebook_user_id = ?
@@ -367,10 +402,13 @@ export default {
         if (account) {
           await env.DB.prepare(`
             UPDATE facebook_accounts
-            SET access_token = ?
+            SET
+              account_name = ?,
+              access_token = ?
             WHERE id = ?
           `)
             .bind(
+              facebookAccountName,
               userAccessToken,
               account.id
             )
@@ -383,12 +421,14 @@ export default {
               INSERT INTO facebook_accounts
                 (
                   facebook_user_id,
+                  account_name,
                   access_token
                 )
-              VALUES (?, ?)
+              VALUES (?, ?, ?)
             `)
               .bind(
                 facebookUserId,
+                facebookAccountName,
                 userAccessToken
               )
               .run();
@@ -399,7 +439,8 @@ export default {
           if (!accountId) {
             const newAccount =
               await env.DB.prepare(`
-                SELECT id
+                SELECT
+                  id
                 FROM facebook_accounts
                 WHERE facebook_user_id = ?
                 LIMIT 1
@@ -555,6 +596,11 @@ export default {
               </h2>
 
               <p>
+                Facebook Account:
+                <b>${escapeHtml(facebookAccountName)}</b>
+              </p>
+
+              <p>
                 Facebook User ID:
                 <b>${escapeHtml(facebookUserId)}</b>
               </p>
@@ -618,6 +664,7 @@ export default {
             SELECT
               id,
               facebook_user_id,
+              account_name,
               access_token
             FROM facebook_accounts
             WHERE id = ?
@@ -814,6 +861,16 @@ export default {
               <p>
                 Facebook Account:
                 <b>
+                  ${escapeHtml(
+                    account.account_name ||
+                    account.facebook_user_id
+                  )}
+                </b>
+              </p>
+
+              <p>
+                Facebook ID:
+                <b>
                   ${escapeHtml(account.facebook_user_id)}
                 </b>
               </p>
@@ -881,7 +938,8 @@ export default {
           await env.DB.prepare(`
             SELECT
               id,
-              facebook_user_id
+              facebook_user_id,
+              account_name
             FROM facebook_accounts
             WHERE id = ?
             LIMIT 1
@@ -926,6 +984,16 @@ export default {
               <h2>
                 ✅ Facebook Account Removed
               </h2>
+
+              <p>
+                Facebook Account:
+                <b>
+                  ${escapeHtml(
+                    account.account_name ||
+                    "Facebook Account"
+                  )}
+                </b>
+              </p>
 
               <p>
                 Facebook User ID:
@@ -1369,6 +1437,34 @@ export default {
 
 
 // =============================================================
+// ENSURE ACCOUNT NAME COLUMN
+// =============================================================
+
+async function ensureAccountNameColumn(db) {
+  const columnsResult =
+    await db.prepare(`
+      PRAGMA table_info(facebook_accounts)
+    `).all();
+
+  const columns =
+    columnsResult.results || [];
+
+  const hasAccountName =
+    columns.some(
+      (column) =>
+        column.name === "account_name"
+    );
+
+  if (!hasAccountName) {
+    await db.prepare(`
+      ALTER TABLE facebook_accounts
+      ADD COLUMN account_name TEXT
+    `).run();
+  }
+}
+
+
+// =============================================================
 // DASHBOARD HTML
 // =============================================================
 
@@ -1417,7 +1513,7 @@ function dashboardHtml({
       background: white;
       border-radius: 14px;
       padding: 22px;
-      margin-bottom: 20px;
+      margin-bottom: 22px;
       box-shadow: 0 4px 18px rgba(0,0,0,.06);
     }
 
@@ -1461,12 +1557,27 @@ function dashboardHtml({
       margin-top: 18px;
     }
 
+    .accounts-section {
+      margin-bottom: 25px;
+    }
+
+    .accounts-title {
+      margin: 0 0 14px;
+      font-size: 22px;
+    }
+
+    .accounts-subtitle {
+      color: #687386;
+      margin-bottom: 18px;
+    }
+
     .account-card {
       background: white;
       border-radius: 14px;
       margin-bottom: 20px;
       overflow: hidden;
       box-shadow: 0 4px 18px rgba(0,0,0,.06);
+      border: 1px solid #edf0f5;
     }
 
     .account-header {
@@ -1478,21 +1589,35 @@ function dashboardHtml({
       border-bottom: 1px solid #edf0f5;
     }
 
-    .account-header h3 {
-      margin: 0 0 7px;
-      font-size: 19px;
+    .account-info {
+      min-width: 0;
+    }
+
+    .account-number {
+      font-size: 11px;
+      font-weight: bold;
+      color: #1877f2;
+      letter-spacing: .7px;
+      margin-bottom: 6px;
+    }
+
+    .facebook-name {
+      margin: 0 0 8px;
+      font-size: 21px;
+      word-break: break-word;
     }
 
     .account-id {
-      color: #6d7788;
+      color: #687386;
       font-size: 13px;
-      font-weight: normal;
-      margin-left: 7px;
+      margin-bottom: 8px;
+      word-break: break-all;
     }
 
     .account-pages-count {
       color: #687386;
       font-size: 14px;
+      font-weight: 600;
     }
 
     .account-actions {
@@ -1547,6 +1672,14 @@ function dashboardHtml({
       color: white;
     }
 
+    .account-pages-heading {
+      padding: 15px 20px;
+      background: #fafbfc;
+      border-bottom: 1px solid #edf0f5;
+      color: #4b5565;
+      font-size: 14px;
+    }
+
     .account-page-table-wrap {
       overflow-x: auto;
     }
@@ -1563,8 +1696,12 @@ function dashboardHtml({
       text-align: left;
     }
 
+    .page-table tr:last-child td {
+      border-bottom: 0;
+    }
+
     .page-table th {
-      background: #fafbfc;
+      background: white;
       font-size: 13px;
       color: #667085;
     }
@@ -1730,12 +1867,17 @@ function dashboardHtml({
 
       .account-actions {
         justify-content: flex-start;
+        width: 100%;
       }
 
-      .account-id {
-        display: block;
-        margin-left: 0;
-        margin-top: 5px;
+      .account-actions .btn,
+      .account-actions form,
+      .account-actions form .btn {
+        width: 100%;
+      }
+
+      .facebook-name {
+        font-size: 19px;
       }
 
     }
@@ -1781,8 +1923,23 @@ function dashboardHtml({
     </div>
 
     ${
-      accountCards
-        ? accountCards
+      totalAccounts > 0
+        ? `
+          <div class="accounts-section">
+
+            <h2 class="accounts-title">
+              👤 Facebook Accounts
+            </h2>
+
+            <div class="accounts-subtitle">
+              Har Facebook account alag hai. Account ke
+              <b>Select / Unselect</b> buttons sirf us account ke Pages ko affect karte hain.
+            </div>
+
+            ${accountCards}
+
+          </div>
+        `
         : `
           <div class="empty">
 
@@ -1934,31 +2091,31 @@ function dashboardHtml({
     }
 
     function selectAccount(accountId) {
-      document
-        .querySelectorAll(
-          '.page-checkbox[data-account-id="' +
-          CSS.escape(String(accountId)) +
-          '"]'
-        )
+      getPageCheckboxes()
+        .filter(function (checkbox) {
+          return String(
+            checkbox.dataset.accountId
+          ) === String(accountId);
+        })
         .forEach(function (checkbox) {
           checkbox.checked = true;
         });
     }
 
     function unselectAccount(accountId) {
-      document
-        .querySelectorAll(
-          '.page-checkbox[data-account-id="' +
-          CSS.escape(String(accountId)) +
-          '"]'
-        )
+      getPageCheckboxes()
+        .filter(function (checkbox) {
+          return String(
+            checkbox.dataset.accountId
+          ) === String(accountId);
+        })
         .forEach(function (checkbox) {
           checkbox.checked = false;
         });
     }
 
     // =========================================================
-    // ACCOUNT BUTTONS
+    // ACCOUNT SELECT BUTTONS
     // =========================================================
 
     document
@@ -2130,12 +2287,6 @@ function dashboardHtml({
         "submit",
         function (event) {
 
-          // ---------------------------------------------------
-          // IMPORTANT:
-          // Page checkboxes are outside publishForm.
-          // Copy selected page IDs into hidden inputs.
-          // ---------------------------------------------------
-
           const selectedPages =
             document.querySelectorAll(
               ".page-checkbox:checked"
@@ -2253,34 +2404,34 @@ function dashboardHtml({
                 'button[type="submit"]'
               );
 
-            if (button) {
+            if (!button) {
+              return;
+            }
+
+            if (
+              form.action.includes(
+                "/remove-account"
+              )
+            ) {
 
               if (
-                form.action.includes(
-                  "/remove-account"
+                !window.confirm(
+                  "Are you sure you want to remove this Facebook account from the publisher?"
                 )
               ) {
-
-                if (
-                  !window.confirm(
-                    "Are you sure you want to remove this Facebook account from the publisher?"
-                  )
-                ) {
-                  event.preventDefault();
-                  return;
-                }
-
-                button.disabled = true;
-                button.textContent =
-                  "⏳ Removing...";
-
-              } else {
-
-                button.disabled = true;
-                button.textContent =
-                  "⏳ Syncing...";
-
+                event.preventDefault();
+                return;
               }
+
+              button.disabled = true;
+              button.textContent =
+                "⏳ Removing...";
+
+            } else {
+
+              button.disabled = true;
+              button.textContent =
+                "⏳ Syncing...";
 
             }
 
@@ -2288,16 +2439,6 @@ function dashboardHtml({
         );
 
       });
-
-    // =========================================================
-    // REMOVE CONFIRM
-    // =========================================================
-
-    function confirmRemoveAccount() {
-      // Confirmation is handled by the submit listener.
-      // Return true here so the form can continue normally.
-      return true;
-    }
 
   </script>
 
