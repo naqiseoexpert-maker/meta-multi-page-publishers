@@ -1,4 +1,4 @@
-```javascript
+
 export default {
   async fetch(request, env) {
     try {
@@ -1813,4 +1813,4 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
-```
+
