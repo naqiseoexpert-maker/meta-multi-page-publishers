@@ -52,25 +52,22 @@ export default {
         const pages = pagesResult.results || [];
 
         // ---------------------------------------------------------
-        // Refresh missing Facebook account names
+        // Refresh missing / old placeholder Facebook account names
         // ---------------------------------------------------------
         for (const account of accounts) {
-          if (!account.account_name && account.access_token) {
+          if (
+            account.access_token &&
+            isPlaceholderAccountName(account.account_name)
+          ) {
             try {
-              const meUrl =
-                `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
-                `?fields=id,name` +
-                `&access_token=${encodeURIComponent(account.access_token)}`;
+              const refreshedName =
+                await getFacebookAccountName(
+                  account.access_token,
+                  env.META_GRAPH_VERSION
+                );
 
-              const meResponse = await fetch(meUrl);
-              const meData = await meResponse.json();
-
-              if (
-                meResponse.ok &&
-                meData.id &&
-                meData.name
-              ) {
-                account.account_name = String(meData.name);
+              if (refreshedName) {
+                account.account_name = refreshedName;
 
                 await env.DB.prepare(`
                   UPDATE facebook_accounts
@@ -78,7 +75,7 @@ export default {
                   WHERE id = ?
                 `)
                   .bind(
-                    account.account_name,
+                    refreshedName,
                     account.id
                   )
                   .run();
@@ -103,12 +100,19 @@ export default {
           const accountPages =
             pagesByAccount[account.id] || [];
 
-          // IMPORTANT:
-          // Never use "Facebook Account 1", "Account 1", etc.
-          // If name is unavailable, use Facebook ID.
+          // -------------------------------------------------------
+          // NEVER show generic names such as:
+          // Facebook Account 1
+          // Account 1
+          // Facebook Account 2
+          //
+          // If actual name is unavailable, use Facebook ID.
+          // -------------------------------------------------------
           const accountName =
-            account.account_name ||
-            account.facebook_user_id;
+            getSafeAccountDisplayName(
+              account.account_name,
+              account.facebook_user_id
+            );
 
           return `
             <div
@@ -408,7 +412,7 @@ export default {
           tokenData.access_token;
 
         // =====================================================
-        // GET FACEBOOK USER ID + NAME
+        // GET FACEBOOK USER ID + REAL NAME
         // =====================================================
         const meUrl =
           `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
@@ -778,23 +782,18 @@ export default {
         }
 
         // ---------------------------------------------------------
-        // Refresh account name during sync
+        // Refresh actual Facebook account name during sync
         // ---------------------------------------------------------
         try {
-          const meUrl =
-            `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
-            `?fields=id,name` +
-            `&access_token=${encodeURIComponent(account.access_token)}`;
+          const refreshedName =
+            await getFacebookAccountName(
+              account.access_token,
+              env.META_GRAPH_VERSION
+            );
 
-          const meResponse = await fetch(meUrl);
-          const meData = await meResponse.json();
-
-          if (
-            meResponse.ok &&
-            meData.name
-          ) {
+          if (refreshedName) {
             account.account_name =
-              String(meData.name);
+              refreshedName;
 
             await env.DB.prepare(`
               UPDATE facebook_accounts
@@ -802,7 +801,7 @@ export default {
               WHERE id = ?
             `)
               .bind(
-                account.account_name,
+                refreshedName,
                 account.id
               )
               .run();
@@ -951,6 +950,12 @@ export default {
           );
         }
 
+        const safeAccountName =
+          getSafeAccountDisplayName(
+            account.account_name,
+            account.facebook_user_id
+          );
+
         return htmlResult(
           "Pages Synced",
           `
@@ -963,10 +968,7 @@ export default {
               <p>
                 Facebook Account:
                 <b>
-                  ${escapeHtml(
-                    account.account_name ||
-                    account.facebook_user_id
-                  )}
+                  ${escapeHtml(safeAccountName)}
                 </b>
               </p>
 
@@ -1078,6 +1080,12 @@ export default {
           .bind(account.id)
           .run();
 
+        const safeAccountName =
+          getSafeAccountDisplayName(
+            account.account_name,
+            account.facebook_user_id
+          );
+
         return htmlResult(
           "Account Removed",
           `
@@ -1090,10 +1098,7 @@ export default {
               <p>
                 Facebook Account:
                 <b>
-                  ${escapeHtml(
-                    account.account_name ||
-                    account.facebook_user_id
-                  )}
+                  ${escapeHtml(safeAccountName)}
                 </b>
               </p>
 
@@ -1536,6 +1541,107 @@ export default {
     }
   }
 };
+
+
+// =============================================================
+// GET FACEBOOK ACCOUNT NAME
+// =============================================================
+
+async function getFacebookAccountName(
+  accessToken,
+  graphVersion
+) {
+  if (!accessToken) {
+    return null;
+  }
+
+  const meUrl =
+    `https://graph.facebook.com/${graphVersion}/me` +
+    `?fields=id,name` +
+    `&access_token=${encodeURIComponent(accessToken)}`;
+
+  const response =
+    await fetch(meUrl);
+
+  const data =
+    await response.json();
+
+  if (
+    !response.ok ||
+    data.error ||
+    !data.name
+  ) {
+    return null;
+  }
+
+  const name =
+    String(data.name).trim();
+
+  if (!name) {
+    return null;
+  }
+
+  return name;
+}
+
+
+// =============================================================
+// DETECT OLD / GENERIC ACCOUNT NAMES
+// =============================================================
+
+function isPlaceholderAccountName(name) {
+  if (!name) {
+    return true;
+  }
+
+  const value =
+    String(name).trim();
+
+  if (!value) {
+    return true;
+  }
+
+  // Examples:
+  // Facebook Account 1
+  // Facebook Account 2
+  // Account 1
+  // Account 2
+  // Facebook account 10
+  if (
+    /^facebook\s+account\s+\d+$/i.test(value)
+  ) {
+    return true;
+  }
+
+  if (
+    /^account\s+\d+$/i.test(value)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+
+// =============================================================
+// SAFE ACCOUNT DISPLAY NAME
+// =============================================================
+
+function getSafeAccountDisplayName(
+  accountName,
+  facebookUserId
+) {
+  if (
+    accountName &&
+    !isPlaceholderAccountName(accountName)
+  ) {
+    return String(accountName);
+  }
+
+  return String(
+    facebookUserId || "Facebook Account"
+  );
+}
 
 
 // =============================================================
@@ -2255,12 +2361,6 @@ function dashboardHtml({
     // =========================================================
     // ACCOUNT SELECTION
     // =========================================================
-    //
-    // IMPORTANT:
-    // These functions DO NOT touch page checkboxes.
-    //
-    // Account selection is completely separate from Page selection.
-    // =========================================================
 
     function selectAccount(accountId) {
 
@@ -2333,8 +2433,6 @@ function dashboardHtml({
             const accountId =
               button.dataset.accountId;
 
-            // ONLY select account.
-            // NO PAGE CHECKBOX IS TOUCHED HERE.
             selectAccount(accountId);
 
           }
@@ -2353,8 +2451,6 @@ function dashboardHtml({
             const accountId =
               button.dataset.accountId;
 
-            // ONLY unselect account.
-            // NO PAGE CHECKBOX IS TOUCHED HERE.
             unselectAccount(accountId);
 
           }
