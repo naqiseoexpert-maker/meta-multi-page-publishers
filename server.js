@@ -1,7 +1,6 @@
 export default {
   async fetch(request, env) {
     try {
-      // Make sure the required D1 tables exist before doing anything else.
       await ensureDatabaseSchema(env.DB);
 
       const url = new URL(request.url);
@@ -14,7 +13,10 @@ export default {
         return startMetaLogin(request, env);
       }
 
-      if (request.method === "GET" && url.pathname === "/auth/meta/callback") {
+      if (
+        request.method === "GET" &&
+        url.pathname === "/auth/meta/callback"
+      ) {
         return await metaCallback(request, env);
       }
 
@@ -54,7 +56,6 @@ async function ensureDatabaseSchema(db) {
     );
   }
 
-  // Accounts table.
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +66,6 @@ async function ensureDatabaseSchema(db) {
     )
   `).run();
 
-  // Pages table.
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS pages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +76,6 @@ async function ensureDatabaseSchema(db) {
     )
   `).run();
 
-  // Helpful indexes.
   await db.prepare(`
     CREATE INDEX IF NOT EXISTS idx_pages_account_id
     ON pages(account_id)
@@ -86,6 +85,45 @@ async function ensureDatabaseSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_pages_facebook_page_id
     ON pages(facebook_page_id)
   `).run();
+}
+
+
+/* =========================================================
+   META CONFIGURATION
+========================================================= */
+
+function getMetaConfig(env) {
+  const appId = String(env.META_APP_ID || "").trim();
+  const appSecret = String(env.META_APP_SECRET || "").trim();
+  const graphVersion = String(env.META_GRAPH_VERSION || "").trim();
+
+  const missing = [];
+
+  if (!appId) {
+    missing.push("META_APP_ID");
+  }
+
+  if (!appSecret) {
+    missing.push("META_APP_SECRET");
+  }
+
+  if (!graphVersion) {
+    missing.push("META_GRAPH_VERSION");
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Meta configuration is missing in the Worker environment: ${missing.join(
+        ", "
+      )}. Go to Cloudflare Worker > Settings > Variables and Secrets and make sure these exact variable names exist in the Production environment, then redeploy.`
+    );
+  }
+
+  return {
+    appId,
+    appSecret,
+    graphVersion
+  };
 }
 
 
@@ -544,7 +582,6 @@ textarea {
 
   </div>
 
-
   <div class="stats">
 
     <div class="stat">
@@ -556,7 +593,6 @@ textarea {
       Connected Facebook Accounts
 
     </div>
-
 
     <div class="stat">
 
@@ -570,10 +606,6 @@ textarea {
 
   </div>
 
-
-  <!-- ONE SINGLE FORM -->
-  <!-- ALL PAGE CHECKBOXES ARE INSIDE THIS FORM -->
-
   <form
     id="publish-form"
     method="POST"
@@ -583,13 +615,11 @@ textarea {
 
     ${accountHtml}
 
-
     <div class="publisher">
 
       <h2>
         Create Post
       </h2>
-
 
       <input
         id="search"
@@ -597,7 +627,6 @@ textarea {
         type="text"
         placeholder="Search Pages..."
       >
-
 
       <div class="tools">
 
@@ -617,12 +646,10 @@ textarea {
 
       </div>
 
-
       <textarea
         name="message"
         placeholder="Write your post..."
       ></textarea>
-
 
       <div class="files">
 
@@ -641,7 +668,6 @@ textarea {
 
         </div>
 
-
         <div class="file">
 
           <label>
@@ -659,7 +685,6 @@ textarea {
 
       </div>
 
-
       <button
         type="submit"
         class="publish"
@@ -673,7 +698,6 @@ textarea {
 
 </div>
 
-
 <script>
 
 const form =
@@ -681,7 +705,6 @@ const form =
 
 const search =
   document.getElementById("search");
-
 
 search.addEventListener(
   "input",
@@ -711,7 +734,6 @@ search.addEventListener(
   }
 );
 
-
 function selectAll() {
 
   document
@@ -732,7 +754,6 @@ function selectAll() {
 
 }
 
-
 function clearAll() {
 
   document
@@ -744,7 +765,6 @@ function clearAll() {
     });
 
 }
-
 
 form.addEventListener(
   "submit",
@@ -767,13 +787,11 @@ form.addEventListener(
 
     }
 
-
     const image =
       document.getElementById("image");
 
     const video =
       document.getElementById("video");
-
 
     if (
       image.files.length > 0 &&
@@ -791,7 +809,6 @@ form.addEventListener(
   }
 );
 
-
 function syncAccount(id) {
 
   if (
@@ -802,13 +819,11 @@ function syncAccount(id) {
     return;
   }
 
-
   const syncForm =
     document.createElement("form");
 
   syncForm.method = "POST";
   syncForm.action = "/sync-pages";
-
 
   const input =
     document.createElement("input");
@@ -817,7 +832,6 @@ function syncAccount(id) {
   input.name = "account_id";
   input.value = id;
 
-
   syncForm.appendChild(input);
 
   document.body.appendChild(syncForm);
@@ -825,7 +839,6 @@ function syncAccount(id) {
   syncForm.submit();
 
 }
-
 
 function removeAccount(id) {
 
@@ -837,13 +850,11 @@ function removeAccount(id) {
     return;
   }
 
-
   const removeForm =
     document.createElement("form");
 
   removeForm.method = "POST";
   removeForm.action = "/remove-account";
-
 
   const input =
     document.createElement("input");
@@ -851,7 +862,6 @@ function removeAccount(id) {
   input.type = "hidden";
   input.name = "account_id";
   input.value = id;
-
 
   removeForm.appendChild(input);
 
@@ -883,6 +893,17 @@ function removeAccount(id) {
 function startMetaLogin(request, env) {
   const url = new URL(request.url);
 
+  let config;
+
+  try {
+    config = getMetaConfig(env);
+  } catch (error) {
+    return page(
+      "Meta Configuration Error",
+      `<pre>${escapeHtml(error.message)}</pre>`
+    );
+  }
+
   const redirectUri =
     `${url.origin}/auth/meta/callback`;
 
@@ -890,10 +911,18 @@ function startMetaLogin(request, env) {
     "pages_show_list,pages_read_engagement,pages_manage_posts";
 
   const loginUrl =
-    `https://www.facebook.com/${env.META_GRAPH_VERSION}/dialog/oauth` +
-    `?client_id=${encodeURIComponent(env.META_APP_ID)}` +
+    `https://www.facebook.com/${config.graphVersion}/dialog/oauth` +
+    `?client_id=${encodeURIComponent(config.appId)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=${encodeURIComponent(scope)}`;
+
+  console.log(
+    "Meta Login Redirect:",
+    loginUrl.replace(
+      config.appId,
+      "***APP_ID***"
+    )
+  );
 
   return Response.redirect(
     loginUrl,
@@ -909,13 +938,50 @@ function startMetaLogin(request, env) {
 async function metaCallback(request, env) {
   const url = new URL(request.url);
 
+  let config;
+
+  try {
+    config = getMetaConfig(env);
+  } catch (error) {
+    return page(
+      "Meta Configuration Error",
+      `<pre>${escapeHtml(error.message)}</pre>`
+    );
+  }
+
+  const errorParam =
+    url.searchParams.get("error");
+
+  const errorReason =
+    url.searchParams.get("error_reason");
+
+  const errorDescription =
+    url.searchParams.get("error_description");
+
+  if (errorParam) {
+    return page(
+      "Facebook Login Error",
+      `<pre>${escapeHtml(
+        JSON.stringify(
+          {
+            error: errorParam,
+            error_reason: errorReason,
+            error_description: errorDescription
+          },
+          null,
+          2
+        )
+      )}</pre>`
+    );
+  }
+
   const code =
     url.searchParams.get("code");
 
   if (!code) {
     return page(
       "Facebook Login Error",
-      "Authorization code was not returned."
+      "Authorization code was not returned by Facebook."
     );
   }
 
@@ -923,9 +989,9 @@ async function metaCallback(request, env) {
     `${url.origin}/auth/meta/callback`;
 
   const tokenUrl =
-    `https://graph.facebook.com/${env.META_GRAPH_VERSION}/oauth/access_token` +
-    `?client_id=${encodeURIComponent(env.META_APP_ID)}` +
-    `&client_secret=${encodeURIComponent(env.META_APP_SECRET)}` +
+    `https://graph.facebook.com/${config.graphVersion}/oauth/access_token` +
+    `?client_id=${encodeURIComponent(config.appId)}` +
+    `&client_secret=${encodeURIComponent(config.appSecret)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&code=${encodeURIComponent(code)}`;
 
@@ -971,7 +1037,6 @@ async function metaCallback(request, env) {
     me.name ||
     `Facebook Account ${me.id}`;
 
-
   const existing =
     await env.DB.prepare(`
       SELECT id
@@ -984,9 +1049,7 @@ async function metaCallback(request, env) {
       )
       .first();
 
-
   let accountId;
-
 
   if (existing) {
 
@@ -1032,7 +1095,6 @@ async function metaCallback(request, env) {
       inserted.meta.last_row_id;
   }
 
-
   try {
 
     const pages =
@@ -1058,8 +1120,13 @@ async function metaCallback(request, env) {
       error
     );
 
+    return page(
+      "Facebook Page Sync Error",
+      `<pre>${escapeHtml(
+        error?.stack || String(error)
+      )}</pre>`
+    );
   }
-
 
   return Response.redirect(
     `${url.origin}/`,
@@ -1086,7 +1153,6 @@ async function syncPages(request, env) {
     );
   }
 
-
   const account =
     await env.DB.prepare(`
       SELECT
@@ -1101,7 +1167,6 @@ async function syncPages(request, env) {
       )
       .first();
 
-
   if (!account) {
     return page(
       "Sync Error",
@@ -1109,13 +1174,11 @@ async function syncPages(request, env) {
     );
   }
 
-
   const me =
     await facebookMe(
       account.access_token,
       env
     );
-
 
   if (me?.name) {
 
@@ -1132,13 +1195,11 @@ async function syncPages(request, env) {
 
   }
 
-
   const pages =
     await getFacebookPages(
       account.access_token,
       env
     );
-
 
   for (const p of pages) {
 
@@ -1149,7 +1210,6 @@ async function syncPages(request, env) {
     );
 
   }
-
 
   return Response.redirect(
     new URL(
@@ -1179,7 +1239,6 @@ async function removeAccount(request, env) {
     );
   }
 
-
   await env.DB.prepare(`
     DELETE FROM pages
     WHERE account_id = ?
@@ -1189,7 +1248,6 @@ async function removeAccount(request, env) {
     )
     .run();
 
-
   await env.DB.prepare(`
     DELETE FROM accounts
     WHERE id = ?
@@ -1198,7 +1256,6 @@ async function removeAccount(request, env) {
       Number(accountId)
     )
     .run();
-
 
   return Response.redirect(
     new URL(
@@ -1218,12 +1275,10 @@ async function publishPost(request, env) {
   const form =
     await request.formData();
 
-
   const message =
     String(
       form.get("message") || ""
     ).trim();
-
 
   const pageIds =
     form
@@ -1233,14 +1288,11 @@ async function publishPost(request, env) {
       )
       .filter(Boolean);
 
-
   const image =
     form.get("image");
 
-
   const video =
     form.get("video");
-
 
   if (pageIds.length === 0) {
 
@@ -1252,16 +1304,13 @@ async function publishPost(request, env) {
 
   }
 
-
   const hasImage =
     image instanceof File &&
     image.size > 0;
 
-
   const hasVideo =
     video instanceof File &&
     video.size > 0;
-
 
   if (
     !message &&
@@ -1277,7 +1326,6 @@ async function publishPost(request, env) {
 
   }
 
-
   if (
     hasImage &&
     hasVideo
@@ -1291,12 +1339,10 @@ async function publishPost(request, env) {
 
   }
 
-
   const placeholders =
     pageIds
       .map(() => "?")
       .join(",");
-
 
   const result =
     await env.DB.prepare(`
@@ -1314,10 +1360,8 @@ async function publishPost(request, env) {
       )
       .all();
 
-
   const pages =
     result.results || [];
-
 
   if (pages.length === 0) {
 
@@ -1329,16 +1373,13 @@ async function publishPost(request, env) {
 
   }
 
-
   const results = [];
-
 
   for (const p of pages) {
 
     try {
 
       let response;
-
 
       if (hasVideo) {
 
@@ -1371,7 +1412,6 @@ async function publishPost(request, env) {
 
       }
 
-
       results.push({
         page_name:
           p.page_name ||
@@ -1384,7 +1424,6 @@ async function publishPost(request, env) {
 
         response
       });
-
 
     } catch (error) {
 
@@ -1407,15 +1446,12 @@ async function publishPost(request, env) {
 
   }
 
-
   const successCount =
     results.filter(
       r => r.success
     ).length;
 
-
   let title;
-
 
   if (
     successCount ===
@@ -1439,7 +1475,6 @@ async function publishPost(request, env) {
 
   }
 
-
   return publishResult(
     title,
     `${successCount} of ${results.length} selected Pages published successfully.`,
@@ -1457,10 +1492,12 @@ async function postText(
   message,
   env
 ) {
-  const url =
-    `https://graph.facebook.com/${env.META_GRAPH_VERSION}/` +
-    `${encodeURIComponent(pageData.facebook_page_id)}/feed`;
+  const config =
+    getMetaConfig(env);
 
+  const url =
+    `https://graph.facebook.com/${config.graphVersion}/` +
+    `${encodeURIComponent(pageData.facebook_page_id)}/feed`;
 
   const response =
     await fetch(
@@ -1482,10 +1519,8 @@ async function postText(
       }
     );
 
-
   const data =
     await response.json();
-
 
   if (
     !response.ok ||
@@ -1498,7 +1533,6 @@ async function postText(
     );
 
   }
-
 
   return data;
 }
@@ -1514,20 +1548,20 @@ async function postImage(
   image,
   env
 ) {
-  const url =
-    `https://graph.facebook.com/${env.META_GRAPH_VERSION}/` +
-    `${encodeURIComponent(pageData.facebook_page_id)}/photos`;
+  const config =
+    getMetaConfig(env);
 
+  const url =
+    `https://graph.facebook.com/${config.graphVersion}/` +
+    `${encodeURIComponent(pageData.facebook_page_id)}/photos`;
 
   const body =
     new FormData();
-
 
   body.append(
     "access_token",
     pageData.access_token
   );
-
 
   if (message) {
 
@@ -1538,13 +1572,11 @@ async function postImage(
 
   }
 
-
   body.append(
     "source",
     image,
     image.name || "image"
   );
-
 
   const response =
     await fetch(
@@ -1555,10 +1587,8 @@ async function postImage(
       }
     );
 
-
   const data =
     await response.json();
-
 
   if (
     !response.ok ||
@@ -1571,7 +1601,6 @@ async function postImage(
     );
 
   }
-
 
   return data;
 }
@@ -1587,20 +1616,20 @@ async function postVideo(
   video,
   env
 ) {
-  const url =
-    `https://graph.facebook.com/${env.META_GRAPH_VERSION}/` +
-    `${encodeURIComponent(pageData.facebook_page_id)}/videos`;
+  const config =
+    getMetaConfig(env);
 
+  const url =
+    `https://graph.facebook.com/${config.graphVersion}/` +
+    `${encodeURIComponent(pageData.facebook_page_id)}/videos`;
 
   const body =
     new FormData();
-
 
   body.append(
     "access_token",
     pageData.access_token
   );
-
 
   if (message) {
 
@@ -1611,13 +1640,11 @@ async function postVideo(
 
   }
 
-
   body.append(
     "source",
     video,
     video.name || "video"
   );
-
 
   const response =
     await fetch(
@@ -1628,10 +1655,8 @@ async function postVideo(
       }
     );
 
-
   const data =
     await response.json();
-
 
   if (
     !response.ok ||
@@ -1644,7 +1669,6 @@ async function postVideo(
     );
 
   }
-
 
   return data;
 }
@@ -1658,19 +1682,19 @@ async function facebookMe(
   accessToken,
   env
 ) {
+  const config =
+    getMetaConfig(env);
+
   const url =
-    `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me` +
+    `https://graph.facebook.com/${config.graphVersion}/me` +
     `?fields=id,name` +
     `&access_token=${encodeURIComponent(accessToken)}`;
-
 
   const response =
     await fetch(url);
 
-
   const data =
     await response.json();
-
 
   if (
     !response.ok ||
@@ -1684,7 +1708,6 @@ async function facebookMe(
 
   }
 
-
   return data;
 }
 
@@ -1697,25 +1720,24 @@ async function getFacebookPages(
   accessToken,
   env
 ) {
+  const config =
+    getMetaConfig(env);
+
   const pages = [];
 
-
   let next =
-    `https://graph.facebook.com/${env.META_GRAPH_VERSION}/me/accounts` +
+    `https://graph.facebook.com/${config.graphVersion}/me/accounts` +
     `?fields=id,name,access_token` +
     `&limit=100` +
     `&access_token=${encodeURIComponent(accessToken)}`;
-
 
   while (next) {
 
     const response =
       await fetch(next);
 
-
     const data =
       await response.json();
-
 
     if (
       !response.ok ||
@@ -1729,7 +1751,6 @@ async function getFacebookPages(
 
     }
 
-
     if (
       Array.isArray(data.data)
     ) {
@@ -1740,13 +1761,10 @@ async function getFacebookPages(
 
     }
 
-
     next =
       data.paging?.next ||
       null;
-
   }
-
 
   return pages;
 }
@@ -1772,7 +1790,6 @@ async function savePage(
         String(pageData.id)
       )
       .first();
-
 
   if (existing) {
 
@@ -1868,7 +1885,6 @@ function publishResult(
 
         }
 
-
         return `
           <div class="row bad">
 
@@ -1904,7 +1920,6 @@ function publishResult(
 
       })
       .join("");
-
 
   return new Response(
     `
