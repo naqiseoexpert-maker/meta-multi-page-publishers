@@ -382,9 +382,7 @@ const accountPages = groupedPages[account.id] || [];
 
     for (const p of accountPages) {
       pageHtml +=
-        '<label class="page-row" data-account="' +
-        escapeHtml(account.id) +
-        '">' +
+        '<label class="page-row">' +
 
           '<input ' +
             'class="page-checkbox account-' +
@@ -403,8 +401,6 @@ const accountPages = groupedPages[account.id] || [];
             '" ' +
             'form="publish-form"' +
           " />" +
-
-          '<div class="page-check"></div>' +
 
           '<div class="page-info">' +
             '<div class="page-name">' +
@@ -524,8 +520,6 @@ publisherHtml =
 
     "</form>" +
 
-    '<div id="publish-status" class="status-box"></div>' +
-
   "</section>";
 ```
 
@@ -562,7 +556,7 @@ APP_NAME,
   publisherHtml +
 "</div>" +
 
-'<script>' +
+"<script>" +
 
   "function updateSelectedCount() {" +
     "const checked = document.querySelectorAll('.page-checkbox:checked');" +
@@ -630,6 +624,7 @@ return page(
 "<pre>" +
 escapeHtml(error.message) +
 "</pre>" +
+'<a class="back-btn" href="/">Back to Dashboard</a>' +
 "</div>"
 );
 }
@@ -776,10 +771,7 @@ userAccessToken,
 config.graphVersion
 );
 
-return Response.redirect(
-url.origin + "/",
-302
-);
+return Response.redirect(url.origin + "/", 302);
 }
 
 /* =========================================================
@@ -1399,564 +1391,524 @@ return new Response(
 '<html lang="en">' +
 
 ```
-"<head>" +
-  '<meta charset="UTF-8" />' +
-
-  '<meta name="viewport" content="width=device-width, initial-scale=1.0" />' +
-
-  "<title>" +
-    escapeHtml(title) +
-    " - " +
-    escapeHtml(APP_NAME) +
-  "</title>" +
-
-  "<style>" +
-
-    "* { box-sizing: border-box; }" +
-
-    "body {" +
-      "margin: 0;" +
-      "background: #f4f7fb;" +
-      "color: #172033;" +
-      "font-family: Arial, Helvetica, sans-serif;" +
-    "}" +
-
-    ".topbar {" +
-      "background: #ffffff;" +
-      "border-bottom: 1px solid #e2e7ef;" +
-      "padding: 20px 30px;" +
-      "display: flex;" +
-      "justify-content: space-between;" +
-      "align-items: center;" +
-      "gap: 20px;" +
-      "position: sticky;" +
-      "top: 0;" +
-      "z-index: 20;" +
-    "}" +
-
-    ".brand {" +
-      "font-size: 23px;" +
-      "font-weight: 800;" +
-    "}" +
-
-    ".subtitle {" +
-      "margin-top: 4px;" +
-      "color: #687386;" +
-      "font-size: 13px;" +
-    "}" +
-
-    ".top-actions {" +
-      "display: flex;" +
-      "align-items: center;" +
-      "gap: 8px;" +
-    "}" +
-
-    ".connect-btn {" +
-      "display: inline-flex;" +
-      "align-items: center;" +
-      "justify-content: center;" +
-      "background: #1877f2;" +
-      "color: white;" +
-      "text-decoration: none;" +
-      "padding: 12px 18px;" +
-      "border-radius: 8px;" +
-      "font-weight: 700;" +
-      "white-space: nowrap;" +
-    "}" +
-
-    ".connect-btn:hover {" +
-      "opacity: .92;" +
-    "}" +
-
-    ".logout-form {" +
-      "margin: 0;" +
-    "}" +
-
-    ".logout-btn {" +
-      "border: 1px solid #dfe4eb;" +
-      "background: #ffffff;" +
-      "color: #455066;" +
-      "border-radius: 8px;" +
-      "padding: 11px 14px;" +
-      "font-weight: 700;" +
-      "cursor: pointer;" +
-    "}" +
-
-    ".container {" +
-      "max-width: 1100px;" +
-      "margin: 30px auto;" +
-      "padding: 0 18px 60px;" +
-    "}" +
-
-    ".account-card, .publisher-card, .results-card, .empty-box, .error-box {" +
-      "background: white;" +
-      "border: 1px solid #e1e6ee;" +
-      "border-radius: 14px;" +
-      "box-shadow: 0 5px 20px rgba(20,30,50,.05);" +
-      "margin-bottom: 24px;" +
-    "}" +
-
-    ".account-card {" +
-      "overflow: hidden;" +
-    "}" +
-
-    ".account-header {" +
-      "padding: 22px;" +
-      "display: flex;" +
-      "justify-content: space-between;" +
-      "gap: 20px;" +
-      "align-items: center;" +
-      "border-bottom: 1px solid #edf0f5;" +
-    "}" +
-
-    ".account-header h2 {" +
-      "margin: 0 0 8px;" +
-      "font-size: 20px;" +
-    "}" +
-
-    ".facebook-id {" +
-      "color: #697589;" +
-      "font-size: 13px;" +
-      "margin-bottom: 8px;" +
-    "}" +
-
-    "code {" +
-      "background: #f0f3f7;" +
-      "padding: 3px 6px;" +
-      "border-radius: 5px;" +
-      "font-size: 12px;" +
-      "color: #27344a;" +
-      "word-break: break-all;" +
-    "}" +
-
-    ".page-count {" +
-      "display: inline-block;" +
-      "background: #eef5ff;" +
-      "color: #1769d2;" +
-      "font-weight: 700;" +
-      "font-size: 13px;" +
-      "padding: 6px 10px;" +
-      "border-radius: 20px;" +
-    "}" +
-
-    ".account-actions {" +
-      "display: flex;" +
-      "gap: 8px;" +
-      "align-items: center;" +
-    "}" +
-
-    ".account-actions form {" +
-      "margin: 0;" +
-    "}" +
-
-    ".btn {" +
-      "border: 0;" +
-      "border-radius: 7px;" +
-      "padding: 10px 14px;" +
-      "cursor: pointer;" +
-      "font-weight: 700;" +
-    "}" +
-
-    ".btn-blue {" +
-      "background: #1877f2;" +
-      "color: white;" +
-    "}" +
-
-    ".btn-red {" +
-      "background: #fff0f0;" +
-      "color: #d32f2f;" +
-      "border: 1px solid #ffd1d1;" +
-    "}" +
-
-    ".pages-section {" +
-      "padding: 20px 22px 24px;" +
-    "}" +
-
-    ".list-toolbar {" +
-      "display: flex;" +
-      "justify-content: space-between;" +
-      "align-items: center;" +
-      "margin-bottom: 12px;" +
-      "gap: 15px;" +
-    "}" +
-
-    ".select-actions {" +
-      "display: flex;" +
-      "gap: 7px;" +
-    "}" +
-
-    ".small-btn {" +
-      "background: #f4f6f9;" +
-      "color: #27344a;" +
-      "border: 1px solid #dfe4eb;" +
-      "border-radius: 6px;" +
-      "padding: 7px 10px;" +
-      "cursor: pointer;" +
-      "font-size: 12px;" +
-      "font-weight: 700;" +
-    "}" +
-
-    ".page-list {" +
-      "display: flex;" +
-      "flex-direction: column;" +
-      "gap: 8px;" +
-    "}" +
-
-    ".page-row {" +
-      "display: flex;" +
-      "align-items: center;" +
-      "gap: 14px;" +
-      "min-height: 68px;" +
-      "padding: 13px 15px;" +
-      "background: #fafbfd;" +
-      "border: 1px solid #e5e9f0;" +
-      "border-radius: 9px;" +
-      "cursor: pointer;" +
-    "}" +
-
-    ".page-row:hover {" +
-      "background: #f5f9ff;" +
-      "border-color: #b8d3f7;" +
-    "}" +
-
-    ".page-row:has(.page-checkbox:checked) {" +
-      "background: #f0f7ff;" +
-      "border-color: #76aef1;" +
-    "}" +
-
-    ".page-checkbox {" +
-      "width: 19px;" +
-      "height: 19px;" +
-      "flex: 0 0 auto;" +
-      "cursor: pointer;" +
-    "}" +
-
-    ".page-info {" +
-      "min-width: 0;" +
-      "flex: 1;" +
-    "}" +
-
-    ".page-name {" +
-      "font-size: 15px;" +
-      "font-weight: 750;" +
-      "margin-bottom: 6px;" +
-      "color: #1c2738;" +
-    "}" +
-
-    ".page-id {" +
-      "font-size: 12px;" +
-      "color: #758095;" +
-    "}" +
-
-    ".page-id code {" +
-      "background: transparent;" +
-      "padding: 0;" +
-      "color: #687386;" +
-    "}" +
-
-    ".no-pages {" +
-      "padding: 20px;" +
-      "background: #f8fafc;" +
-      "border-radius: 8px;" +
-      "color: #697589;" +
-      "text-align: center;" +
-    "}" +
-
-    ".publisher-card {" +
-      "padding: 24px;" +
-    "}" +
-
-    ".publisher-header {" +
-      "display: flex;" +
-      "justify-content: space-between;" +
-      "align-items: center;" +
-      "gap: 15px;" +
-      "margin-bottom: 22px;" +
-    "}" +
-
-    ".publisher-header h2 {" +
-      "margin: 0;" +
-    "}" +
-
-    "#selected-count {" +
-      "background: #eef5ff;" +
-      "color: #1769d2;" +
-      "border-radius: 20px;" +
-      "padding: 7px 11px;" +
-      "font-size: 13px;" +
-      "font-weight: 700;" +
-    "}" +
-
-    ".field {" +
-      "margin-bottom: 20px;" +
-    "}" +
-
-    ".field label {" +
-      "display: block;" +
-      "font-weight: 700;" +
-      "margin-bottom: 8px;" +
-    "}" +
-
-    "textarea {" +
-      "width: 100%;" +
-      "resize: vertical;" +
-      "border: 1px solid #dce2eb;" +
-      "border-radius: 8px;" +
-      "padding: 13px;" +
-      "font: inherit;" +
-      "outline: none;" +
-    "}" +
-
-    "textarea:focus {" +
-      "border-color: #1877f2;" +
-      "box-shadow: 0 0 0 3px rgba(24,119,242,.10);" +
-    "}" +
-
-    "input[type=file] {" +
-      "width: 100%;" +
-      "border: 1px solid #dce2eb;" +
-      "border-radius: 8px;" +
-      "padding: 11px;" +
-      "background: white;" +
-    "}" +
-
-    ".hint {" +
-      "color: #7a8495;" +
-      "font-size: 12px;" +
-      "margin-top: 7px;" +
-    "}" +
-
-    ".publish-btn {" +
-      "width: 100%;" +
-      "border: 0;" +
-      "background: #1877f2;" +
-      "color: white;" +
-      "padding: 14px;" +
-      "border-radius: 9px;" +
-      "font-size: 15px;" +
-      "font-weight: 800;" +
-      "cursor: pointer;" +
-    "}" +
-
-    ".empty-box, .error-box, .results-card {" +
-      "padding: 28px;" +
-    "}" +
-
-    ".error-box {" +
-      "max-width: 900px;" +
-      "margin: 50px auto;" +
-    "}" +
-
-    ".error-box h2 {" +
-      "margin-top: 0;" +
-    "}" +
-
-    "pre {" +
-      "background: #f5f6f8;" +
-      "padding: 15px;" +
-      "border-radius: 8px;" +
-      "overflow: auto;" +
-      "white-space: pre-wrap;" +
-      "word-break: break-word;" +
-    "}" +
-
-    ".back-btn {" +
-      "display: inline-block;" +
-      "margin-top: 20px;" +
-      "padding: 11px 16px;" +
-      "background: #1877f2;" +
-      "color: white;" +
-      "text-decoration: none;" +
-      "border-radius: 7px;" +
-      "font-weight: 700;" +
-    "}" +
-
-    ".result-summary {" +
-      "margin: 12px 0 20px;" +
-      "font-weight: 700;" +
-      "color: #536075;" +
-    "}" +
-
-    ".results-list {" +
-      "display: flex;" +
-      "flex-direction: column;" +
-      "gap: 9px;" +
-    "}" +
-
-    ".result-row {" +
-      "border: 1px solid #e1e6ee;" +
-      "border-radius: 9px;" +
-      "padding: 14px;" +
-      "display: grid;" +
-      "grid-template-columns: 1fr auto;" +
-      "gap: 8px 15px;" +
-    "}" +
-
-    ".result-success {" +
-      "background: #f6fff8;" +
-      "border-color: #cdebd5;" +
-    "}" +
-
-    ".result-failed {" +
-      "background: #fff8f8;" +
-      "border-color: #f1d0d0;" +
-    "}" +
-
-    ".result-page-id {" +
-      "margin-top: 5px;" +
-      "color: #7b8596;" +
-      "font-size: 12px;" +
-    "}" +
-
-    ".result-status {" +
-      "font-weight: 800;" +
-    "}" +
-
-    ".result-success .result-status {" +
-      "color: #218838;" +
-    "}" +
-
-    ".result-failed .result-status {" +
-      "color: #d32f2f;" +
-    "}" +
-
-    ".result-error {" +
-      "grid-column: 1 / -1;" +
-      "color: #697589;" +
-      "font-size: 12px;" +
-      "word-break: break-word;" +
-    "}" +
-
-    ".login-wrapper {" +
-      "min-height: 100vh;" +
-      "display: flex;" +
-      "align-items: center;" +
-      "justify-content: center;" +
-      "padding: 20px;" +
-    "}" +
-
-    ".login-card {" +
-      "width: 100%;" +
-      "max-width: 420px;" +
-      "background: white;" +
-      "border: 1px solid #e1e6ee;" +
-      "border-radius: 16px;" +
-      "box-shadow: 0 10px 35px rgba(20,30,50,.08);" +
-      "padding: 34px;" +
-      "text-align: center;" +
-    "}" +
-
-    ".login-logo {" +
-      "font-size: 42px;" +
-      "margin-bottom: 12px;" +
-    "}" +
-
-    ".login-card h1 {" +
-      "margin: 0 0 8px;" +
-      "font-size: 24px;" +
-    "}" +
-
-    ".login-card p {" +
-      "color: #687386;" +
-      "margin-bottom: 24px;" +
-    "}" +
-
-    ".login-card input[type=password] {" +
-      "width: 100%;" +
-      "padding: 13px;" +
-      "border: 1px solid #dce2eb;" +
-      "border-radius: 8px;" +
-      "font-size: 15px;" +
-      "outline: none;" +
-      "margin-bottom: 12px;" +
-    "}" +
-
-    ".login-btn {" +
-      "width: 100%;" +
-      "border: 0;" +
-      "background: #1877f2;" +
-      "color: white;" +
-      "padding: 13px;" +
-      "border-radius: 8px;" +
-      "font-weight: 800;" +
-      "font-size: 15px;" +
-      "cursor: pointer;" +
-    "}" +
-
-    ".login-error {" +
-      "background: #fff0f0;" +
-      "border: 1px solid #ffd1d1;" +
-      "color: #c62828;" +
-      "padding: 10px;" +
-      "border-radius: 8px;" +
-      "margin-bottom: 14px;" +
-      "font-size: 13px;" +
-    "}" +
-
-    "@media (max-width: 700px) {" +
-
-      ".topbar {" +
-        "flex-direction: column;" +
-        "align-items: stretch;" +
+  "<head>" +
+    '<meta charset="UTF-8" />' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0" />' +
+
+    "<title>" +
+      escapeHtml(title) +
+      " - " +
+      escapeHtml(APP_NAME) +
+    "</title>" +
+
+    "<style>" +
+
+      "*{box-sizing:border-box}" +
+
+      "body{" +
+        "margin:0;" +
+        "background:#f4f7fb;" +
+        "color:#172033;" +
+        "font-family:Arial,Helvetica,sans-serif;" +
       "}" +
 
-      ".top-actions {" +
-        "width: 100%;" +
-        "flex-direction: column;" +
+      ".topbar{" +
+        "background:#fff;" +
+        "border-bottom:1px solid #e2e7ef;" +
+        "padding:20px 30px;" +
+        "display:flex;" +
+        "justify-content:space-between;" +
+        "align-items:center;" +
+        "gap:20px;" +
+        "position:sticky;" +
+        "top:0;" +
+        "z-index:20;" +
       "}" +
 
-      ".connect-btn, .logout-form, .logout-btn {" +
-        "width: 100%;" +
+      ".brand{" +
+        "font-size:23px;" +
+        "font-weight:800;" +
       "}" +
 
-      ".account-header {" +
-        "flex-direction: column;" +
-        "align-items: stretch;" +
+      ".subtitle{" +
+        "margin-top:4px;" +
+        "color:#687386;" +
+        "font-size:13px;" +
       "}" +
 
-      ".account-actions {" +
-        "width: 100%;" +
+      ".top-actions{" +
+        "display:flex;" +
+        "align-items:center;" +
+        "gap:8px;" +
       "}" +
 
-      ".account-actions form {" +
-        "flex: 1;" +
+      ".connect-btn{" +
+        "display:inline-flex;" +
+        "align-items:center;" +
+        "justify-content:center;" +
+        "background:#1877f2;" +
+        "color:#fff;" +
+        "text-decoration:none;" +
+        "padding:12px 18px;" +
+        "border-radius:8px;" +
+        "font-weight:700;" +
       "}" +
 
-      ".account-actions button {" +
-        "width: 100%;" +
+      ".logout-form{margin:0}" +
+
+      ".logout-btn{" +
+        "border:1px solid #dfe4eb;" +
+        "background:#fff;" +
+        "color:#455066;" +
+        "border-radius:8px;" +
+        "padding:11px 14px;" +
+        "font-weight:700;" +
+        "cursor:pointer;" +
       "}" +
 
-      ".list-toolbar {" +
-        "flex-direction: column;" +
-        "align-items: stretch;" +
+      ".container{" +
+        "max-width:1100px;" +
+        "margin:30px auto;" +
+        "padding:0 18px 60px;" +
       "}" +
 
-      ".select-actions {" +
-        "width: 100%;" +
+      ".account-card,.publisher-card,.results-card,.empty-box,.error-box{" +
+        "background:#fff;" +
+        "border:1px solid #e1e6ee;" +
+        "border-radius:14px;" +
+        "box-shadow:0 5px 20px rgba(20,30,50,.05);" +
+        "margin-bottom:24px;" +
       "}" +
 
-      ".small-btn {" +
-        "flex: 1;" +
+      ".account-card{overflow:hidden}" +
+
+      ".account-header{" +
+        "padding:22px;" +
+        "display:flex;" +
+        "justify-content:space-between;" +
+        "gap:20px;" +
+        "align-items:center;" +
+        "border-bottom:1px solid #edf0f5;" +
       "}" +
 
-      ".publisher-header {" +
-        "flex-direction: column;" +
-        "align-items: stretch;" +
+      ".account-header h2{" +
+        "margin:0 0 8px;" +
+        "font-size:20px;" +
       "}" +
 
-      ".result-row {" +
-        "grid-template-columns: 1fr;" +
+      ".facebook-id{" +
+        "color:#697589;" +
+        "font-size:13px;" +
+        "margin-bottom:8px;" +
       "}" +
 
-    "}" +
+      "code{" +
+        "background:#f0f3f7;" +
+        "padding:3px 6px;" +
+        "border-radius:5px;" +
+        "font-size:12px;" +
+        "color:#27344a;" +
+        "word-break:break-all;" +
+      "}" +
 
-  "</style>" +
+      ".page-count{" +
+        "display:inline-block;" +
+        "background:#eef5ff;" +
+        "color:#1769d2;" +
+        "font-weight:700;" +
+        "font-size:13px;" +
+        "padding:6px 10px;" +
+        "border-radius:20px;" +
+      "}" +
 
-"</head>" +
+      ".account-actions{" +
+        "display:flex;" +
+        "gap:8px;" +
+        "align-items:center;" +
+      "}" +
 
-"<body>" +
-  content +
-"</body>" +
+      ".account-actions form{margin:0}" +
+
+      ".btn{" +
+        "border:0;" +
+        "border-radius:7px;" +
+        "padding:10px 14px;" +
+        "cursor:pointer;" +
+        "font-weight:700;" +
+      "}" +
+
+      ".btn-blue{" +
+        "background:#1877f2;" +
+        "color:#fff;" +
+      "}" +
+
+      ".btn-red{" +
+        "background:#fff0f0;" +
+        "color:#d32f2f;" +
+        "border:1px solid #ffd1d1;" +
+      "}" +
+
+      ".pages-section{padding:20px 22px 24px}" +
+
+      ".list-toolbar{" +
+        "display:flex;" +
+        "justify-content:space-between;" +
+        "align-items:center;" +
+        "margin-bottom:12px;" +
+        "gap:15px;" +
+      "}" +
+
+      ".select-actions{" +
+        "display:flex;" +
+        "gap:7px;" +
+      "}" +
+
+      ".small-btn{" +
+        "background:#f4f6f9;" +
+        "color:#27344a;" +
+        "border:1px solid #dfe4eb;" +
+        "border-radius:6px;" +
+        "padding:7px 10px;" +
+        "cursor:pointer;" +
+        "font-size:12px;" +
+        "font-weight:700;" +
+      "}" +
+
+      ".page-list{" +
+        "display:flex;" +
+        "flex-direction:column;" +
+        "gap:8px;" +
+      "}" +
+
+      ".page-row{" +
+        "display:flex;" +
+        "align-items:center;" +
+        "gap:14px;" +
+        "min-height:68px;" +
+        "padding:13px 15px;" +
+        "background:#fafbfd;" +
+        "border:1px solid #e5e9f0;" +
+        "border-radius:9px;" +
+        "cursor:pointer;" +
+      "}" +
+
+      ".page-row:hover{" +
+        "background:#f5f9ff;" +
+        "border-color:#b8d3f7;" +
+      "}" +
+
+      ".page-checkbox{" +
+        "width:19px;" +
+        "height:19px;" +
+        "flex:0 0 auto;" +
+        "cursor:pointer;" +
+      "}" +
+
+      ".page-info{" +
+        "min-width:0;" +
+        "flex:1;" +
+      "}" +
+
+      ".page-name{" +
+        "font-size:15px;" +
+        "font-weight:700;" +
+        "margin-bottom:6px;" +
+        "color:#1c2738;" +
+      "}" +
+
+      ".page-id{" +
+        "font-size:12px;" +
+        "color:#758095;" +
+      "}" +
+
+      ".page-id code{" +
+        "background:transparent;" +
+        "padding:0;" +
+        "color:#687386;" +
+      "}" +
+
+      ".no-pages{" +
+        "padding:20px;" +
+        "background:#f8fafc;" +
+        "border-radius:8px;" +
+        "color:#697589;" +
+        "text-align:center;" +
+      "}" +
+
+      ".publisher-card{padding:24px}" +
+
+      ".publisher-header{" +
+        "display:flex;" +
+        "justify-content:space-between;" +
+        "align-items:center;" +
+        "gap:15px;" +
+        "margin-bottom:22px;" +
+      "}" +
+
+      ".publisher-header h2{margin:0}" +
+
+      "#selected-count{" +
+        "background:#eef5ff;" +
+        "color:#1769d2;" +
+        "border-radius:20px;" +
+        "padding:7px 11px;" +
+        "font-size:13px;" +
+        "font-weight:700;" +
+      "}" +
+
+      ".field{margin-bottom:20px}" +
+
+      ".field label{" +
+        "display:block;" +
+        "font-weight:700;" +
+        "margin-bottom:8px;" +
+      "}" +
+
+      "textarea{" +
+        "width:100%;" +
+        "resize:vertical;" +
+        "border:1px solid #dce2eb;" +
+        "border-radius:8px;" +
+        "padding:13px;" +
+        "font:inherit;" +
+        "outline:none;" +
+      "}" +
+
+      "textarea:focus{" +
+        "border-color:#1877f2;" +
+        "box-shadow:0 0 0 3px rgba(24,119,242,.1);" +
+      "}" +
+
+      "input[type=file]{" +
+        "width:100%;" +
+        "border:1px solid #dce2eb;" +
+        "border-radius:8px;" +
+        "padding:11px;" +
+        "background:#fff;" +
+      "}" +
+
+      ".hint{" +
+        "color:#7a8495;" +
+        "font-size:12px;" +
+        "margin-top:7px;" +
+      "}" +
+
+      ".publish-btn{" +
+        "width:100%;" +
+        "border:0;" +
+        "background:#1877f2;" +
+        "color:#fff;" +
+        "padding:14px;" +
+        "border-radius:9px;" +
+        "font-size:15px;" +
+        "font-weight:800;" +
+        "cursor:pointer;" +
+      "}" +
+
+      ".empty-box,.error-box,.results-card{padding:28px}" +
+
+      ".error-box{" +
+        "max-width:900px;" +
+        "margin:50px auto;" +
+      "}" +
+
+      ".error-box h2{margin-top:0}" +
+
+      "pre{" +
+        "background:#f5f6f8;" +
+        "padding:15px;" +
+        "border-radius:8px;" +
+        "overflow:auto;" +
+        "white-space:pre-wrap;" +
+        "word-break:break-word;" +
+      "}" +
+
+      ".back-btn{" +
+        "display:inline-block;" +
+        "margin-top:20px;" +
+        "padding:11px 16px;" +
+        "background:#1877f2;" +
+        "color:#fff;" +
+        "text-decoration:none;" +
+        "border-radius:7px;" +
+        "font-weight:700;" +
+      "}" +
+
+      ".result-summary{" +
+        "margin:12px 0 20px;" +
+        "font-weight:700;" +
+        "color:#536075;" +
+      "}" +
+
+      ".results-list{" +
+        "display:flex;" +
+        "flex-direction:column;" +
+        "gap:9px;" +
+      "}" +
+
+      ".result-row{" +
+        "border:1px solid #e1e6ee;" +
+        "border-radius:9px;" +
+        "padding:14px;" +
+        "display:grid;" +
+        "grid-template-columns:1fr auto;" +
+        "gap:8px 15px;" +
+      "}" +
+
+      ".result-success{" +
+        "background:#f6fff8;" +
+        "border-color:#cdebd5;" +
+      "}" +
+
+      ".result-failed{" +
+        "background:#fff8f8;" +
+        "border-color:#f1d0d0;" +
+      "}" +
+
+      ".result-page-id{" +
+        "margin-top:5px;" +
+        "color:#7b8596;" +
+        "font-size:12px;" +
+      "}" +
+
+      ".result-status{font-weight:800}" +
+
+      ".result-success .result-status{color:#218838}" +
+
+      ".result-failed .result-status{color:#d32f2f}" +
+
+      ".result-error{" +
+        "grid-column:1 / -1;" +
+        "color:#697589;" +
+        "font-size:12px;" +
+        "word-break:break-word;" +
+      "}" +
+
+      ".login-wrapper{" +
+        "min-height:100vh;" +
+        "display:flex;" +
+        "align-items:center;" +
+        "justify-content:center;" +
+        "padding:20px;" +
+      "}" +
+
+      ".login-card{" +
+        "width:100%;" +
+        "max-width:420px;" +
+        "background:#fff;" +
+        "border:1px solid #e1e6ee;" +
+        "border-radius:16px;" +
+        "box-shadow:0 10px 35px rgba(20,30,50,.08);" +
+        "padding:34px;" +
+        "text-align:center;" +
+      "}" +
+
+      ".login-logo{" +
+        "font-size:42px;" +
+        "margin-bottom:12px;" +
+      "}" +
+
+      ".login-card h1{" +
+        "margin:0 0 8px;" +
+        "font-size:24px;" +
+      "}" +
+
+      ".login-card p{" +
+        "color:#687386;" +
+        "margin-bottom:24px;" +
+      "}" +
+
+      ".login-card input[type=password]{" +
+        "width:100%;" +
+        "padding:13px;" +
+        "border:1px solid #dce2eb;" +
+        "border-radius:8px;" +
+        "font-size:15px;" +
+        "outline:none;" +
+        "margin-bottom:12px;" +
+      "}" +
+
+      ".login-btn{" +
+        "width:100%;" +
+        "border:0;" +
+        "background:#1877f2;" +
+        "color:#fff;" +
+        "padding:13px;" +
+        "border-radius:8px;" +
+        "font-weight:800;" +
+        "font-size:15px;" +
+        "cursor:pointer;" +
+      "}" +
+
+      ".login-error{" +
+        "background:#fff0f0;" +
+        "border:1px solid #ffd1d1;" +
+        "color:#c62828;" +
+        "padding:10px;" +
+        "border-radius:8px;" +
+        "margin-bottom:14px;" +
+        "font-size:13px;" +
+      "}" +
+
+      "@media(max-width:700px){" +
+
+        ".topbar{" +
+          "flex-direction:column;" +
+          "align-items:stretch;" +
+        "}" +
+
+        ".top-actions{" +
+          "width:100%;" +
+          "flex-direction:column;" +
+        "}" +
+
+        ".connect-btn,.logout-form,.logout-btn{" +
+          "width:100%;" +
+        "}" +
+
+        ".account-header{" +
+          "flex-direction:column;" +
+          "align-items:stretch;" +
+        "}" +
+
+        ".account-actions{" +
+          "width:100%;" +
+        "}" +
+
+        ".account-actions form{" +
+          "flex:1;" +
+        "}" +
+
+        ".account-actions button{" +
+          "width:100%;" +
+        "}" +
+
+        ".list-toolbar{" +
+          "flex-direction:column;" +
+          "align-items:stretch;" +
+        "}" +
+
+        ".select-actions{width:100%}" +
+
+        ".small-btn{flex:1}" +
+
+        ".publisher-header{" +
+          "flex-direction:column;" +
+          "align-items:stretch;" +
+        "}" +
+
+        ".result-row{" +
+          "grid-template-columns:1fr;" +
+        "}" +
+
+      "}" +
+
+    "</style>" +
+  "</head>" +
+
+  "<body>" +
+    content +
+  "</body>" +
 
 "</html>",
 
