@@ -1,3 +1,8 @@
 name = "meta-multi-page-publishers"
 main = "server.js"
 compatibility_date = "2026-08-31"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "meta-publisher-db"
+database_id = "997b3941-d32e-4418-a88c-745d1ec42bcc"
