@@ -61,7 +61,11 @@ await ensureDatabaseSchema(env.DB);
     '<div class="error-box">' +
       "<h2>Something went wrong</h2>" +
       "<pre>" +
-      escapeHtml(error && (error.stack || error.message) || String(error)) +
+      escapeHtml(
+        error && (error.stack || error.message)
+          ? error.stack || error.message
+          : String(error)
+      ) +
       "</pre>" +
       '<a class="back-btn" href="/">Back to Dashboard</a>' +
     "</div>"
@@ -77,7 +81,9 @@ AUTHENTICATION
 ========================================================= */
 
 async function isAuthenticated(request, env) {
-const configuredPassword = String(env.PUBLISHER_PASSWORD || "").trim();
+const configuredPassword = String(
+env.PUBLISHER_PASSWORD || ""
+).trim();
 
 if (!configuredPassword) {
 throw new Error(
@@ -110,7 +116,7 @@ return arrayBufferToHex(hash);
 
 function arrayBufferToHex(buffer) {
 return Array.from(new Uint8Array(buffer))
-.map(function(byte) {
+.map(function (byte) {
 return byte.toString(16).padStart(2, "0");
 })
 .join("");
@@ -160,7 +166,9 @@ return cookies;
 
 function showLoginPage(errorMessage) {
 const errorHtml = errorMessage
-? '<div class="login-error">' + escapeHtml(errorMessage) + "</div>"
+? '<div class="login-error">' +
+escapeHtml(errorMessage) +
+"</div>"
 : "";
 
 return page(
@@ -168,7 +176,9 @@ return page(
 '<div class="login-wrapper">' +
 '<div class="login-card">' +
 '<div class="login-logo">🔐</div>' +
-"<h1>" + escapeHtml(APP_NAME) + "</h1>" +
+"<h1>" +
+escapeHtml(APP_NAME) +
+"</h1>" +
 "<p>Enter your password to continue.</p>" +
 errorHtml +
 '<form method="POST" action="/login">' +
@@ -188,7 +198,9 @@ errorHtml +
 }
 
 async function handleLogin(request, env) {
-const configuredPassword = String(env.PUBLISHER_PASSWORD || "").trim();
+const configuredPassword = String(
+env.PUBLISHER_PASSWORD || ""
+).trim();
 
 if (!configuredPassword) {
 return showLoginPage(
@@ -200,7 +212,9 @@ const form = await request.formData();
 const password = String(form.get("password") || "");
 
 if (!password || password !== configuredPassword) {
-return showLoginPage("Incorrect password. Please try again.");
+return showLoginPage(
+"Incorrect password. Please try again."
+);
 }
 
 const token = await createAuthToken(configuredPassword);
@@ -280,7 +294,9 @@ META CONFIG
 function getMetaConfig(env) {
 const appId = String(env.META_APP_ID || "").trim();
 const appSecret = String(env.META_APP_SECRET || "").trim();
-const graphVersion = String(env.META_GRAPH_VERSION || "").trim();
+const graphVersion = String(
+env.META_GRAPH_VERSION || ""
+).trim();
 
 const missing = [];
 
@@ -358,7 +374,8 @@ accountHtml =
 "</div>";
 } else {
 for (const account of accounts) {
-const accountPages = groupedPages[account.id] || [];
+const accountPages =
+groupedPages[account.id] || [];
 
 ```
   let pageHtml = "";
@@ -404,7 +421,9 @@ const accountPages = groupedPages[account.id] || [];
 
           '<div class="page-info">' +
             '<div class="page-name">' +
-              escapeHtml(p.page_name || "Unnamed Page") +
+              escapeHtml(
+                p.page_name || "Unnamed Page"
+              ) +
             "</div>" +
 
             '<div class="page-id">' +
@@ -435,21 +454,28 @@ const accountPages = groupedPages[account.id] || [];
         "<div>" +
           "<h2>" +
             escapeHtml(
-              account.account_name || "Facebook Account"
+              account.account_name ||
+              "Facebook Account"
             ) +
           "</h2>" +
 
           '<div class="facebook-id">' +
             "Facebook ID: " +
             "<code>" +
-            escapeHtml(account.facebook_user_id) +
+            escapeHtml(
+              account.facebook_user_id
+            ) +
             "</code>" +
           "</div>" +
 
           '<div class="page-count">' +
             accountPages.length +
             " Connected Page" +
-            (accountPages.length === 1 ? "" : "s") +
+            (
+              accountPages.length === 1
+                ? ""
+                : "s"
+            ) +
           "</div>" +
         "</div>" +
 
@@ -457,7 +483,7 @@ const accountPages = groupedPages[account.id] || [];
 
           '<form method="POST" action="/sync">' +
             '<input type="hidden" name="account_id" value="' +
-            escapeHtml(account.id) +
+              escapeHtml(account.id) +
             '" />' +
             '<button class="btn btn-blue" type="submit">' +
               "Sync Pages" +
@@ -465,9 +491,9 @@ const accountPages = groupedPages[account.id] || [];
           "</form>" +
 
           '<form method="POST" action="/remove-account" ' +
-            "onsubmit=\"return confirm('Remove this Facebook account and all its connected Pages?');\">" +
+            'onsubmit="return confirm(\'Remove this Facebook account and all its connected Pages?\');">' +
             '<input type="hidden" name="account_id" value="' +
-            escapeHtml(account.id) +
+              escapeHtml(account.id) +
             '" />' +
             '<button class="btn btn-red" type="submit">' +
               "Remove" +
@@ -657,7 +683,6 @@ FACEBOOK CALLBACK
 
 async function metaCallback(request, env) {
 const config = getMetaConfig(env);
-
 const url = new URL(request.url);
 
 const code = url.searchParams.get("code");
@@ -708,7 +733,8 @@ encodeURIComponent(redirectUri) +
 encodeURIComponent(code);
 
 const tokenResponse = await fetch(tokenUrl);
-const tokenData = await readGraphResponse(tokenResponse);
+const tokenData =
+await readGraphResponse(tokenResponse);
 
 if (!tokenResponse.ok || !tokenData.access_token) {
 throw new Error(
@@ -717,7 +743,8 @@ JSON.stringify(tokenData)
 );
 }
 
-const userAccessToken = tokenData.access_token;
+const userAccessToken =
+tokenData.access_token;
 
 const userUrl =
 "https://graph.facebook.com/" +
@@ -728,7 +755,8 @@ config.graphVersion +
 encodeURIComponent(userAccessToken);
 
 const userResponse = await fetch(userUrl);
-const userData = await readGraphResponse(userResponse);
+const userData =
+await readGraphResponse(userResponse);
 
 if (!userResponse.ok || !userData.id) {
 throw new Error(
@@ -753,7 +781,8 @@ userAccessToken
 .run();
 
 const account = await env.DB.prepare(
-"SELECT id FROM accounts WHERE facebook_user_id = ?"
+"SELECT id FROM accounts " +
+"WHERE facebook_user_id = ?"
 )
 .bind(String(userData.id))
 .first();
@@ -771,7 +800,10 @@ userAccessToken,
 config.graphVersion
 );
 
-return Response.redirect(url.origin + "/", 302);
+return Response.redirect(
+url.origin + "/",
+302
+);
 }
 
 /* =========================================================
@@ -797,7 +829,9 @@ const account = await env.DB.prepare(
 .first();
 
 if (!account) {
-throw new Error("Facebook account not found.");
+throw new Error(
+"Facebook account not found."
+);
 }
 
 const config = getMetaConfig(env);
@@ -859,13 +893,13 @@ for (const fbPage of pageList) {
       "access_token = excluded.access_token, " +
       "account_id = excluded.account_id"
   )
-  .bind(
-    String(fbPage.id),
-    fbPage.name || "Unnamed Page",
-    fbPage.access_token,
-    Number(accountId)
-  )
-  .run();
+    .bind(
+      String(fbPage.id),
+      fbPage.name || "Unnamed Page",
+      fbPage.access_token,
+      Number(accountId)
+    )
+    .run();
 }
 
 nextUrl =
@@ -878,7 +912,7 @@ nextUrl =
 
 if (foundPageIds.length > 0) {
 const placeholders = foundPageIds
-.map(function() {
+.map(function () {
 return "?";
 })
 .join(",");
@@ -891,11 +925,11 @@ await env.DB.prepare(
   placeholders +
   ")"
 )
-.bind(
-  Number(accountId),
-  ...foundPageIds
-)
-.run();
+  .bind(
+    Number(accountId),
+    ...foundPageIds
+  )
+  .run();
 ```
 
 } else {
@@ -964,7 +998,10 @@ return page(
 );
 }
 
-if (!message && (!media || !media.name)) {
+if (
+!message &&
+(!media || !media.name)
+) {
 return page(
 "Empty Post",
 '<div class="error-box">' +
@@ -975,20 +1012,24 @@ return page(
 );
 }
 
-const numericPageIds = selectedPageIds
-.map(function(id) {
+const numericPageIds =
+selectedPageIds
+.map(function (id) {
 return Number(id);
 })
-.filter(function(id) {
+.filter(function (id) {
 return Number.isInteger(id) && id > 0;
 });
 
 if (!numericPageIds.length) {
-throw new Error("Invalid selected Page IDs.");
+throw new Error(
+"Invalid selected Page IDs."
+);
 }
 
-const placeholders = numericPageIds
-.map(function() {
+const placeholders =
+numericPageIds
+.map(function () {
 return "?";
 })
 .join(",");
@@ -1004,7 +1045,8 @@ placeholders +
 .bind(...numericPageIds)
 .all();
 
-const pages = pagesResult.results || [];
+const pages =
+pagesResult.results || [];
 
 if (!pages.length) {
 throw new Error(
@@ -1026,14 +1068,18 @@ media.name
 mediaName = media.name;
 
 ```
-const contentType = media.type || "";
+const contentType =
+  media.type || "";
 
 if (contentType.startsWith("image/")) {
   mediaType = "image";
-} else if (contentType.startsWith("video/")) {
+} else if (
+  contentType.startsWith("video/")
+) {
   mediaType = "video";
 } else {
-  const lower = mediaName.toLowerCase();
+  const lower =
+    mediaName.toLowerCase();
 
   if (
     lower.endsWith(".jpg") ||
@@ -1060,9 +1106,13 @@ if (!mediaType) {
   );
 }
 
-mediaBuffer = await media.arrayBuffer();
+mediaBuffer =
+  await media.arrayBuffer();
 
-if (mediaBuffer.byteLength > 100 * 1024 * 1024) {
+if (
+  mediaBuffer.byteLength >
+  100 * 1024 * 1024
+) {
   throw new Error(
     "File is too large. Please use a smaller file."
   );
@@ -1079,45 +1129,52 @@ let result;
 
 ```
   if (!mediaBuffer) {
-    result = await publishTextPost(
-      fbPage,
-      message,
-      config.graphVersion
-    );
-  } else if (mediaType === "image") {
-    result = await publishImagePost(
-      fbPage,
-      message,
-      mediaBuffer,
-      mediaName,
-      config.graphVersion
-    );
+    result =
+      await publishTextPost(
+        fbPage,
+        message,
+        config.graphVersion
+      );
+  } else if (
+    mediaType === "image"
+  ) {
+    result =
+      await publishImagePost(
+        fbPage,
+        message,
+        mediaBuffer,
+        mediaName,
+        config.graphVersion
+      );
   } else {
-    result = await publishVideoPost(
-      fbPage,
-      message,
-      mediaBuffer,
-      mediaName,
-      config.graphVersion
-    );
+    result =
+      await publishVideoPost(
+        fbPage,
+        message,
+        mediaBuffer,
+        mediaName,
+        config.graphVersion
+      );
   }
 
   results.push({
     page: fbPage.page_name,
     pageId: fbPage.facebook_page_id,
     success: true,
-    postId: result && result.id
-      ? result.id
-      : ""
+    postId:
+      result && result.id
+        ? result.id
+        : ""
   });
 } catch (error) {
   results.push({
     page: fbPage.page_name,
     pageId: fbPage.facebook_page_id,
     success: false,
-    error: error && error.message
-      ? error.message
-      : String(error)
+    error:
+      error && error.message
+        ? error.message
+        : String(error)
   });
 }
 ```
@@ -1137,7 +1194,9 @@ resultsHtml +=
 ```
     "<div>" +
       "<strong>" +
-        escapeHtml(r.page || "Unnamed Page") +
+        escapeHtml(
+          r.page || "Unnamed Page"
+        ) +
       "</strong>" +
 
       '<div class="result-page-id">' +
@@ -1147,9 +1206,11 @@ resultsHtml +=
     "</div>" +
 
     '<div class="result-status">' +
-      (r.success
-        ? "✓ Published"
-        : "✕ Failed") +
+      (
+        r.success
+          ? "✓ Published"
+          : "✕ Failed"
+      ) +
     "</div>" +
 
     (
@@ -1171,7 +1232,8 @@ resultsHtml +=
 
 }
 
-const successCount = results.filter(function(r) {
+const successCount =
+results.filter(function (r) {
 return r.success;
 }).length;
 
@@ -1217,10 +1279,14 @@ graphVersion +
 fbPage.facebook_page_id +
 "/feed";
 
-const body = new URLSearchParams();
+const body =
+new URLSearchParams();
 
 body.set("message", message);
-body.set("access_token", fbPage.access_token);
+body.set(
+"access_token",
+fbPage.access_token
+);
 
 return graphPost(url, body);
 }
@@ -1239,7 +1305,8 @@ graphVersion +
 fbPage.facebook_page_id +
 "/photos";
 
-const form = new FormData();
+const form =
+new FormData();
 
 form.append(
 "access_token",
@@ -1247,7 +1314,10 @@ fbPage.access_token
 );
 
 if (message) {
-form.append("caption", message);
+form.append(
+"caption",
+message
+);
 }
 
 form.append(
@@ -1258,7 +1328,10 @@ mediaName || "image.jpg"
 )
 );
 
-return graphPostFormData(url, form);
+return graphPostFormData(
+url,
+form
+);
 }
 
 async function publishVideoPost(
@@ -1275,7 +1348,8 @@ graphVersion +
 fbPage.facebook_page_id +
 "/videos";
 
-const form = new FormData();
+const form =
+new FormData();
 
 form.append(
 "access_token",
@@ -1283,7 +1357,10 @@ fbPage.access_token
 );
 
 if (message) {
-form.append("description", message);
+form.append(
+"description",
+message
+);
 }
 
 form.append(
@@ -1294,51 +1371,75 @@ mediaName || "video.mp4"
 )
 );
 
-return graphPostFormData(url, form);
+return graphPostFormData(
+url,
+form
+);
 }
 
-async function graphPost(url, body) {
-const response = await fetch(
+async function graphPost(
 url,
-{
+body
+) {
+const response =
+await fetch(url, {
 method: "POST",
 headers: {
 "Content-Type":
 "application/x-www-form-urlencoded"
 },
 body: body
-}
+});
+
+const data =
+await readGraphResponse(
+response
 );
 
-const data = await readGraphResponse(response);
-
-if (!response.ok || data.error) {
-throw new Error(formatGraphError(data));
+if (
+!response.ok ||
+data.error
+) {
+throw new Error(
+formatGraphError(data)
+);
 }
 
 return data;
 }
 
-async function graphPostFormData(url, form) {
-const response = await fetch(
+async function graphPostFormData(
 url,
-{
+form
+) {
+const response =
+await fetch(url, {
 method: "POST",
 body: form
-}
+});
+
+const data =
+await readGraphResponse(
+response
 );
 
-const data = await readGraphResponse(response);
-
-if (!response.ok || data.error) {
-throw new Error(formatGraphError(data));
+if (
+!response.ok ||
+data.error
+) {
+throw new Error(
+formatGraphError(data)
+);
 }
 
 return data;
 }
 
-async function readGraphResponse(response) {
-const text = await response.text();
+async function readGraphResponse(
+response
+) {
+const text =
+await response.text();
 
 try {
 return JSON.parse(text);
@@ -1347,7 +1448,10 @@ return {
 error: {
 message:
 text ||
-("Facebook returned HTTP " + response.status),
+(
+"Facebook returned HTTP " +
+response.status
+),
 type: "NonJSONResponse",
 code: response.status
 }
@@ -1361,7 +1465,8 @@ const e = data.error;
 
 ```
 return [
-  e.message || "Facebook Graph API error",
+  e.message ||
+    "Facebook Graph API error",
   e.type
     ? "Type: " + e.type
     : "",
@@ -1369,7 +1474,8 @@ return [
     ? "Code: " + e.code
     : "",
   e.error_subcode !== undefined
-    ? "Subcode: " + e.error_subcode
+    ? "Subcode: " +
+      e.error_subcode
     : ""
 ]
   .filter(Boolean)
@@ -1914,8 +2020,10 @@ return new Response(
 
 {
   headers: {
-    "Content-Type": "text/html; charset=UTF-8",
-    "Cache-Control": "no-store"
+    "Content-Type":
+      "text/html; charset=UTF-8",
+    "Cache-Control":
+      "no-store"
   }
 }
 ```
