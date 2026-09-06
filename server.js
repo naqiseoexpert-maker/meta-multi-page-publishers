@@ -305,14 +305,13 @@ function showLoginPage(errorMessage) {
       <div class="login-background-orb orb-one"></div>
       <div class="login-background-orb orb-two"></div>
 
-
       <div class="login-card">
         <div class="login-brand">
           <div class="brand-mark">
             <span>f</span>
           </div>
           <div>
-            <div class="brand-name">NAQI SHAH</div>
+            <div class="brand-name">META PUBLISHER</div>
             <div class="brand-mini">COMMAND CENTER</div>
           </div>
         </div>
