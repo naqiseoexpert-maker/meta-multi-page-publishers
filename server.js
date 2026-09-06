@@ -4,6 +4,7 @@ export default {
   async fetch(request, env) {
     try {
       await ensureDatabaseSchema(env.DB);
+
       const url = new URL(request.url);
       const path = url.pathname;
 
@@ -11,6 +12,7 @@ export default {
         if (await isAuthenticated(request, env)) {
           return Response.redirect(url.origin + "/", 302);
         }
+
         return showLoginPage("");
       }
 
@@ -71,6 +73,11 @@ export default {
     }
   }
 };
+
+
+/* =========================================================
+   AUTHENTICATION
+========================================================= */
 
 async function isAuthenticated(request, env) {
   const password = String(env.PUBLISHER_PASSWORD || "").trim();
@@ -192,6 +199,7 @@ async function handleLogin(request, env) {
   }
 
   const form = await request.formData();
+
   const password = String(
     form.get("password") || ""
   );
@@ -234,6 +242,11 @@ function handleLogout() {
   });
 }
 
+
+/* =========================================================
+   DATABASE
+========================================================= */
+
 async function ensureDatabaseSchema(db) {
   if (!db) {
     throw new Error(
@@ -273,6 +286,11 @@ async function ensureDatabaseSchema(db) {
   ).run();
 }
 
+
+/* =========================================================
+   META CONFIG
+========================================================= */
+
 function getMetaConfig(env) {
   const appId = String(
     env.META_APP_ID || ""
@@ -309,11 +327,16 @@ function getMetaConfig(env) {
   }
 
   return {
-    appId: appId,
-    appSecret: appSecret,
-    graphVersion: graphVersion
+    appId,
+    appSecret,
+    graphVersion
   };
 }
+
+
+/* =========================================================
+   DASHBOARD
+========================================================= */
 
 async function showDashboard(env) {
   const accountsResult = await env.DB.prepare(
@@ -419,6 +442,7 @@ async function showDashboard(env) {
 
       accountHtml +=
         '<section class="account-card">' +
+
           '<div class="account-header">' +
 
             "<div>" +
@@ -566,6 +590,7 @@ async function showDashboard(env) {
 
   return page(
     APP_NAME,
+
     '<div class="topbar">' +
 
       "<div>" +
@@ -601,6 +626,11 @@ async function showDashboard(env) {
   );
 }
 
+
+/* =========================================================
+   META LOGIN
+========================================================= */
+
 function startMetaLogin(request, env) {
   let config;
 
@@ -609,6 +639,7 @@ function startMetaLogin(request, env) {
   } catch (error) {
     return page(
       "Meta Configuration Error",
+
       '<div class="error-box">' +
         "<h2>Meta Configuration Error</h2>" +
         "<pre>" +
@@ -629,6 +660,15 @@ function startMetaLogin(request, env) {
   const scope =
     "pages_show_list,pages_read_engagement,pages_manage_posts";
 
+  /*
+   * IMPORTANT:
+   * auth_type=reauthorize forces Facebook to go through
+   * authorization again instead of silently using an
+   * already authorized session.
+   *
+   * This is important when connecting another Facebook account.
+   */
+
   const loginUrl =
     "https://www.facebook.com/" +
     config.graphVersion +
@@ -638,13 +678,19 @@ function startMetaLogin(request, env) {
     "&redirect_uri=" +
     encodeURIComponent(redirectUri) +
     "&scope=" +
-    encodeURIComponent(scope);
+    encodeURIComponent(scope) +
+    "&auth_type=reauthorize";
 
   return Response.redirect(
     loginUrl,
     302
   );
 }
+
+
+/* =========================================================
+   META CALLBACK
+========================================================= */
 
 async function metaCallback(request, env) {
   const config =
@@ -667,16 +713,20 @@ async function metaCallback(request, env) {
   if (error) {
     return page(
       "Facebook Login Error",
+
       '<div class="error-box">' +
         "<h2>Facebook Login Error</h2>" +
+
         "<p>" +
           escapeHtml(error) +
         "</p>" +
+
         "<p>" +
           escapeHtml(
             errorDescription || ""
           ) +
         "</p>" +
+
         '<a class="back-btn" href="/">Back to Dashboard</a>' +
       "</div>"
     );
@@ -685,6 +735,7 @@ async function metaCallback(request, env) {
   if (!code) {
     return page(
       "Facebook Login Error",
+
       '<div class="error-box">' +
         "<h2>No authorization code received.</h2>" +
         '<a class="back-btn" href="/">Back to Dashboard</a>' +
@@ -700,12 +751,16 @@ async function metaCallback(request, env) {
     "https://graph.facebook.com/" +
     config.graphVersion +
     "/oauth/access_token" +
+
     "?client_id=" +
     encodeURIComponent(config.appId) +
+
     "&client_secret=" +
     encodeURIComponent(config.appSecret) +
+
     "&redirect_uri=" +
     encodeURIComponent(redirectUri) +
+
     "&code=" +
     encodeURIComponent(code);
 
@@ -729,6 +784,11 @@ async function metaCallback(request, env) {
 
   const userAccessToken =
     tokenData.access_token;
+
+
+  /* ---------------------------------------------------------
+     GET FACEBOOK USER
+  --------------------------------------------------------- */
 
   const userUrl =
     "https://graph.facebook.com/" +
@@ -758,28 +818,44 @@ async function metaCallback(request, env) {
     );
   }
 
+
+  /* ---------------------------------------------------------
+     SAVE / UPDATE FACEBOOK ACCOUNT
+  --------------------------------------------------------- */
+
   await env.DB.prepare(
     "INSERT INTO accounts (" +
       "facebook_user_id, account_name, access_token" +
     ") VALUES (?, ?, ?) " +
+
     "ON CONFLICT(facebook_user_id) DO UPDATE SET " +
       "account_name = excluded.account_name, " +
       "access_token = excluded.access_token"
   )
     .bind(
       String(userData.id),
+
       userData.name ||
         "Facebook Account",
+
       userAccessToken
     )
     .run();
 
+
+  /* ---------------------------------------------------------
+     FIND ACCOUNT
+  --------------------------------------------------------- */
+
   const account =
     await env.DB.prepare(
-      "SELECT id FROM accounts " +
+      "SELECT id, facebook_user_id, account_name " +
+      "FROM accounts " +
       "WHERE facebook_user_id = ?"
     )
-      .bind(String(userData.id))
+      .bind(
+        String(userData.id)
+      )
       .first();
 
   if (!account) {
@@ -788,6 +864,11 @@ async function metaCallback(request, env) {
     );
   }
 
+
+  /* ---------------------------------------------------------
+     SYNC ITS PAGES
+  --------------------------------------------------------- */
+
   await syncAccountPages(
     env,
     Number(account.id),
@@ -795,18 +876,30 @@ async function metaCallback(request, env) {
     config.graphVersion
   );
 
+
+  /* ---------------------------------------------------------
+     RETURN DASHBOARD
+  --------------------------------------------------------- */
+
   return Response.redirect(
     url.origin + "/",
     302
   );
 }
 
+
+/* =========================================================
+   SYNC PAGES
+========================================================= */
+
 async function syncPages(request, env) {
   const form =
     await request.formData();
 
   const accountId =
-    Number(form.get("account_id"));
+    Number(
+      form.get("account_id")
+    );
 
   if (!accountId) {
     throw new Error(
@@ -817,7 +910,8 @@ async function syncPages(request, env) {
   const account =
     await env.DB.prepare(
       "SELECT id, access_token " +
-      "FROM accounts WHERE id = ?"
+      "FROM accounts " +
+      "WHERE id = ?"
     )
       .bind(accountId)
       .first();
@@ -844,6 +938,7 @@ async function syncPages(request, env) {
   );
 }
 
+
 async function syncAccountPages(
   env,
   accountId,
@@ -854,8 +949,11 @@ async function syncAccountPages(
     "https://graph.facebook.com/" +
     graphVersion +
     "/me/accounts" +
+
     "?fields=id,name,access_token" +
+
     "&limit=100" +
+
     "&access_token=" +
     encodeURIComponent(
       userAccessToken
@@ -894,23 +992,72 @@ async function syncAccountPages(
         String(fbPage.id)
       );
 
-      await env.DB.prepare(
-        "INSERT INTO pages (" +
-          "facebook_page_id, page_name, access_token, account_id" +
-        ") VALUES (?, ?, ?, ?) " +
-        "ON CONFLICT(facebook_page_id) DO UPDATE SET " +
-          "page_name = excluded.page_name, " +
-          "access_token = excluded.access_token, " +
-          "account_id = excluded.account_id"
-      )
-        .bind(
-          String(fbPage.id),
-          fbPage.name ||
-            "Unnamed Page",
-          fbPage.access_token,
-          Number(accountId)
+
+      /* -------------------------------------------------------
+         CHECK IF PAGE ALREADY EXISTS
+      ------------------------------------------------------- */
+
+      const existingPage =
+        await env.DB.prepare(
+          "SELECT id, account_id " +
+          "FROM pages " +
+          "WHERE facebook_page_id = ?"
         )
-        .run();
+          .bind(
+            String(fbPage.id)
+          )
+          .first();
+
+
+      if (existingPage) {
+        /*
+         * Update the existing Page.
+         *
+         * The Page remains associated with the account
+         * returned by the current Facebook authorization.
+         */
+
+        await env.DB.prepare(
+          "UPDATE pages SET " +
+            "page_name = ?, " +
+            "access_token = ?, " +
+            "account_id = ? " +
+          "WHERE facebook_page_id = ?"
+        )
+          .bind(
+            fbPage.name ||
+              "Unnamed Page",
+
+            fbPage.access_token,
+
+            Number(accountId),
+
+            String(fbPage.id)
+          )
+          .run();
+
+      } else {
+
+        await env.DB.prepare(
+          "INSERT INTO pages (" +
+            "facebook_page_id, " +
+            "page_name, " +
+            "access_token, " +
+            "account_id" +
+          ") VALUES (?, ?, ?, ?)"
+        )
+          .bind(
+            String(fbPage.id),
+
+            fbPage.name ||
+              "Unnamed Page",
+
+            fbPage.access_token,
+
+            Number(accountId)
+          )
+          .run();
+      }
     }
 
     nextUrl =
@@ -919,6 +1066,11 @@ async function syncAccountPages(
         ? data.paging.next
         : null;
   }
+
+
+  /* ---------------------------------------------------------
+     REMOVE OLD PAGES FOR THIS ACCOUNT
+  --------------------------------------------------------- */
 
   if (foundPageIds.length > 0) {
     const placeholders =
@@ -940,15 +1092,24 @@ async function syncAccountPages(
         ...foundPageIds
       )
       .run();
+
   } else {
+
     await env.DB.prepare(
       "DELETE FROM pages " +
       "WHERE account_id = ?"
     )
-      .bind(Number(accountId))
+      .bind(
+        Number(accountId)
+      )
       .run();
   }
 }
+
+
+/* =========================================================
+   REMOVE ACCOUNT
+========================================================= */
 
 async function removeAccount(
   request,
@@ -958,7 +1119,9 @@ async function removeAccount(
     await request.formData();
 
   const accountId =
-    Number(form.get("account_id"));
+    Number(
+      form.get("account_id")
+    );
 
   if (!accountId) {
     throw new Error(
@@ -967,13 +1130,15 @@ async function removeAccount(
   }
 
   await env.DB.prepare(
-    "DELETE FROM pages WHERE account_id = ?"
+    "DELETE FROM pages " +
+    "WHERE account_id = ?"
   )
     .bind(accountId)
     .run();
 
   await env.DB.prepare(
-    "DELETE FROM accounts WHERE id = ?"
+    "DELETE FROM accounts " +
+    "WHERE id = ?"
   )
     .bind(accountId)
     .run();
@@ -983,6 +1148,11 @@ async function removeAccount(
     303
   );
 }
+
+
+/* =========================================================
+   PUBLISH POST
+========================================================= */
 
 async function publishPost(
   request,
@@ -1002,9 +1172,11 @@ async function publishPost(
   const media =
     form.get("media");
 
+
   if (!selectedPageIds.length) {
     return page(
       "No Pages Selected",
+
       '<div class="error-box">' +
         "<h2>No Pages Selected</h2>" +
         "<p>Please select at least one Facebook Page.</p>" +
@@ -1013,12 +1185,14 @@ async function publishPost(
     );
   }
 
+
   if (
     !message &&
     (!media || !media.name)
   ) {
     return page(
       "Empty Post",
+
       '<div class="error-box">' +
         "<h2>Empty Post</h2>" +
         "<p>Enter text or select an image/video.</p>" +
@@ -1026,6 +1200,7 @@ async function publishPost(
       "</div>"
     );
   }
+
 
   const numericPageIds =
     selectedPageIds
@@ -1045,12 +1220,14 @@ async function publishPost(
     );
   }
 
+
   const placeholders =
     numericPageIds
       .map(function () {
         return "?";
       })
       .join(",");
+
 
   const pagesResult =
     await env.DB.prepare(
@@ -1061,11 +1238,14 @@ async function publishPost(
       ") " +
       "ORDER BY page_name COLLATE NOCASE ASC"
     )
-      .bind(...numericPageIds)
+      .bind(
+        ...numericPageIds
+      )
       .all();
 
   const pages =
     pagesResult.results || [];
+
 
   if (!pages.length) {
     throw new Error(
@@ -1073,35 +1253,38 @@ async function publishPost(
     );
   }
 
+
   const config =
     getMetaConfig(env);
+
 
   let mediaBuffer = null;
   let mediaType = null;
   let mediaName = null;
+
 
   if (
     media &&
     typeof media === "object" &&
     media.name
   ) {
-    mediaName = media.name;
+    mediaName =
+      media.name;
 
     const contentType =
       media.type || "";
 
+
     if (
-      contentType.startsWith(
-        "image/"
-      )
+      contentType.startsWith("image/")
     ) {
       mediaType = "image";
+
     } else if (
-      contentType.startsWith(
-        "video/"
-      )
+      contentType.startsWith("video/")
     ) {
       mediaType = "video";
+
     } else {
       const lower =
         mediaName.toLowerCase();
@@ -1114,6 +1297,7 @@ async function publishPost(
         lower.endsWith(".webp")
       ) {
         mediaType = "image";
+
       } else if (
         lower.endsWith(".mp4") ||
         lower.endsWith(".mov") ||
@@ -1125,14 +1309,17 @@ async function publishPost(
       }
     }
 
+
     if (!mediaType) {
       throw new Error(
         "Unsupported media type. Please upload an image or video."
       );
     }
 
+
     mediaBuffer =
       await media.arrayBuffer();
+
 
     if (
       mediaBuffer.byteLength >
@@ -1144,22 +1331,28 @@ async function publishPost(
     }
   }
 
+
   const results = [];
+
 
   for (const fbPage of pages) {
     try {
       let result;
 
+
       if (!mediaBuffer) {
+
         result =
           await publishTextPost(
             fbPage,
             message,
             config.graphVersion
           );
+
       } else if (
         mediaType === "image"
       ) {
+
         result =
           await publishImagePost(
             fbPage,
@@ -1168,7 +1361,9 @@ async function publishPost(
             mediaName,
             config.graphVersion
           );
+
       } else {
+
         result =
           await publishVideoPost(
             fbPage,
@@ -1179,22 +1374,31 @@ async function publishPost(
           );
       }
 
+
       results.push({
         page: fbPage.page_name,
+
         pageId:
           fbPage.facebook_page_id,
+
         success: true,
+
         postId:
           result && result.id
             ? result.id
             : ""
       });
+
     } catch (error) {
+
       results.push({
         page: fbPage.page_name,
+
         pageId:
           fbPage.facebook_page_id,
+
         success: false,
+
         error:
           error && error.message
             ? error.message
@@ -1203,7 +1407,9 @@ async function publishPost(
     }
   }
 
+
   let resultsHtml = "";
+
 
   for (const r of results) {
     resultsHtml +=
@@ -1216,6 +1422,7 @@ async function publishPost(
       '">' +
 
         "<div>" +
+
           "<strong>" +
             escapeHtml(
               r.page ||
@@ -1229,6 +1436,7 @@ async function publishPost(
               r.pageId
             ) +
           "</div>" +
+
         "</div>" +
 
         '<div class="result-status">' +
@@ -1260,14 +1468,18 @@ async function publishPost(
       "</div>";
   }
 
+
   const successCount =
     results.filter(function (r) {
       return r.success;
     }).length;
 
+
   return page(
     "Publish Results",
+
     '<div class="results-card">' +
+
       "<h2>Publish Results</h2>" +
 
       '<div class="result-summary">' +
@@ -1282,9 +1494,15 @@ async function publishPost(
       "</div>" +
 
       '<a class="back-btn" href="/">Back to Dashboard</a>' +
+
     "</div>"
   );
 }
+
+
+/* =========================================================
+   FACEBOOK TEXT POST
+========================================================= */
 
 async function publishTextPost(
   fbPage,
@@ -1298,24 +1516,33 @@ async function publishTextPost(
     fbPage.facebook_page_id +
     "/feed";
 
+
   const body =
     new URLSearchParams();
+
 
   body.set(
     "message",
     message
   );
 
+
   body.set(
     "access_token",
     fbPage.access_token
   );
+
 
   return graphPost(
     url,
     body
   );
 }
+
+
+/* =========================================================
+   FACEBOOK IMAGE POST
+========================================================= */
 
 async function publishImagePost(
   fbPage,
@@ -1331,13 +1558,16 @@ async function publishImagePost(
     fbPage.facebook_page_id +
     "/photos";
 
+
   const form =
     new FormData();
+
 
   form.append(
     "access_token",
     fbPage.access_token
   );
+
 
   if (message) {
     form.append(
@@ -1346,19 +1576,29 @@ async function publishImagePost(
     );
   }
 
+
   form.append(
     "source",
+
     new File(
       [mediaBuffer],
-      mediaName || "image.jpg"
+
+      mediaName ||
+        "image.jpg"
     )
   );
+
 
   return graphPostFormData(
     url,
     form
   );
 }
+
+
+/* =========================================================
+   FACEBOOK VIDEO POST
+========================================================= */
 
 async function publishVideoPost(
   fbPage,
@@ -1374,13 +1614,16 @@ async function publishVideoPost(
     fbPage.facebook_page_id +
     "/videos";
 
+
   const form =
     new FormData();
+
 
   form.append(
     "access_token",
     fbPage.access_token
   );
+
 
   if (message) {
     form.append(
@@ -1389,13 +1632,18 @@ async function publishVideoPost(
     );
   }
 
+
   form.append(
     "source",
+
     new File(
       [mediaBuffer],
-      mediaName || "video.mp4"
+
+      mediaName ||
+        "video.mp4"
     )
   );
+
 
   return graphPostFormData(
     url,
@@ -1403,24 +1651,36 @@ async function publishVideoPost(
   );
 }
 
+
+/* =========================================================
+   GRAPH POST
+========================================================= */
+
 async function graphPost(
   url,
   body
 ) {
   const response =
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          "application/x-www-form-urlencoded"
-      },
-      body: body
-    });
+    await fetch(
+      url,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded"
+        },
+
+        body
+      }
+    );
+
 
   const data =
     await readGraphResponse(
       response
     );
+
 
   if (
     !response.ok ||
@@ -1431,23 +1691,35 @@ async function graphPost(
     );
   }
 
+
   return data;
 }
+
+
+/* =========================================================
+   GRAPH FORM DATA POST
+========================================================= */
 
 async function graphPostFormData(
   url,
   form
 ) {
   const response =
-    await fetch(url, {
-      method: "POST",
-      body: form
-    });
+    await fetch(
+      url,
+      {
+        method: "POST",
+
+        body: form
+      }
+    );
+
 
   const data =
     await readGraphResponse(
       response
     );
+
 
   if (
     !response.ok ||
@@ -1458,8 +1730,14 @@ async function graphPostFormData(
     );
   }
 
+
   return data;
 }
+
+
+/* =========================================================
+   GRAPH RESPONSE
+========================================================= */
 
 async function readGraphResponse(
   response
@@ -1467,9 +1745,12 @@ async function readGraphResponse(
   const text =
     await response.text();
 
+
   try {
     return JSON.parse(text);
+
   } catch (error) {
+
     return {
       error: {
         message:
@@ -1478,12 +1759,21 @@ async function readGraphResponse(
             "Facebook returned HTTP " +
             response.status
           ),
-        type: "NonJSONResponse",
-        code: response.status
+
+        type:
+          "NonJSONResponse",
+
+        code:
+          response.status
       }
     };
   }
 }
+
+
+/* =========================================================
+   GRAPH ERROR FORMAT
+========================================================= */
 
 function formatGraphError(data) {
   if (
@@ -1492,6 +1782,7 @@ function formatGraphError(data) {
   ) {
     const e =
       data.error;
+
 
     return [
       e.message ||
@@ -1514,8 +1805,14 @@ function formatGraphError(data) {
       .join(" | ");
   }
 
+
   return JSON.stringify(data);
 }
+
+
+/* =========================================================
+   HTML PAGE
+========================================================= */
 
 function page(
   title,
@@ -1595,18 +1892,25 @@ pre{background:#f5f6f8;padding:15px;border-radius:8px;overflow:auto;white-space:
 
   return new Response(
     "<!DOCTYPE html>" +
+
     '<html lang="en">' +
+
       "<head>" +
+
         '<meta charset="UTF-8">' +
+
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+
         "<title>" +
           escapeHtml(title) +
           " - " +
           escapeHtml(APP_NAME) +
         "</title>" +
+
         "<style>" +
           css +
         "</style>" +
+
       "</head>" +
 
       "<body>" +
@@ -1614,10 +1918,12 @@ pre{background:#f5f6f8;padding:15px;border-radius:8px;overflow:auto;white-space:
       "</body>" +
 
     "</html>",
+
     {
       headers: {
         "Content-Type":
           "text/html; charset=UTF-8",
+
         "Cache-Control":
           "no-store"
       }
@@ -1625,9 +1931,16 @@ pre{background:#f5f6f8;padding:15px;border-radius:8px;overflow:auto;white-space:
   );
 }
 
+
+/* =========================================================
+   ESCAPE HTML
+========================================================= */
+
 function escapeHtml(value) {
   return String(
-    value == null ? "" : value
+    value == null
+      ? ""
+      : value
   )
     .replaceAll(
       "&",
