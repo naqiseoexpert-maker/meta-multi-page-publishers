@@ -187,26 +187,36 @@ function showLoginPage(errorMessage) {
 
     '<div class="login-screen">' +
 
-      '<div class="login-decoration login-decoration-one"></div>' +
-      '<div class="login-decoration login-decoration-two"></div>' +
+      '<div class="login-glow login-glow-one"></div>' +
+      '<div class="login-glow login-glow-two"></div>' +
 
       '<div class="login-card">' +
 
         '<div class="login-brand">' +
-          '<div class="login-brand-icon">' +
-            '<span>✦</span>' +
+          '<div class="login-logo">' +
+            '<span>f</span>' +
           "</div>" +
 
           "<div>" +
             '<div class="login-brand-name">Meta Publisher</div>' +
-            '<div class="login-brand-sub">Multi Page Management</div>' +
+            '<div class="login-brand-sub">Publishing Command Center</div>' +
           "</div>" +
         "</div>" +
 
         '<div class="login-title-area">' +
-          '<div class="lock-circle">🔐</div>' +
-          "<h1>Welcome Back</h1>" +
-          "<p>Enter your password to access your publishing dashboard.</p>" +
+
+          '<div class="login-lock">' +
+            '<span>⌁</span>' +
+          "</div>" +
+
+          '<div class="login-eyebrow">PRIVATE WORKSPACE</div>' +
+
+          "<h1>Welcome back.</h1>" +
+
+          "<p>" +
+            "Enter your password to access your Facebook publishing dashboard." +
+          "</p>" +
+
         "</div>" +
 
         errorHtml +
@@ -214,24 +224,29 @@ function showLoginPage(errorMessage) {
         '<form method="POST" action="/login" class="login-form">' +
 
           '<div class="login-field">' +
-            '<label for="login-password">Password</label>' +
+
+            '<label for="login-password">Dashboard Password</label>' +
 
             '<div class="password-wrap">' +
-              '<span class="input-icon">●</span>' +
+
+              '<span class="password-symbol">●</span>' +
+
               '<input id="login-password" type="password" name="password" placeholder="Enter your password" autocomplete="current-password" required autofocus />' +
+
             "</div>" +
+
           "</div>" +
 
           '<button type="submit" class="login-btn">' +
-            "<span>Access Dashboard</span>" +
+            "<span>Enter Dashboard</span>" +
             '<span class="login-arrow">→</span>' +
           "</button>" +
 
         "</form>" +
 
-        '<div class="login-footer">' +
-          '<span class="status-dot"></span>' +
-          "Secure private dashboard" +
+        '<div class="login-secure">' +
+          '<span class="secure-pulse"></span>' +
+          "Encrypted private workspace" +
         "</div>" +
 
       "</div>" +
@@ -418,6 +433,69 @@ async function showDashboard(env) {
     groupedPages[p.account_id].push(p);
   }
 
+  const totalPages = pages.length;
+
+  let accountOverviewHtml = "";
+
+  if (accounts.length === 0) {
+    accountOverviewHtml =
+      '<div class="overview-empty">' +
+        '<div class="overview-empty-icon">f</div>' +
+        '<div>' +
+          '<strong>No Facebook accounts connected</strong>' +
+          '<span>Connect your first account to begin.</span>' +
+        "</div>" +
+      "</div>";
+  } else {
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      const accountPages = groupedPages[account.id] || [];
+
+      accountOverviewHtml +=
+        '<div class="overview-account">' +
+
+          '<div class="overview-account-left">' +
+
+            '<div class="overview-facebook-icon">f</div>' +
+
+            '<div class="overview-account-info">' +
+
+              '<div class="overview-account-name">' +
+                escapeHtml(
+                  account.account_name ||
+                  "Facebook Account"
+                ) +
+              "</div>" +
+
+              '<div class="overview-account-id">' +
+                "ID " +
+                escapeHtml(account.facebook_user_id) +
+              "</div>" +
+
+            "</div>" +
+
+          "</div>" +
+
+          '<div class="overview-account-pages">' +
+            '<strong>' +
+              accountPages.length +
+            "</strong>" +
+            "<span>" +
+              "Page" +
+              (accountPages.length === 1 ? "" : "s") +
+            "</span>" +
+          "</div>" +
+
+          '<div class="overview-account-status">' +
+            '<span class="status-pulse"></span>' +
+            "Connected" +
+          "</div>" +
+
+        "</div>";
+    }
+  }
+
+
   let accountHtml = "";
 
   if (accounts.length === 0) {
@@ -428,6 +506,8 @@ async function showDashboard(env) {
           '<div class="empty-illustration-circle">f</div>' +
         "</div>" +
 
+        '<div class="empty-eyebrow">GET STARTED</div>' +
+
         "<h3>No Facebook account connected</h3>" +
 
         "<p>" +
@@ -435,7 +515,7 @@ async function showDashboard(env) {
         "</p>" +
 
         '<a class="empty-connect-btn" href="/auth/meta">' +
-          '<span>＋</span>' +
+          '<span>+</span>' +
           "Connect Facebook Account" +
         "</a>" +
 
@@ -452,13 +532,19 @@ async function showDashboard(env) {
           '<div class="pages-toolbar">' +
 
             '<div class="pages-toolbar-left">' +
-              '<div class="pages-section-title">Connected Pages</div>' +
+
+              '<div class="pages-title-row">' +
+                '<span class="pages-title-dot"></span>' +
+                '<div class="pages-section-title">Connected Pages</div>' +
+              "</div>" +
+
               '<div class="pages-section-subtitle">' +
                 accountPages.length +
                 " page" +
                 (accountPages.length === 1 ? "" : "s") +
                 " available for publishing" +
               "</div>" +
+
             "</div>" +
 
             '<div class="select-actions">' +
@@ -482,6 +568,12 @@ async function showDashboard(env) {
           '<div class="page-list">';
 
         for (const p of accountPages) {
+          const pageName =
+            p.page_name || "Unnamed Page";
+
+          const initials =
+            getInitials(pageName);
+
           pageHtml +=
             '<label class="page-row">' +
 
@@ -492,25 +584,27 @@ async function showDashboard(env) {
                 '" form="publish-form" />' +
 
               '<div class="page-avatar">' +
-                "f" +
+                escapeHtml(initials) +
               "</div>" +
 
               '<div class="page-info">' +
 
                 '<div class="page-name">' +
-                  escapeHtml(
-                    p.page_name || "Unnamed Page"
-                  ) +
+                  escapeHtml(pageName) +
                 "</div>" +
 
                 '<div class="page-meta">' +
                   '<span class="online-dot"></span>' +
                   "Connected" +
                   '<span class="meta-separator">•</span>' +
-                  "Page ID " +
+                  "ID " +
                   escapeHtml(p.facebook_page_id) +
                 "</div>" +
 
+              "</div>" +
+
+              '<div class="page-ready">' +
+                "READY" +
               "</div>" +
 
               '<div class="page-select-indicator">' +
@@ -547,7 +641,8 @@ async function showDashboard(env) {
               '<div class="account-title-wrap">' +
 
                 '<div class="account-label">' +
-                  "FACEBOOK ACCOUNT" +
+                  "FACEBOOK ACCOUNT " +
+                  String(account.id).padStart(2, "0") +
                 "</div>" +
 
                 "<h2>" +
@@ -558,10 +653,8 @@ async function showDashboard(env) {
                 "</h2>" +
 
                 '<div class="facebook-id">' +
-                  '<span>ID</span>' +
-                  escapeHtml(
-                    account.facebook_user_id
-                  ) +
+                  '<span>ACCOUNT ID</span>' +
+                  escapeHtml(account.facebook_user_id) +
                 "</div>" +
 
               "</div>" +
@@ -570,13 +663,17 @@ async function showDashboard(env) {
 
             '<div class="account-header-right">' +
 
+              '<div class="account-connected-label">' +
+                '<span class="status-pulse"></span>' +
+                "Connected" +
+              "</div>" +
+
               '<div class="account-page-count">' +
                 '<strong>' +
                   accountPages.length +
                 "</strong>" +
                 "<span>" +
-                  "Page" +
-                  (accountPages.length === 1 ? "" : "s") +
+                  "Pages" +
                 "</span>" +
               "</div>" +
 
@@ -590,7 +687,7 @@ async function showDashboard(env) {
 
                   '<button class="btn btn-blue" type="submit">' +
                     '<span class="btn-icon">↻</span>' +
-                    "Sync Pages" +
+                    "Sync" +
                   "</button>" +
 
                 "</form>" +
@@ -603,7 +700,7 @@ async function showDashboard(env) {
                   '" />' +
 
                   '<button class="btn btn-light-danger" type="submit">' +
-                    '<span class="btn-icon">⌫</span>' +
+                    '<span class="btn-icon">×</span>' +
                     "Remove" +
                   "</button>" +
 
@@ -623,6 +720,7 @@ async function showDashboard(env) {
     }
   }
 
+
   let publisherHtml = "";
 
   if (
@@ -632,6 +730,8 @@ async function showDashboard(env) {
     publisherHtml =
       '<section class="publisher-card">' +
 
+        '<div class="publisher-glow"></div>' +
+
         '<div class="publisher-top">' +
 
           '<div class="publisher-title-area">' +
@@ -639,9 +739,15 @@ async function showDashboard(env) {
             '<div class="composer-icon">✎</div>' +
 
             "<div>" +
-              '<div class="section-eyebrow">CONTENT PUBLISHER</div>' +
+
+              '<div class="section-eyebrow">PUBLISHING STUDIO</div>' +
+
               "<h2>Create & Publish</h2>" +
-              "<p>Write once and publish across all selected Facebook Pages.</p>" +
+
+              "<p>" +
+                "Create one post and distribute it across your selected Pages." +
+              "</p>" +
+
             "</div>" +
 
           "</div>" +
@@ -659,17 +765,18 @@ async function showDashboard(env) {
 
           '<div class="field">' +
 
-            '<label for="message">' +
-              "Post Content" +
-            "</label>" +
+            '<div class="field-label-row">' +
+              '<label for="message">Post Content</label>' +
+              '<span id="char-count">0 characters</span>' +
+            "</div>" +
 
             '<div class="textarea-wrap">' +
 
-              '<textarea id="message" name="message" rows="7" placeholder="What would you like to share with your audience?"></textarea>' +
+              '<textarea id="message" name="message" rows="7" placeholder="Write something you want to share with your audience..."></textarea>' +
 
               '<div class="textarea-footer">' +
-                '<span>Write your message above</span>' +
-                '<span id="char-count">0 characters</span>' +
+                '<span>Compose your Facebook post</span>' +
+                '<span>Text + media supported</span>' +
               "</div>" +
 
             "</div>" +
@@ -685,18 +792,18 @@ async function showDashboard(env) {
               '<div class="upload-icon">↑</div>' +
 
               '<div class="upload-content">' +
-                '<strong id="upload-title">Add an image or video</strong>' +
+                '<strong id="upload-title">Drop your image or video here</strong>' +
                 '<span id="upload-name">PNG, JPG, WEBP, MP4 and other supported formats</span>' +
               "</div>" +
 
-              '<div class="upload-action">Browse</div>' +
+              '<div class="upload-action">Browse Files</div>' +
 
               '<input id="media" type="file" name="media" accept="image/*,video/*" />' +
 
             "</label>" +
 
             '<div class="upload-hint">' +
-              "Optional • Leave empty if you want to publish text only" +
+              "Optional attachment • Maximum file size 100 MB" +
             "</div>" +
 
           "</div>" +
@@ -704,13 +811,19 @@ async function showDashboard(env) {
           '<div class="publish-footer">' +
 
             '<div class="publish-info">' +
-              '<span class="secure-icon">✓</span>' +
-              '<span>Ready to publish securely to your selected Pages</span>' +
+
+              '<div class="publish-check">✓</div>' +
+
+              '<div>' +
+                '<strong>Ready to publish</strong>' +
+                '<span id="publish-target-info">Select Pages above to choose your audience</span>' +
+              "</div>" +
+
             "</div>" +
 
             '<button class="publish-btn" type="submit" onclick="return validatePublish()">' +
               '<span class="publish-btn-icon">➤</span>' +
-              "<span>Publish to Selected Pages</span>" +
+              "<span>Publish Now</span>" +
             "</button>" +
 
           "</div>" +
@@ -720,7 +833,6 @@ async function showDashboard(env) {
       "</section>";
   }
 
-  const totalPages = pages.length;
 
   const script =
     "<script>" +
@@ -731,9 +843,17 @@ async function showDashboard(env) {
 
         "const counter=document.getElementById('selected-count');" +
 
+        "const target=document.getElementById('publish-target-info');" +
+
         "if(counter){" +
 
           "counter.innerHTML='<span class=\"selection-dot\"></span>'+checked.length+' Page'+(checked.length===1?'':'s')+' Selected';" +
+
+        "}" +
+
+        "if(target){" +
+
+          "target.textContent=checked.length?checked.length+' Page'+(checked.length===1?'':'s')+' selected for publishing':'Select Pages above to choose your audience';" +
 
         "}" +
 
@@ -749,7 +869,12 @@ async function showDashboard(env) {
 
         "});" +
 
+        "const selectedStat=document.getElementById('selected-stat');" +
+
+        "if(selectedStat){selectedStat.textContent=checked.length;}" +
+
       "}" +
+
 
       "function selectAccountPages(accountId,select){" +
 
@@ -758,6 +883,16 @@ async function showDashboard(env) {
         "updateSelectedCount();" +
 
       "}" +
+
+
+      "function selectAllPages(select){" +
+
+        "document.querySelectorAll('.page-checkbox').forEach(function(c){c.checked=select;});" +
+
+        "updateSelectedCount();" +
+
+      "}" +
+
 
       "document.addEventListener('change',function(e){" +
 
@@ -775,13 +910,13 @@ async function showDashboard(env) {
 
           "if(file){" +
 
-            "if(title){title.textContent='Media selected';}" +
+            "if(title){title.textContent='Media selected successfully';}" +
 
             "if(name){name.textContent=file.name+' • '+formatFileSize(file.size);}" +
 
           "}else{" +
 
-            "if(title){title.textContent='Add an image or video';}" +
+            "if(title){title.textContent='Drop your image or video here';}" +
 
             "if(name){name.textContent='PNG, JPG, WEBP, MP4 and other supported formats';}" +
 
@@ -790,6 +925,7 @@ async function showDashboard(env) {
         "}" +
 
       "});" +
+
 
       "function formatFileSize(bytes){" +
 
@@ -802,6 +938,7 @@ async function showDashboard(env) {
         "return (bytes/(1024*1024*1024)).toFixed(1)+' GB';" +
 
       "}" +
+
 
       "const messageBox=document.getElementById('message');" +
 
@@ -816,6 +953,7 @@ async function showDashboard(env) {
         "});" +
 
       "}" +
+
 
       "function validatePublish(){" +
 
@@ -846,9 +984,11 @@ async function showDashboard(env) {
 
       "}" +
 
+
       "updateSelectedCount();" +
 
     "</script>";
+
 
   return page(
     APP_NAME,
@@ -860,21 +1000,26 @@ async function showDashboard(env) {
         '<a href="/" class="brand-link">' +
 
           '<div class="brand-mark">' +
-            '<span>✦</span>' +
+            '<span>f</span>' +
           "</div>" +
 
           '<div class="brand-text">' +
             '<div class="brand">Meta Publisher</div>' +
-            '<div class="subtitle">Multi Page Management</div>' +
+            '<div class="subtitle">Publishing Command Center</div>' +
           "</div>" +
 
         "</a>" +
 
         '<div class="top-actions">' +
 
+          '<div class="top-status">' +
+            '<span class="top-status-dot"></span>' +
+            "System Online" +
+          "</div>" +
+
           '<a class="connect-btn" href="/auth/meta">' +
             '<span class="connect-icon">+</span>' +
-            "<span>Connect Facebook Account</span>" +
+            "<span>Connect Account</span>" +
           "</a>" +
 
           '<form method="POST" action="/logout" class="logout-form">' +
@@ -892,135 +1037,207 @@ async function showDashboard(env) {
 
     "</header>" +
 
+
     '<main class="dashboard">' +
 
       '<div class="container">' +
 
-        '<section class="hero">' +
+        '<section class="dashboard-hero">' +
 
-          '<div class="hero-content">' +
+          '<div class="hero-left">' +
 
             '<div class="hero-kicker">' +
               '<span class="hero-live-dot"></span>' +
-              "PUBLISHING DASHBOARD" +
+              "META PUBLISHING COMMAND CENTER" +
             "</div>" +
 
-            "<h1>Manage your Facebook Pages<br><span>from one place.</span></h1>" +
+            "<h1>" +
+              "Everything you publish." +
+              "<br>" +
+              '<span>One powerful dashboard.</span>' +
+            "</h1>" +
 
             "<p>" +
-              "Connect multiple Facebook accounts, select your Pages, and publish content to them in seconds." +
+              "Manage your Facebook accounts, organize your Pages and publish content across your entire network from one place." +
             "</p>" +
 
-            '<div class="hero-actions">' +
-              '<a class="hero-connect" href="/auth/meta">' +
-                '<span>＋</span>' +
+            '<div class="hero-buttons">' +
+
+              '<a class="hero-primary" href="/auth/meta">' +
+                '<span>+</span>' +
                 "Connect Facebook Account" +
               "</a>" +
-              '<span class="hero-note">Supports multiple accounts & Pages</span>' +
+
+              '<button class="hero-secondary" type="button" onclick="document.getElementById(\'accounts-section\').scrollIntoView({behavior:\'smooth\'})">' +
+                "View Accounts" +
+                '<span>↓</span>' +
+              "</button>" +
+
             "</div>" +
 
           "</div>" +
 
-          '<div class="hero-visual">' +
+          '<div class="hero-right">' +
 
-            '<div class="hero-orbit orbit-one"></div>' +
-            '<div class="hero-orbit orbit-two"></div>' +
+            '<div class="hero-grid"></div>' +
 
-            '<div class="hero-panel">' +
+            '<div class="floating-card floating-card-main">' +
 
-              '<div class="mini-panel-top">' +
-                '<span class="mini-dot"></span>' +
-                "PUBLISH CENTER" +
-                '<span class="mini-status">LIVE</span>' +
+              '<div class="floating-top">' +
+                '<span class="floating-label">NETWORK STATUS</span>' +
+                '<span class="floating-live">LIVE</span>' +
               "</div>" +
 
-              '<div class="mini-post">' +
-
-                '<div class="mini-avatar">f</div>' +
-
-                '<div class="mini-lines">' +
-                  '<span></span>' +
-                  '<span></span>' +
-                  '<span class="short"></span>' +
-                "</div>" +
-
+              '<div class="network-number">' +
+                accounts.length +
+                '<span> accounts</span>' +
               "</div>" +
 
-              '<div class="mini-pages">' +
-                '<span class="mini-page active"></span>' +
-                '<span class="mini-page"></span>' +
-                '<span class="mini-page"></span>' +
-                '<span class="mini-page"></span>' +
-                '<span class="mini-more">+100</span>' +
+              '<div class="network-line">' +
+                '<span class="network-dot"></span>' +
+                "All connected accounts are available" +
               "</div>" +
 
-              '<div class="mini-publish">✓ Ready to publish</div>' +
+              '<div class="network-bars">' +
+                '<span></span>' +
+                '<span></span>' +
+                '<span></span>' +
+                '<span></span>' +
+                '<span></span>' +
+                '<span></span>' +
+                '<span></span>' +
+                '<span></span>' +
+              "</div>" +
 
+            "</div>" +
+
+            '<div class="floating-card floating-card-small">' +
+              '<div class="small-icon">f</div>' +
+              '<div>' +
+                '<strong>' +
+                  totalPages +
+                "</strong>" +
+                '<span>Pages ready</span>' +
+              "</div>" +
             "</div>" +
 
           "</div>" +
 
         "</section>" +
 
-        '<section class="stats-grid">' +
 
-          '<div class="stat-card">' +
-            '<div class="stat-icon stat-blue">♟</div>' +
-            '<div class="stat-info">' +
-              '<span>Connected Accounts</span>' +
+        '<section class="overview-panel">' +
+
+          '<div class="overview-heading">' +
+
+            '<div>' +
+              '<div class="section-eyebrow light-blue">NETWORK OVERVIEW</div>' +
+              "<h2>Your Accounts</h2>" +
+              "<p>Connected Facebook accounts and their available Pages.</p>" +
+            "</div>" +
+
+            '<div class="overview-total">' +
+              '<span>Total</span>' +
               '<strong>' +
                 accounts.length +
               "</strong>" +
+              '<small>Accounts</small>' +
             "</div>" +
-            '<div class="stat-arrow">→</div>' +
+
           "</div>" +
 
-          '<div class="stat-card">' +
-            '<div class="stat-icon stat-purple">▦</div>' +
-            '<div class="stat-info">' +
-              '<span>Total Facebook Pages</span>' +
-              '<strong>' +
-                totalPages +
-              "</strong>" +
+
+          '<div class="overview-stats">' +
+
+            '<div class="overview-stat">' +
+              '<div class="overview-stat-icon blue-icon">f</div>' +
+              '<div>' +
+                '<span>Connected Accounts</span>' +
+                '<strong>' +
+                  accounts.length +
+                "</strong>" +
+              "</div>" +
             "</div>" +
-            '<div class="stat-arrow">→</div>' +
+
+            '<div class="overview-stat">' +
+              '<div class="overview-stat-icon purple-icon">▦</div>' +
+              '<div>' +
+                '<span>Total Pages</span>' +
+                '<strong>' +
+                  totalPages +
+                "</strong>" +
+              "</div>" +
+            "</div>" +
+
+            '<div class="overview-stat">' +
+              '<div class="overview-stat-icon green-icon">✓</div>' +
+              '<div>' +
+                '<span>Network Status</span>' +
+                '<strong class="ready-text">Ready</strong>' +
+              "</div>" +
+            "</div>" +
+
           "</div>" +
 
-          '<div class="stat-card">' +
-            '<div class="stat-icon stat-green">✓</div>' +
-            '<div class="stat-info">' +
-              '<span>Publishing Status</span>' +
-              '<strong class="stat-online">Ready</strong>' +
-            "</div>" +
-            '<div class="stat-live"><span></span> Online</div>' +
+
+          '<div class="overview-accounts">' +
+            accountOverviewHtml +
+          "</div>" +
+
+
+          '<div class="overview-footer">' +
+
+            '<button type="button" class="overview-select-btn" onclick="selectAllPages(true)">' +
+              "✓ Select All Pages" +
+            "</button>" +
+
+            '<button type="button" class="overview-clear-btn" onclick="selectAllPages(false)">' +
+              "× Clear Selection" +
+            "</button>" +
+
           "</div>" +
 
         "</section>" +
 
-        '<div class="content-heading">' +
+
+        '<div id="accounts-section" class="content-heading">' +
 
           '<div>' +
-            '<div class="section-eyebrow">ACCOUNTS & PAGES</div>' +
-            "<h2>Your Connected Accounts</h2>" +
-            "<p>Manage your Facebook accounts and choose which Pages should receive your posts.</p>" +
+            '<div class="section-eyebrow">ACCOUNT MANAGEMENT</div>' +
+            "<h2>Facebook Accounts & Pages</h2>" +
+            "<p>Sync, manage and select the Pages you want to publish to.</p>" +
           "</div>" +
 
           '<div class="account-limit">' +
             '<span class="limit-dot"></span>' +
             accounts.length +
-            "/2 Accounts Connected" +
+            " Connected" +
           "</div>" +
 
         "</div>" +
 
+
         accountHtml +
+
 
         publisherHtml +
 
+
         '<div class="dashboard-footer">' +
-          '<span>Meta Multi Page Publisher</span>' +
+
+          '<div class="footer-brand">' +
+            '<span class="footer-logo">f</span>' +
+            "<strong>Meta Publisher</strong>" +
+          "</div>" +
+
           '<span class="footer-separator">•</span>' +
+
           '<span>Secure publishing dashboard</span>' +
+
+          '<span class="footer-separator">•</span>' +
+
+          '<span>All systems operational</span>' +
+
         "</div>" +
 
       "</div>" +
@@ -1665,7 +1882,9 @@ async function publishPost(
 
         '<div class="result-main">' +
 
-          '<div class="result-avatar">f</div>' +
+          '<div class="result-avatar">' +
+            escapeHtml(getInitials(r.page || "Page")) +
+          "</div>" +
 
           "<div>" +
 
@@ -1726,15 +1945,22 @@ async function publishPost(
 
       '<div class="results-card">' +
 
-        '<div class="results-icon">' +
-          (
-            successCount === results.length
-              ? "✓"
-              : "!"
-          ) +
-        "</div>" +
+        '<div class="results-top">' +
 
-        "<h2>Publish Results</h2>" +
+          '<div class="results-icon">' +
+            (
+              successCount === results.length
+                ? "✓"
+                : "!"
+            ) +
+          "</div>" +
+
+          '<div>' +
+            '<div class="section-eyebrow">PUBLISHING REPORT</div>' +
+            "<h2>Publish Results</h2>" +
+          "</div>" +
+
+        "</div>" +
 
         '<div class="result-summary">' +
           "<strong>" +
@@ -2014,7 +2240,34 @@ function formatGraphError(data) {
 
 
 /* =========================================================
-   HTML PAGE + PROFESSIONAL CSS
+   HELPERS
+   ========================================================= */
+
+function getInitials(name) {
+  const text = String(name || "").trim();
+
+  if (!text) {
+    return "P";
+  }
+
+  const parts =
+    text
+      .split(/\s+/)
+      .filter(Boolean);
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return (
+    parts[0].charAt(0) +
+    parts[parts.length - 1].charAt(0)
+  ).toUpperCase();
+}
+
+
+/* =========================================================
+   HTML PAGE + PREMIUM DASHBOARD CSS
    ========================================================= */
 
 function page(
@@ -2025,7 +2278,7 @@ function page(
 
     "*{box-sizing:border-box}",
 
-    ":root{--blue:#1877f2;--blue-dark:#0f5ed7;--blue-soft:#edf5ff;--ink:#101828;--text:#344054;--muted:#667085;--line:#e6eaf0;--bg:#f5f7fb;--white:#fff;--green:#12b76a;--red:#d92d20;--shadow:0 12px 35px rgba(16,24,40,.07)}",
+    ":root{--blue:#1877f2;--blue2:#4f46e5;--navy:#07152f;--navy2:#0b1d3d;--ink:#101828;--text:#344054;--muted:#667085;--line:#e6eaf0;--bg:#f4f7fb;--white:#fff;--green:#12b76a;--red:#d92d20;--purple:#7c5cff}",
 
     "html{scroll-behavior:smooth}",
 
@@ -2040,382 +2293,478 @@ function page(
 
     /* TOPBAR */
 
-    ".topbar{height:76px;background:rgba(255,255,255,.96);border-bottom:1px solid #e9edf3;display:flex;align-items:center;position:sticky;top:0;z-index:50;backdrop-filter:blur(16px)}",
+    ".topbar{height:74px;background:rgba(255,255,255,.94);border-bottom:1px solid #e8edf4;display:flex;align-items:center;position:sticky;top:0;z-index:50;backdrop-filter:blur(18px)}",
 
-    ".topbar-inner{width:100%;max-width:1240px;margin:0 auto;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}",
+    ".topbar-inner{width:100%;max-width:1280px;margin:0 auto;padding:0 25px;display:flex;align-items:center;justify-content:space-between;gap:20px}",
 
-    ".brand-link{text-decoration:none;display:flex;align-items:center;gap:12px}",
+    ".brand-link{text-decoration:none;display:flex;align-items:center;gap:11px}",
 
-    ".brand-mark{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#1877f2,#6d5dfc);display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;font-weight:900;box-shadow:0 7px 18px rgba(24,119,242,.25)}",
+    ".brand-mark{width:41px;height:41px;border-radius:12px;background:linear-gradient(135deg,#1877f2,#6655e8);display:flex;align-items:center;justify-content:center;color:#fff;font-size:25px;font-weight:900;box-shadow:0 8px 20px rgba(24,119,242,.24)}",
 
     ".brand-text{line-height:1}",
 
-    ".brand{font-size:17px;font-weight:800;letter-spacing:-.3px;color:#101828}",
+    ".brand{font-size:16px;font-weight:850;letter-spacing:-.3px}",
 
-    ".subtitle{font-size:10px;color:#98a2b3;margin-top:5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase}",
+    ".subtitle{font-size:8px;color:#98a2b3;margin-top:5px;font-weight:800;letter-spacing:.8px;text-transform:uppercase}",
 
-    ".top-actions{display:flex;align-items:center;gap:10px}",
+    ".top-actions{display:flex;align-items:center;gap:9px}",
 
-    ".connect-btn{height:42px;display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--blue);color:#fff;text-decoration:none;padding:0 16px;border-radius:10px;font-size:13px;font-weight:750;box-shadow:0 5px 14px rgba(24,119,242,.18);transition:.2s ease}",
+    ".top-status{height:38px;padding:0 11px;border:1px solid #e6ebf1;background:#fbfcfe;border-radius:9px;display:flex;align-items:center;gap:7px;color:#667085;font-size:10px;font-weight:750}",
 
-    ".connect-btn:hover{background:var(--blue-dark);transform:translateY(-1px);box-shadow:0 8px 18px rgba(24,119,242,.25)}",
+    ".top-status-dot{width:6px;height:6px;border-radius:50%;background:#12b76a;box-shadow:0 0 0 4px rgba(18,183,106,.08)}",
 
-    ".connect-icon{font-size:19px;line-height:1}",
+    ".connect-btn{height:38px;display:inline-flex;align-items:center;justify-content:center;gap:7px;background:#1877f2;color:#fff;text-decoration:none;padding:0 14px;border-radius:9px;font-size:11px;font-weight:800;box-shadow:0 5px 14px rgba(24,119,242,.18);transition:.2s}",
+
+    ".connect-btn:hover{background:#0e68df;transform:translateY(-1px)}",
+
+    ".connect-icon{font-size:17px}",
 
     ".logout-form{margin:0}",
 
-    ".logout-btn{height:42px;border:1px solid #e4e7ec;background:#fff;color:#475467;border-radius:10px;padding:0 13px;display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;transition:.2s}",
+    ".logout-btn{height:38px;border:1px solid #e4e7ec;background:#fff;color:#475467;border-radius:9px;padding:0 11px;display:flex;align-items:center;gap:6px;font-size:10px;font-weight:750;transition:.2s}",
 
-    ".logout-btn:hover{border-color:#cfd5df;background:#f9fafb;color:#101828}",
+    ".logout-btn:hover{background:#f8fafc}",
 
 
     /* MAIN */
 
-    ".dashboard{min-height:calc(100vh - 76px);background:radial-gradient(circle at 50% -10%,rgba(24,119,242,.08),transparent 32%),#f5f7fb}",
+    ".dashboard{min-height:calc(100vh - 74px);background:radial-gradient(circle at 50% 0,rgba(24,119,242,.055),transparent 30%),#f4f7fb}",
 
-    ".container{max-width:1240px;margin:0 auto;padding:30px 24px 70px}",
+    ".container{max-width:1280px;margin:0 auto;padding:25px 25px 65px}",
 
 
     /* HERO */
 
-    ".hero{position:relative;overflow:hidden;min-height:330px;border-radius:24px;background:linear-gradient(120deg,#0d47a1 0%,#1877f2 46%,#5865f2 100%);box-shadow:0 18px 50px rgba(24,75,160,.18);display:flex;align-items:center;padding:46px 52px;margin-bottom:20px}",
+    ".dashboard-hero{position:relative;overflow:hidden;min-height:350px;border-radius:24px;background:linear-gradient(115deg,#06132c 0%,#0a2451 48%,#173d85 100%);box-shadow:0 22px 55px rgba(5,27,65,.18);display:flex;align-items:center;padding:48px 52px;margin-bottom:18px}",
 
-    ".hero:before{content:'';position:absolute;width:500px;height:500px;border-radius:50%;right:-180px;top:-260px;background:rgba(255,255,255,.09)}",
+    ".dashboard-hero:before{content:'';position:absolute;width:650px;height:650px;border-radius:50%;right:-300px;top:-350px;background:radial-gradient(circle,rgba(79,70,229,.32),transparent 68%)}",
 
-    ".hero:after{content:'';position:absolute;width:360px;height:360px;border-radius:50%;left:-210px;bottom:-280px;background:rgba(255,255,255,.07)}",
+    ".dashboard-hero:after{content:'';position:absolute;width:430px;height:430px;border-radius:50%;left:-280px;bottom:-350px;background:rgba(24,119,242,.12)}",
 
-    ".hero-content{position:relative;z-index:2;max-width:670px}",
+    ".hero-left{position:relative;z-index:4;max-width:690px}",
 
-    ".hero-kicker{display:flex;align-items:center;gap:8px;color:rgba(255,255,255,.78);font-size:11px;font-weight:800;letter-spacing:1.3px;margin-bottom:15px}",
+    ".hero-kicker{display:flex;align-items:center;gap:8px;color:#91b8f8;font-size:9px;font-weight:900;letter-spacing:1.5px;margin-bottom:15px}",
 
-    ".hero-live-dot{width:7px;height:7px;border-radius:50%;background:#65e6a4;box-shadow:0 0 0 4px rgba(101,230,164,.14)}",
+    ".hero-live-dot{width:7px;height:7px;border-radius:50%;background:#42e59a;box-shadow:0 0 0 5px rgba(66,229,154,.1)}",
 
-    ".hero h1{margin:0;color:#fff;font-size:39px;line-height:1.12;letter-spacing:-1.5px;font-weight:800}",
+    ".dashboard-hero h1{margin:0;color:#fff;font-size:40px;line-height:1.1;letter-spacing:-1.7px;font-weight:850}",
 
-    ".hero h1 span{color:#dce9ff}",
+    ".dashboard-hero h1 span{color:#83b2ff}",
 
-    ".hero p{margin:16px 0 23px;max-width:610px;color:rgba(255,255,255,.78);font-size:15px;line-height:1.65}",
+    ".dashboard-hero p{max-width:610px;margin:16px 0 24px;color:#9eafca;font-size:13px;line-height:1.7}",
 
-    ".hero-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}",
+    ".hero-buttons{display:flex;align-items:center;gap:9px;flex-wrap:wrap}",
 
-    ".hero-connect{display:inline-flex;align-items:center;gap:8px;background:#fff;color:#1554a4;text-decoration:none;border-radius:10px;padding:12px 17px;font-size:13px;font-weight:800;box-shadow:0 8px 20px rgba(0,0,0,.12);transition:.2s}",
+    ".hero-primary{display:inline-flex;align-items:center;gap:7px;padding:11px 15px;background:#fff;color:#125bbd;text-decoration:none;border-radius:9px;font-size:10px;font-weight:850;box-shadow:0 9px 22px rgba(0,0,0,.15);transition:.2s}",
 
-    ".hero-connect:hover{transform:translateY(-2px);box-shadow:0 12px 25px rgba(0,0,0,.18)}",
+    ".hero-primary:hover{transform:translateY(-2px)}",
 
-    ".hero-connect span{font-size:18px}",
+    ".hero-primary span{font-size:17px}",
 
-    ".hero-note{color:rgba(255,255,255,.58);font-size:11px}",
+    ".hero-secondary{height:39px;border:1px solid rgba(255,255,255,.13);background:rgba(255,255,255,.06);color:#c5d3e8;border-radius:9px;padding:0 13px;display:flex;align-items:center;gap:8px;font-size:10px;font-weight:750}",
+
+    ".hero-secondary:hover{background:rgba(255,255,255,.1)}",
+
+    ".hero-secondary span{font-size:14px}",
 
 
     /* HERO VISUAL */
 
-    ".hero-visual{position:absolute;right:65px;top:50%;transform:translateY(-50%);width:330px;height:250px;z-index:1}",
+    ".hero-right{position:absolute;right:55px;top:50%;width:355px;height:270px;transform:translateY(-50%);z-index:3}",
 
-    ".hero-orbit{position:absolute;border:1px solid rgba(255,255,255,.13);border-radius:50%}",
+    ".hero-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);background-size:27px 27px;mask-image:radial-gradient(circle,black 20%,transparent 75%);opacity:.7}",
 
-    ".orbit-one{width:300px;height:300px;right:-35px;top:-25px}",
+    ".floating-card{position:absolute;border:1px solid rgba(255,255,255,.13);background:rgba(255,255,255,.08);backdrop-filter:blur(18px);box-shadow:0 25px 55px rgba(0,0,0,.22);border-radius:17px}",
 
-    ".orbit-two{width:220px;height:220px;right:5px;top:15px}",
+    ".floating-card-main{width:255px;right:35px;top:22px;padding:19px;transform:rotate(2deg)}",
 
-    ".hero-panel{position:absolute;width:245px;right:20px;top:22px;border:1px solid rgba(255,255,255,.24);background:rgba(255,255,255,.12);border-radius:16px;padding:17px;backdrop-filter:blur(18px);box-shadow:0 20px 50px rgba(0,0,0,.18);transform:rotate(2deg)}",
+    ".floating-top{display:flex;align-items:center}",
 
-    ".mini-panel-top{display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.85);font-size:8px;font-weight:800;letter-spacing:1px}",
+    ".floating-label{font-size:7px;letter-spacing:1.1px;font-weight:900;color:#8ea5c5}",
 
-    ".mini-dot{width:6px;height:6px;border-radius:50%;background:#65e6a4}",
+    ".floating-live{margin-left:auto;background:rgba(66,229,154,.1);border:1px solid rgba(66,229,154,.17);color:#5ee9a4;border-radius:5px;padding:3px 6px;font-size:6px;font-weight:900}",
 
-    ".mini-status{margin-left:auto;padding:3px 6px;border-radius:5px;background:rgba(101,230,164,.16);color:#8ef0bd;font-size:7px}",
+    ".network-number{color:#fff;font-size:37px;font-weight:850;letter-spacing:-1.5px;margin-top:18px}",
 
-    ".mini-post{margin-top:18px;padding:14px;border-radius:11px;background:rgba(255,255,255,.95);display:flex;gap:10px}",
+    ".network-number span{font-size:10px;color:#879ab8;font-weight:700;letter-spacing:0}",
 
-    ".mini-avatar{width:29px;height:29px;border-radius:8px;background:#1877f2;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px}",
+    ".network-line{display:flex;align-items:center;gap:6px;color:#91a6c4;font-size:8px;margin-top:4px}",
 
-    ".mini-lines{padding-top:3px;flex:1}",
+    ".network-dot{width:5px;height:5px;border-radius:50%;background:#42e59a}",
 
-    ".mini-lines span{display:block;height:6px;border-radius:4px;background:#dce2eb;margin-bottom:6px}",
+    ".network-bars{height:42px;margin-top:19px;display:flex;align-items:flex-end;gap:5px}",
 
-    ".mini-lines .short{width:55%}",
+    ".network-bars span{display:block;width:18px;border-radius:4px 4px 2px 2px;background:linear-gradient(to top,rgba(24,119,242,.3),rgba(115,160,255,.8))}",
 
-    ".mini-pages{display:flex;align-items:center;margin-top:14px;gap:5px}",
+    ".network-bars span:nth-child(1){height:18px}",
 
-    ".mini-page{width:25px;height:25px;border-radius:7px;background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.3)}",
+    ".network-bars span:nth-child(2){height:28px}",
 
-    ".mini-page.active{background:#fff;position:relative}",
+    ".network-bars span:nth-child(3){height:21px}",
 
-    ".mini-page.active:after{content:'f';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#1877f2;font-weight:900;font-size:13px}",
+    ".network-bars span:nth-child(4){height:35px}",
 
-    ".mini-more{font-size:8px;color:#fff;font-weight:700}",
+    ".network-bars span:nth-child(5){height:25px}",
 
-    ".mini-publish{margin-top:13px;background:rgba(101,230,164,.13);border:1px solid rgba(101,230,164,.2);color:#9af2c4;padding:8px;border-radius:8px;text-align:center;font-size:9px;font-weight:800}",
+    ".network-bars span:nth-child(6){height:39px}",
+
+    ".network-bars span:nth-child(7){height:29px}",
+
+    ".network-bars span:nth-child(8){height:36px}",
+
+    ".network-bars span:nth-child(9){height:42px}",
+
+    ".floating-card-small{right:-5px;bottom:15px;padding:10px 13px;display:flex;align-items:center;gap:9px}",
+
+    ".small-icon{width:30px;height:30px;border-radius:9px;background:#1877f2;color:#fff;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:900}",
+
+    ".floating-card-small strong{display:block;color:#fff;font-size:17px;line-height:1}",
+
+    ".floating-card-small span{display:block;color:#8fa4c3;font-size:7px;margin-top:4px}",
 
 
-    /* STATS */
+    /* OVERVIEW */
 
-    ".stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:38px}",
+    ".overview-panel{position:relative;background:#fff;border:1px solid #e2e8f0;border-radius:19px;padding:23px;box-shadow:0 9px 30px rgba(16,24,40,.045);margin-bottom:39px;overflow:hidden}",
 
-    ".stat-card{background:#fff;border:1px solid #e9edf3;border-radius:16px;padding:17px 18px;display:flex;align-items:center;gap:13px;box-shadow:0 5px 20px rgba(16,24,40,.035);transition:.2s}",
+    ".overview-panel:after{content:'';position:absolute;width:230px;height:230px;border-radius:50%;right:-130px;top:-140px;background:rgba(79,70,229,.035)}",
 
-    ".stat-card:hover{transform:translateY(-2px);box-shadow:0 10px 25px rgba(16,24,40,.06)}",
+    ".overview-heading{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:20px}",
 
-    ".stat-icon{width:42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;flex:0 0 auto}",
+    ".light-blue{color:#1877f2!important}",
 
-    ".stat-blue{background:#edf5ff;color:#1877f2}",
+    ".overview-heading h2{margin:0;font-size:20px;letter-spacing:-.5px}",
 
-    ".stat-purple{background:#f2efff;color:#6655e8}",
+    ".overview-heading p{margin:5px 0 0;color:#98a2b3;font-size:10px}",
 
-    ".stat-green{background:#ecfdf3;color:#12b76a}",
+    ".overview-total{display:flex;align-items:baseline;gap:6px;background:#f7f9fc;border:1px solid #edf0f4;border-radius:11px;padding:9px 12px}",
 
-    ".stat-info{display:flex;flex-direction:column;gap:4px;flex:1}",
+    ".overview-total span{font-size:8px;color:#98a2b3;font-weight:750}",
 
-    ".stat-info span{font-size:11px;color:#667085;font-weight:600}",
+    ".overview-total strong{font-size:21px;color:#101828}",
 
-    ".stat-info strong{font-size:22px;line-height:1;color:#101828;letter-spacing:-.5px}",
+    ".overview-total small{font-size:8px;color:#667085;font-weight:700}",
 
-    ".stat-online{color:#12b76a!important;font-size:18px!important}",
+    ".overview-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:18px}",
 
-    ".stat-arrow{color:#b3bac5;font-size:18px}",
+    ".overview-stat{display:flex;align-items:center;gap:10px;padding:12px;border-radius:11px;background:#f9fafc;border:1px solid #edf0f4}",
 
-    ".stat-live{font-size:10px;color:#12b76a;font-weight:750;display:flex;align-items:center;gap:5px}",
+    ".overview-stat-icon{width:35px;height:35px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:900}",
 
-    ".stat-live span{width:6px;height:6px;border-radius:50%;background:#12b76a}",
+    ".blue-icon{background:#edf5ff;color:#1877f2}",
+
+    ".purple-icon{background:#f1efff;color:#6b5ce7}",
+
+    ".green-icon{background:#ecfdf3;color:#12b76a}",
+
+    ".overview-stat span{display:block;color:#98a2b3;font-size:8px;font-weight:700}",
+
+    ".overview-stat strong{display:block;margin-top:3px;color:#101828;font-size:18px}",
+
+    ".overview-stat .ready-text{color:#12b76a;font-size:14px}",
+
+    ".overview-accounts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}",
+
+    ".overview-account{min-width:0;display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid #e8edf3;background:#fff;border-radius:11px;transition:.2s}",
+
+    ".overview-account:hover{border-color:#c6daf6;box-shadow:0 5px 15px rgba(24,119,242,.06);transform:translateY(-1px)}",
+
+    ".overview-account-left{min-width:0;display:flex;align-items:center;gap:9px;flex:1}",
+
+    ".overview-facebook-icon{width:32px;height:32px;flex:0 0 auto;border-radius:9px;background:#1877f2;color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900}",
+
+    ".overview-account-info{min-width:0}",
+
+    ".overview-account-name{font-size:10px;font-weight:850;color:#1d2939;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+
+    ".overview-account-id{font-size:7px;color:#98a2b3;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+
+    ".overview-account-pages{padding:0 10px;border-left:1px solid #edf0f4;border-right:1px solid #edf0f4;text-align:center;display:flex;flex-direction:column}",
+
+    ".overview-account-pages strong{font-size:15px;line-height:1;color:#101828}",
+
+    ".overview-account-pages span{font-size:7px;color:#98a2b3;margin-top:3px}",
+
+    ".overview-account-status{display:flex;align-items:center;gap:5px;color:#12a866;font-size:7px;font-weight:800;white-space:nowrap}",
+
+    ".status-pulse{width:5px;height:5px;border-radius:50%;background:#12b76a;box-shadow:0 0 0 4px rgba(18,183,106,.08)}",
+
+    ".overview-footer{display:flex;align-items:center;gap:7px;margin-top:13px}",
+
+    ".overview-select-btn,.overview-clear-btn{height:30px;border-radius:7px;padding:0 10px;font-size:8px;font-weight:800}",
+
+    ".overview-select-btn{border:1px solid #cfe0f8;background:#f2f7ff;color:#1769d2}",
+
+    ".overview-clear-btn{border:1px solid #e4e7ec;background:#fff;color:#667085}",
 
 
     /* CONTENT HEADING */
 
-    ".content-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:18px}",
+    ".content-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:16px}",
 
-    ".section-eyebrow{font-size:10px;color:#1877f2;font-weight:850;letter-spacing:1.2px;margin-bottom:6px}",
+    ".section-eyebrow{font-size:8px;color:#1877f2;font-weight:900;letter-spacing:1.3px;margin-bottom:6px}",
 
-    ".content-heading h2{margin:0;font-size:23px;letter-spacing:-.5px;color:#101828}",
+    ".content-heading h2{margin:0;font-size:22px;letter-spacing:-.6px}",
 
-    ".content-heading p{margin:6px 0 0;color:#667085;font-size:12px}",
+    ".content-heading p{margin:5px 0 0;color:#98a2b3;font-size:10px}",
 
-    ".account-limit{display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #e4e7ec;border-radius:9px;padding:8px 11px;color:#667085;font-size:11px;font-weight:700}",
+    ".account-limit{display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #e4e8ee;border-radius:9px;padding:8px 11px;color:#667085;font-size:9px;font-weight:800}",
 
-    ".limit-dot{width:6px;height:6px;border-radius:50%;background:#1877f2}",
+    ".limit-dot{width:5px;height:5px;border-radius:50%;background:#1877f2}",
 
 
     /* ACCOUNT CARD */
 
-    ".account-card{background:#fff;border:1px solid #e4e8ee;border-radius:17px;box-shadow:0 7px 25px rgba(16,24,40,.045);margin-bottom:15px;overflow:hidden;transition:.2s}",
+    ".account-card{background:#fff;border:1px solid #e3e8ef;border-radius:16px;box-shadow:0 7px 25px rgba(16,24,40,.04);margin-bottom:13px;overflow:hidden;transition:.22s}",
 
-    ".account-card:hover{box-shadow:0 10px 32px rgba(16,24,40,.07)}",
+    ".account-card:hover{box-shadow:0 12px 34px rgba(16,24,40,.065);border-color:#d6e0ec}",
 
-    ".account-header{padding:20px 21px;display:flex;justify-content:space-between;gap:20px;align-items:center;border-bottom:1px solid #eef1f5}",
+    ".account-header{padding:18px 19px;display:flex;justify-content:space-between;gap:20px;align-items:center;border-bottom:1px solid #edf1f5}",
 
-    ".account-main{display:flex;align-items:center;gap:13px;min-width:0}",
+    ".account-main{display:flex;align-items:center;gap:12px;min-width:0}",
 
-    ".facebook-account-icon{width:47px;height:47px;flex:0 0 auto;border-radius:13px;background:#1877f2;color:#fff;display:flex;align-items:center;justify-content:center;font-size:27px;font-weight:900;box-shadow:0 7px 15px rgba(24,119,242,.18)}",
+    ".facebook-account-icon{width:44px;height:44px;flex:0 0 auto;border-radius:12px;background:linear-gradient(135deg,#1877f2,#4f8df7);color:#fff;display:flex;align-items:center;justify-content:center;font-size:25px;font-weight:900;box-shadow:0 7px 16px rgba(24,119,242,.16)}",
 
     ".account-title-wrap{min-width:0}",
 
-    ".account-label{font-size:8px;letter-spacing:1.1px;color:#98a2b3;font-weight:850;margin-bottom:4px}",
+    ".account-label{font-size:7px;letter-spacing:1.1px;color:#98a2b3;font-weight:900;margin-bottom:4px}",
 
-    ".account-header h2{margin:0 0 6px;font-size:16px;color:#101828;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    ".account-header h2{margin:0 0 5px;font-size:15px;color:#101828;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 
-    ".facebook-id{display:flex;align-items:center;gap:6px;color:#98a2b3;font-size:10px}",
+    ".facebook-id{display:flex;align-items:center;gap:5px;color:#98a2b3;font-size:8px;white-space:nowrap}",
 
-    ".facebook-id span{font-size:8px;background:#f2f4f7;color:#667085;border-radius:4px;padding:3px 5px;font-weight:800}",
+    ".facebook-id span{font-size:6px;background:#f2f4f7;color:#667085;border-radius:4px;padding:3px 5px;font-weight:900}",
 
-    ".account-header-right{display:flex;align-items:center;gap:16px}",
+    ".account-header-right{display:flex;align-items:center;gap:13px}",
 
-    ".account-page-count{display:flex;align-items:baseline;gap:5px;padding-right:15px;border-right:1px solid #eaecf0}",
+    ".account-connected-label{display:flex;align-items:center;gap:6px;color:#12a866;font-size:8px;font-weight:850}",
 
-    ".account-page-count strong{font-size:21px;color:#101828}",
+    ".account-page-count{display:flex;align-items:baseline;gap:4px;padding:0 13px;border-left:1px solid #eaecf0;border-right:1px solid #eaecf0}",
 
-    ".account-page-count span{font-size:10px;color:#98a2b3;font-weight:650}",
+    ".account-page-count strong{font-size:19px;color:#101828}",
 
-    ".account-actions{display:flex;gap:7px;align-items:center}",
+    ".account-page-count span{font-size:8px;color:#98a2b3;font-weight:700}",
+
+    ".account-actions{display:flex;gap:6px;align-items:center}",
 
     ".account-actions form{margin:0}",
 
-    ".btn{border:0;border-radius:8px;height:36px;padding:0 11px;display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;font-weight:800;transition:.2s}",
+    ".btn{border:0;border-radius:7px;height:33px;padding:0 10px;display:flex;align-items:center;gap:5px;font-size:9px;font-weight:850;transition:.2s}",
 
-    ".btn-blue{background:#1877f2;color:#fff;box-shadow:0 4px 10px rgba(24,119,242,.14)}",
+    ".btn-blue{background:#1877f2;color:#fff;box-shadow:0 4px 10px rgba(24,119,242,.13)}",
 
     ".btn-blue:hover{background:#0f68df;transform:translateY(-1px)}",
 
-    ".btn-light-danger{background:#fff;border:1px solid #f1d4d2;color:#d92d20}",
+    ".btn-light-danger{background:#fff;border:1px solid #efd7d4;color:#d92d20}",
 
-    ".btn-light-danger:hover{background:#fff5f4;border-color:#e9aaa5}",
+    ".btn-light-danger:hover{background:#fff5f4}",
 
-    ".btn-icon{font-size:14px}",
+    ".btn-icon{font-size:12px}",
 
 
     /* PAGES */
 
-    ".pages-section{padding:18px 21px 21px}",
+    ".pages-section{padding:17px 19px 19px}",
 
-    ".pages-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:13px}",
+    ".pages-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:11px}",
 
-    ".pages-section-title{font-size:12px;font-weight:800;color:#344054}",
+    ".pages-toolbar-left{min-width:0}",
 
-    ".pages-section-subtitle{font-size:10px;color:#98a2b3;margin-top:3px}",
+    ".pages-title-row{display:flex;align-items:center;gap:6px}",
 
-    ".select-actions{display:flex;gap:6px}",
+    ".pages-title-dot{width:5px;height:5px;border-radius:50%;background:#1877f2}",
 
-    ".tool-btn{background:#fff;color:#475467;border:1px solid #e4e7ec;border-radius:7px;padding:7px 9px;cursor:pointer;font-size:10px;font-weight:750;transition:.2s}",
+    ".pages-section-title{font-size:10px;font-weight:850;color:#344054}",
 
-    ".tool-btn:hover{background:#f8fafc;border-color:#cfd5df;color:#101828}",
+    ".pages-section-subtitle{font-size:8px;color:#98a2b3;margin-top:3px;margin-left:11px}",
 
-    ".tool-btn span{color:#1877f2;margin-right:3px}",
+    ".select-actions{display:flex;gap:5px}",
 
-    ".page-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}",
+    ".tool-btn{height:28px;background:#fff;color:#475467;border:1px solid #e4e7ec;border-radius:7px;padding:0 8px;cursor:pointer;font-size:8px;font-weight:800;transition:.2s}",
 
-    ".page-row{position:relative;display:flex;align-items:center;gap:10px;min-height:59px;padding:9px 11px;background:#fafbfc;border:1px solid #eaecf0;border-radius:10px;cursor:pointer;transition:.18s}",
+    ".tool-btn:hover{background:#f8fafc;border-color:#cfd5df}",
+
+    ".tool-btn span{color:#1877f2;margin-right:2px}",
+
+    ".page-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}",
+
+    ".page-row{position:relative;display:flex;align-items:center;gap:9px;min-height:56px;padding:8px 10px;background:#fafbfc;border:1px solid #e9edf2;border-radius:9px;cursor:pointer;transition:.18s}",
 
     ".page-row:hover{background:#f7faff;border-color:#b9d4f7;transform:translateY(-1px)}",
 
-    ".page-row.selected{background:#f1f7ff;border-color:#91bff5;box-shadow:0 0 0 1px rgba(24,119,242,.05)}",
+    ".page-row.selected{background:linear-gradient(100deg,#f1f7ff,#f8faff);border-color:#91bff5;box-shadow:0 0 0 1px rgba(24,119,242,.035)}",
 
     ".page-checkbox{position:absolute;opacity:0;width:1px;height:1px}",
 
-    ".page-avatar{width:35px;height:35px;flex:0 0 auto;border-radius:9px;background:linear-gradient(135deg,#1877f2,#4c8ef7);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px}",
+    ".page-avatar{width:34px;height:34px;flex:0 0 auto;border-radius:9px;background:linear-gradient(135deg,#1877f2,#5b8ff5);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;letter-spacing:-.2px}",
 
     ".page-info{min-width:0;flex:1}",
 
-    ".page-name{font-size:12px;font-weight:800;margin-bottom:5px;color:#1d2939;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    ".page-name{font-size:10px;font-weight:850;margin-bottom:4px;color:#1d2939;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 
-    ".page-meta{font-size:9px;color:#98a2b3;display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden}",
+    ".page-meta{font-size:7px;color:#98a2b3;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden}",
 
-    ".online-dot{width:5px;height:5px;border-radius:50%;background:#12b76a;flex:0 0 auto}",
+    ".online-dot{width:4px;height:4px;border-radius:50%;background:#12b76a;flex:0 0 auto}",
 
     ".meta-separator{color:#d0d5dd}",
 
-    ".page-select-indicator{width:21px;height:21px;border:1.5px solid #d0d5dd;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;transition:.18s}",
+    ".page-ready{font-size:6px;color:#12a866;font-weight:900;background:#ecfdf3;padding:4px 5px;border-radius:5px}",
 
-    ".checkmark{opacity:0;color:#fff;font-size:12px;font-weight:900;transform:scale(.6);transition:.18s}",
+    ".page-select-indicator{width:20px;height:20px;border:1.5px solid #d0d5dd;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;transition:.18s}",
+
+    ".checkmark{opacity:0;color:#fff;font-size:11px;font-weight:900;transform:scale(.6);transition:.18s}",
 
     ".page-row.selected .page-select-indicator{background:#1877f2;border-color:#1877f2}",
 
     ".page-row.selected .checkmark{opacity:1;transform:scale(1)}",
 
-    ".no-pages{display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px dashed #dfe3e8;border-radius:10px;padding:16px}",
+    ".no-pages{display:flex;align-items:center;gap:11px;background:#f8fafc;border:1px dashed #dfe3e8;border-radius:9px;padding:14px}",
 
-    ".no-pages-icon{width:35px;height:35px;border-radius:9px;background:#eef2f6;color:#98a2b3;display:flex;align-items:center;justify-content:center;font-size:18px}",
+    ".no-pages-icon{width:34px;height:34px;border-radius:9px;background:#eef2f6;color:#98a2b3;display:flex;align-items:center;justify-content:center;font-size:17px}",
 
-    ".no-pages strong{font-size:11px;color:#475467}",
+    ".no-pages strong{font-size:10px;color:#475467}",
 
-    ".no-pages p{margin:3px 0 0;color:#98a2b3;font-size:10px}",
+    ".no-pages p{margin:3px 0 0;color:#98a2b3;font-size:8px}",
 
 
     /* PUBLISHER */
 
-    ".publisher-card{background:#fff;border:1px solid #e4e8ee;border-radius:19px;box-shadow:0 9px 30px rgba(16,24,40,.055);margin-top:25px;padding:25px}",
+    ".publisher-card{position:relative;overflow:hidden;background:#fff;border:1px solid #dfe6ef;border-radius:18px;box-shadow:0 12px 35px rgba(16,24,40,.055);margin-top:23px;padding:23px}",
 
-    ".publisher-top{display:flex;align-items:center;justify-content:space-between;gap:15px}",
+    ".publisher-glow{position:absolute;width:300px;height:300px;border-radius:50%;right:-180px;top:-170px;background:radial-gradient(circle,rgba(24,119,242,.08),transparent 68%);pointer-events:none}",
 
-    ".publisher-title-area{display:flex;align-items:center;gap:12px}",
+    ".publisher-top{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:15px}",
 
-    ".composer-icon{width:43px;height:43px;border-radius:12px;background:#edf5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:800}",
+    ".publisher-title-area{display:flex;align-items:center;gap:11px}",
 
-    ".publisher-card h2{margin:0;font-size:18px;letter-spacing:-.3px}",
+    ".composer-icon{width:41px;height:41px;border-radius:11px;background:#edf5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800}",
 
-    ".publisher-card p{margin:4px 0 0;color:#667085;font-size:11px}",
+    ".publisher-card h2{margin:0;font-size:17px;letter-spacing:-.3px}",
 
-    ".selection-badge{display:flex;align-items:center;gap:7px;background:#edf5ff;color:#1769d2;border-radius:20px;padding:8px 11px;font-size:10px;font-weight:800}",
+    ".publisher-card p{margin:4px 0 0;color:#667085;font-size:9px}",
 
-    ".selection-dot{width:6px;height:6px;border-radius:50%;background:#1877f2}",
+    ".selection-badge{display:flex;align-items:center;gap:6px;background:#edf5ff;color:#1769d2;border:1px solid #d8e8fb;border-radius:20px;padding:7px 10px;font-size:8px;font-weight:850}",
 
-    ".publisher-divider{height:1px;background:#eef1f5;margin:21px 0}",
+    ".selection-dot{width:5px;height:5px;border-radius:50%;background:#1877f2}",
 
-    ".field{margin-bottom:19px}",
+    ".publisher-divider{height:1px;background:#edf1f5;margin:19px 0}",
 
-    ".field label{display:block;font-size:11px;color:#344054;font-weight:800;margin-bottom:8px}",
+    ".field{margin-bottom:17px}",
 
-    ".textarea-wrap{border:1px solid #dfe3e8;border-radius:11px;overflow:hidden;transition:.2s}",
+    ".field-label-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}",
 
-    ".textarea-wrap:focus-within{border-color:#91bff5;box-shadow:0 0 0 3px rgba(24,119,242,.08)}",
+    ".field label{display:block;font-size:9px;color:#344054;font-weight:850;margin-bottom:7px}",
 
-    "textarea{width:100%;resize:vertical;border:0;padding:14px 15px 10px;min-height:145px;font-size:13px;line-height:1.6;color:#101828;outline:none}",
+    ".field-label-row label{margin:0}",
 
-    "textarea::placeholder{color:#98a2b3}",
+    "#char-count{font-size:7px;color:#98a2b3}",
 
-    ".textarea-footer{display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-top:1px solid #f0f2f5;background:#fafbfc;color:#98a2b3;font-size:9px}",
+    ".textarea-wrap{border:1px solid #dfe4ea;border-radius:10px;overflow:hidden;transition:.2s}",
 
-    ".upload-box{min-height:74px!important;display:flex!important;align-items:center!important;gap:12px!important;border:1px dashed #b9c3d0!important;border-radius:11px!important;padding:12px 14px!important;background:#fbfcfe!important;cursor:pointer!important;transition:.2s!important}",
+    ".textarea-wrap:focus-within{border-color:#91bff5;box-shadow:0 0 0 3px rgba(24,119,242,.07)}",
+
+    "textarea{width:100%;resize:vertical;border:0;padding:13px 14px 9px;min-height:135px;font-size:11px;line-height:1.6;color:#101828;outline:none}",
+
+    "textarea::placeholder{color:#a4acb8}",
+
+    ".textarea-footer{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-top:1px solid #f0f2f5;background:#fafbfc;color:#98a2b3;font-size:7px}",
+
+    ".upload-box{min-height:68px!important;display:flex!important;align-items:center!important;gap:11px!important;border:1px dashed #b9c3d0!important;border-radius:10px!important;padding:10px 12px!important;background:#fbfcfe!important;cursor:pointer!important;transition:.2s!important}",
 
     ".upload-box:hover{background:#f5f9ff!important;border-color:#1877f2!important}",
 
-    ".upload-icon{width:39px;height:39px;flex:0 0 auto;border-radius:10px;background:#edf5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900}",
+    ".upload-icon{width:37px;height:37px;flex:0 0 auto;border-radius:9px;background:#edf5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:900}",
 
     ".upload-content{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}",
 
-    ".upload-content strong{font-size:11px;color:#344054}",
+    ".upload-content strong{font-size:9px;color:#344054}",
 
-    ".upload-content span{font-size:9px;color:#98a2b3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    ".upload-content span{font-size:7px;color:#98a2b3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 
-    ".upload-action{border:1px solid #dfe3e8;background:#fff;color:#475467;border-radius:7px;padding:7px 10px;font-size:9px;font-weight:800}",
+    ".upload-action{border:1px solid #dfe3e8;background:#fff;color:#475467;border-radius:6px;padding:6px 9px;font-size:7px;font-weight:850}",
 
     ".upload-box input{display:none}",
 
-    ".upload-hint{font-size:9px;color:#98a2b3;margin-top:7px}",
+    ".upload-hint{font-size:7px;color:#98a2b3;margin-top:6px}",
 
-    ".publish-footer{display:flex;align-items:center;justify-content:space-between;gap:15px;padding-top:4px}",
+    ".publish-footer{display:flex;align-items:center;justify-content:space-between;gap:15px;padding-top:2px}",
 
-    ".publish-info{display:flex;align-items:center;gap:7px;color:#667085;font-size:10px}",
+    ".publish-info{display:flex;align-items:center;gap:8px}",
 
-    ".secure-icon{width:20px;height:20px;border-radius:50%;background:#ecfdf3;color:#12b76a;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900}",
+    ".publish-info strong{display:block;color:#344054;font-size:8px}",
 
-    ".publish-btn{height:45px;border:0;background:linear-gradient(135deg,#1877f2,#1769d2);color:#fff;padding:0 17px;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:11px;font-weight:850;cursor:pointer;box-shadow:0 7px 17px rgba(24,119,242,.2);transition:.2s}",
+    ".publish-info span{display:block;color:#98a2b3;font-size:7px;margin-top:3px}",
 
-    ".publish-btn:hover{transform:translateY(-1px);box-shadow:0 10px 23px rgba(24,119,242,.28)}",
+    ".publish-check{width:25px;height:25px;border-radius:8px;background:#ecfdf3;color:#12b76a;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900}",
+
+    ".publish-btn{height:42px;border:0;background:linear-gradient(135deg,#1877f2,#4f46e5);color:#fff;padding:0 15px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:9px;font-weight:900;cursor:pointer;box-shadow:0 7px 19px rgba(58,90,220,.2);transition:.2s}",
+
+    ".publish-btn:hover{transform:translateY(-1px);box-shadow:0 11px 25px rgba(58,90,220,.27)}",
 
     ".publish-btn:disabled{opacity:.7;cursor:wait;transform:none}",
 
-    ".publish-btn-icon{font-size:13px}",
+    ".publish-btn-icon{font-size:11px}",
 
 
     /* EMPTY */
 
-    ".empty-state{background:#fff;border:1px solid #e4e8ee;border-radius:17px;padding:55px 30px;text-align:center;box-shadow:0 7px 25px rgba(16,24,40,.04)}",
+    ".empty-state{background:#fff;border:1px solid #e3e8ef;border-radius:16px;padding:48px 25px;text-align:center;box-shadow:0 7px 25px rgba(16,24,40,.04)}",
 
-    ".empty-illustration{display:flex;justify-content:center;margin-bottom:15px}",
+    ".empty-illustration{display:flex;justify-content:center;margin-bottom:12px}",
 
-    ".empty-illustration-circle{width:65px;height:65px;border-radius:19px;background:linear-gradient(135deg,#1877f2,#5b8ff5);color:#fff;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:900;box-shadow:0 10px 22px rgba(24,119,242,.2)}",
+    ".empty-illustration-circle{width:58px;height:58px;border-radius:17px;background:linear-gradient(135deg,#1877f2,#5b8ff5);color:#fff;display:flex;align-items:center;justify-content:center;font-size:31px;font-weight:900;box-shadow:0 10px 22px rgba(24,119,242,.2)}",
 
-    ".empty-state h3{margin:0;font-size:17px}",
+    ".empty-eyebrow{color:#1877f2;font-size:7px;font-weight:900;letter-spacing:1.2px;margin-bottom:5px}",
 
-    ".empty-state p{max-width:470px;margin:8px auto 20px;color:#667085;font-size:12px;line-height:1.6}",
+    ".empty-state h3{margin:0;font-size:16px}",
 
-    ".empty-connect-btn{display:inline-flex;align-items:center;gap:7px;background:#1877f2;color:#fff;text-decoration:none;padding:11px 15px;border-radius:9px;font-size:11px;font-weight:800}",
+    ".empty-state p{max-width:450px;margin:7px auto 18px;color:#667085;font-size:10px;line-height:1.6}",
+
+    ".empty-connect-btn{display:inline-flex;align-items:center;gap:6px;background:#1877f2;color:#fff;text-decoration:none;padding:10px 13px;border-radius:8px;font-size:9px;font-weight:850}",
 
 
     /* FOOTER */
 
-    ".dashboard-footer{display:flex;align-items:center;justify-content:center;gap:8px;color:#98a2b3;font-size:9px;padding-top:28px}",
+    ".dashboard-footer{display:flex;align-items:center;justify-content:center;gap:7px;color:#98a2b3;font-size:7px;padding-top:26px}",
+
+    ".footer-brand{display:flex;align-items:center;gap:5px}",
+
+    ".footer-logo{width:17px;height:17px;border-radius:5px;background:#1877f2;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900}",
 
     ".footer-separator{color:#d0d5dd}",
 
 
     /* RESULTS */
 
-    ".results-page{min-height:calc(100vh - 76px);padding:45px 20px;background:#f5f7fb}",
+    ".results-page{min-height:calc(100vh - 74px);padding:45px 20px;background:#f4f7fb}",
 
-    ".results-card{max-width:850px;margin:0 auto;background:#fff;border:1px solid #e4e8ee;border-radius:18px;padding:30px;box-shadow:0 10px 35px rgba(16,24,40,.07)}",
+    ".results-card{max-width:850px;margin:0 auto;background:#fff;border:1px solid #e2e7ee;border-radius:17px;padding:27px;box-shadow:0 12px 38px rgba(16,24,40,.07)}",
 
-    ".results-icon{width:55px;height:55px;border-radius:16px;background:#edf5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:27px;font-weight:900;margin-bottom:15px}",
+    ".results-top{display:flex;align-items:center;gap:12px}",
 
-    ".results-card h2{margin:0;font-size:22px}",
+    ".results-icon{width:51px;height:51px;border-radius:14px;background:#edf5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:25px;font-weight:900}",
 
-    ".result-summary{margin:8px 0 22px;color:#667085;font-size:12px}",
+    ".results-card h2{margin:0;font-size:21px}",
 
-    ".results-list{display:flex;flex-direction:column;gap:8px}",
+    ".result-summary{margin:9px 0 20px;color:#667085;font-size:10px}",
 
-    ".result-row{border:1px solid #e4e7ec;border-radius:10px;padding:12px;display:grid;grid-template-columns:1fr auto;gap:7px 15px}",
+    ".results-list{display:flex;flex-direction:column;gap:7px}",
+
+    ".result-row{border:1px solid #e4e7ec;border-radius:9px;padding:11px;display:grid;grid-template-columns:1fr auto;gap:6px 15px}",
 
     ".result-success{background:#f6fffa;border-color:#ccebd9}",
 
     ".result-failed{background:#fff8f7;border-color:#f0d0cc}",
 
-    ".result-main{display:flex;align-items:center;gap:9px}",
+    ".result-main{display:flex;align-items:center;gap:8px}",
 
-    ".result-avatar{width:33px;height:33px;border-radius:8px;background:#1877f2;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900}",
+    ".result-avatar{width:32px;height:32px;border-radius:8px;background:#1877f2;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900}",
 
-    ".result-row strong{font-size:12px}",
+    ".result-row strong{font-size:10px}",
 
-    ".result-page-id{margin-top:4px;color:#98a2b3;font-size:9px}",
+    ".result-page-id{margin-top:3px;color:#98a2b3;font-size:7px}",
 
-    ".result-status{font-size:10px;font-weight:850;align-self:center}",
+    ".result-status{font-size:8px;font-weight:900;align-self:center}",
 
     ".result-success .result-status{color:#12b76a}",
 
@@ -2423,88 +2772,92 @@ function page(
 
     ".result-extra{grid-column:1/-1}",
 
-    ".result-error{color:#667085;font-size:9px;word-break:break-word}",
+    ".result-error{color:#667085;font-size:8px;word-break:break-word}",
 
-    ".back-btn{display:inline-flex;align-items:center;margin-top:20px;padding:10px 14px;background:#1877f2;color:#fff;text-decoration:none;border-radius:8px;font-size:11px;font-weight:800}",
+    ".back-btn{display:inline-flex;align-items:center;margin-top:18px;padding:9px 12px;background:#1877f2;color:#fff;text-decoration:none;border-radius:8px;font-size:9px;font-weight:850}",
 
 
     /* ERROR */
 
-    ".error-page-wrap{min-height:100vh;padding:50px 20px;background:#f5f7fb}",
+    ".error-page-wrap{min-height:100vh;padding:50px 20px;background:#f4f7fb}",
 
-    ".error-box{max-width:900px;margin:0 auto;background:#fff;border:1px solid #eadbd9;border-radius:17px;padding:30px;box-shadow:0 10px 35px rgba(16,24,40,.06)}",
+    ".error-box{max-width:900px;margin:0 auto;background:#fff;border:1px solid #eadbd9;border-radius:17px;padding:28px;box-shadow:0 10px 35px rgba(16,24,40,.06)}",
 
-    ".error-icon{width:45px;height:45px;border-radius:12px;background:#fff0ee;color:#d92d20;display:flex;align-items:center;justify-content:center;font-size:23px;font-weight:900;margin-bottom:13px}",
+    ".error-icon{width:44px;height:44px;border-radius:12px;background:#fff0ee;color:#d92d20;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;margin-bottom:12px}",
 
     ".error-box h2{margin:0 0 6px}",
 
-    ".error-lead{color:#667085;font-size:12px}",
+    ".error-lead{color:#667085;font-size:11px}",
 
-    "pre{background:#f8f9fb;border:1px solid #eaecf0;padding:14px;border-radius:9px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;color:#475467}",
+    "pre{background:#f8f9fb;border:1px solid #eaecf0;padding:13px;border-radius:9px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:9px;color:#475467}",
 
 
     /* LOGIN */
 
-    ".login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:25px;background:radial-gradient(circle at 10% 10%,rgba(24,119,242,.12),transparent 30%),radial-gradient(circle at 90% 90%,rgba(88,101,242,.11),transparent 30%),#f5f7fb;position:relative;overflow:hidden}",
+    ".login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:25px;background:linear-gradient(135deg,#06132c,#0b2450 55%,#172e70);position:relative;overflow:hidden}",
 
-    ".login-decoration{position:absolute;border-radius:50%;border:1px solid rgba(24,119,242,.08)}",
+    ".login-screen:before{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:30px 30px}",
 
-    ".login-decoration-one{width:500px;height:500px;left:-300px;top:-260px}",
+    ".login-glow{position:absolute;border-radius:50%;filter:blur(2px)}",
 
-    ".login-decoration-two{width:430px;height:430px;right:-260px;bottom:-240px}",
+    ".login-glow-one{width:500px;height:500px;left:-300px;top:-280px;background:rgba(24,119,242,.18)}",
 
-    ".login-card{position:relative;width:100%;max-width:430px;background:rgba(255,255,255,.96);border:1px solid #e4e8ee;border-radius:20px;box-shadow:0 25px 70px rgba(16,24,40,.1);padding:30px;z-index:2}",
+    ".login-glow-two{width:450px;height:450px;right:-280px;bottom:-260px;background:rgba(124,92,255,.16)}",
 
-    ".login-brand{display:flex;align-items:center;gap:10px;margin-bottom:30px}",
+    ".login-card{position:relative;width:100%;max-width:410px;background:rgba(255,255,255,.97);border:1px solid rgba(255,255,255,.4);border-radius:20px;box-shadow:0 30px 90px rgba(0,0,0,.25);padding:29px;z-index:2}",
 
-    ".login-brand-icon{width:39px;height:39px;border-radius:11px;background:linear-gradient(135deg,#1877f2,#6d5dfc);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px}",
+    ".login-brand{display:flex;align-items:center;gap:10px;margin-bottom:28px}",
 
-    ".login-brand-name{font-size:14px;font-weight:850;color:#101828}",
+    ".login-logo{width:39px;height:39px;border-radius:11px;background:#1877f2;color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;box-shadow:0 8px 18px rgba(24,119,242,.2)}",
 
-    ".login-brand-sub{font-size:8px;color:#98a2b3;text-transform:uppercase;letter-spacing:.7px;margin-top:3px}",
+    ".login-brand-name{font-size:13px;font-weight:900;color:#101828}",
+
+    ".login-brand-sub{font-size:7px;color:#98a2b3;text-transform:uppercase;letter-spacing:.8px;margin-top:3px}",
 
     ".login-title-area{text-align:center}",
 
-    ".lock-circle{width:55px;height:55px;margin:0 auto 13px;border-radius:17px;background:#edf5ff;display:flex;align-items:center;justify-content:center;font-size:25px}",
+    ".login-lock{width:52px;height:52px;margin:0 auto 11px;border-radius:16px;background:#edf5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:25px;font-weight:900}",
 
-    ".login-card h1{margin:0 0 7px;font-size:25px;letter-spacing:-.7px}",
+    ".login-eyebrow{font-size:7px;letter-spacing:1.3px;color:#1877f2;font-weight:900;margin-bottom:5px}",
 
-    ".login-card p{margin:0;color:#667085;font-size:12px;line-height:1.6}",
+    ".login-card h1{margin:0 0 6px;font-size:25px;letter-spacing:-.7px}",
 
-    ".login-error{display:flex;align-items:center;gap:8px;background:#fff5f4;border:1px solid #f3d0cc;color:#d92d20;padding:10px 11px;border-radius:9px;margin:18px 0 0;font-size:10px}",
+    ".login-card p{margin:0;color:#667085;font-size:10px;line-height:1.6}",
 
-    ".login-error-icon{width:17px;height:17px;border-radius:50%;background:#d92d20;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900}",
+    ".login-error{display:flex;align-items:center;gap:7px;background:#fff5f4;border:1px solid #f3d0cc;color:#d92d20;padding:9px 10px;border-radius:8px;margin:17px 0 0;font-size:8px}",
 
-    ".login-form{margin-top:22px}",
+    ".login-error-icon{width:16px;height:16px;border-radius:50%;background:#d92d20;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900}",
 
-    ".login-field label{display:block;font-size:10px;font-weight:800;color:#344054;margin-bottom:7px}",
+    ".login-form{margin-top:20px}",
+
+    ".login-field label{display:block;font-size:8px;font-weight:850;color:#344054;margin-bottom:6px}",
 
     ".password-wrap{position:relative}",
 
-    ".input-icon{position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:8px;color:#98a2b3}",
+    ".password-symbol{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:6px;color:#98a2b3}",
 
-    ".login-card input[type=password]{width:100%;height:45px;padding:0 13px 0 31px;border:1px solid #dfe3e8;border-radius:9px;font-size:12px;outline:none;background:#fff;transition:.2s}",
+    ".login-card input[type=password]{width:100%;height:43px;padding:0 12px 0 28px;border:1px solid #dfe3e8;border-radius:8px;font-size:10px;outline:none;background:#fff;transition:.2s}",
 
-    ".login-card input[type=password]:focus{border-color:#91bff5;box-shadow:0 0 0 3px rgba(24,119,242,.08)}",
+    ".login-card input[type=password]:focus{border-color:#91bff5;box-shadow:0 0 0 3px rgba(24,119,242,.07)}",
 
-    ".login-btn{width:100%;height:45px;border:0;background:linear-gradient(135deg,#1877f2,#1769d2);color:#fff;border-radius:9px;font-size:12px;font-weight:850;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;margin-top:12px;box-shadow:0 7px 18px rgba(24,119,242,.2);transition:.2s}",
+    ".login-btn{width:100%;height:43px;border:0;background:linear-gradient(135deg,#1877f2,#4f46e5);color:#fff;border-radius:8px;font-size:10px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:11px;box-shadow:0 8px 19px rgba(52,86,211,.2);transition:.2s}",
 
-    ".login-btn:hover{transform:translateY(-1px);box-shadow:0 10px 22px rgba(24,119,242,.27)}",
+    ".login-btn:hover{transform:translateY(-1px);box-shadow:0 11px 24px rgba(52,86,211,.28)}",
 
-    ".login-arrow{font-size:17px}",
+    ".login-arrow{font-size:15px}",
 
-    ".login-footer{display:flex;align-items:center;justify-content:center;gap:6px;color:#98a2b3;font-size:9px;margin-top:21px;padding-top:18px;border-top:1px solid #eef1f5}",
+    ".login-secure{display:flex;align-items:center;justify-content:center;gap:6px;color:#98a2b3;font-size:7px;margin-top:19px;padding-top:16px;border-top:1px solid #eef1f5}",
 
-    ".status-dot{width:6px;height:6px;border-radius:50%;background:#12b76a}",
+    ".secure-pulse{width:5px;height:5px;border-radius:50%;background:#12b76a}",
 
 
     /* RESPONSIVE */
 
-    "@media(max-width:1050px){.hero-visual{right:20px;opacity:.45}.hero-content{max-width:650px}.hero{padding-left:38px}}",
+    "@media(max-width:1080px){.hero-right{right:15px;opacity:.42}.hero-left{max-width:650px}.dashboard-hero{padding-left:38px}}",
 
-    "@media(max-width:800px){.topbar{height:auto;min-height:70px}.topbar-inner{padding:12px 16px}.brand-text{display:none}.top-actions{margin-left:auto}.container{padding:20px 15px 50px}.hero{min-height:360px;padding:35px 25px;border-radius:19px}.hero h1{font-size:32px}.hero-visual{display:none}.stats-grid{grid-template-columns:1fr;gap:9px;margin-bottom:30px}.content-heading{align-items:flex-start;flex-direction:column}.account-header{align-items:flex-start;flex-direction:column}.account-header-right{width:100%;justify-content:space-between}.account-page-count{display:none}.account-actions{margin-left:auto}.page-list{grid-template-columns:1fr}.publisher-card{padding:19px}.publisher-top{align-items:flex-start;flex-direction:column}.publish-footer{align-items:stretch;flex-direction:column}.publish-btn{width:100%}}",
+    "@media(max-width:820px){.topbar{height:auto;min-height:68px}.topbar-inner{padding:11px 15px}.top-status{display:none}.container{padding:18px 14px 50px}.dashboard-hero{min-height:390px;padding:32px 24px;border-radius:19px}.dashboard-hero h1{font-size:32px}.hero-right{display:none}.overview-stats{grid-template-columns:1fr}.overview-accounts{grid-template-columns:1fr}.content-heading{align-items:flex-start;flex-direction:column}.account-header{align-items:flex-start;flex-direction:column}.account-header-right{width:100%;justify-content:space-between}.account-page-count{display:none}.page-list{grid-template-columns:1fr}.publisher-card{padding:19px}.publish-footer{align-items:stretch;flex-direction:column}.publish-btn{width:100%}}",
 
-    "@media(max-width:520px){.connect-btn span:last-child{display:none}.connect-btn{width:42px;padding:0}.logout-btn span:last-child{display:none}.logout-btn{width:42px;padding:0;justify-content:center}.hero{padding:30px 21px;min-height:390px}.hero h1{font-size:27px}.hero p{font-size:13px}.hero-actions{align-items:flex-start;flex-direction:column}.hero-note{font-size:10px}.account-actions{width:100%;display:grid;grid-template-columns:1fr 1fr}.account-actions form{width:100%}.account-actions .btn{width:100%;justify-content:center}.pages-toolbar{align-items:flex-start;flex-direction:column}.select-actions{width:100%}.tool-btn{flex:1}.upload-box{flex-wrap:wrap}.upload-action{margin-left:auto}.login-card{padding:23px}.dashboard-footer{flex-wrap:wrap}.results-card{padding:22px}}"
+    "@media(max-width:520px){.brand-text{display:none}.connect-btn span:last-child{display:none}.connect-btn{width:38px;padding:0}.logout-btn span:last-child{display:none}.logout-btn{width:38px;padding:0;justify-content:center}.dashboard-hero{padding:28px 20px;min-height:395px}.dashboard-hero h1{font-size:27px}.dashboard-hero p{font-size:11px}.hero-buttons{align-items:flex-start;flex-direction:column}.hero-primary,.hero-secondary{width:100%;justify-content:center}.overview-panel{padding:17px}.overview-heading{align-items:flex-start}.overview-total{display:none}.overview-account{gap:7px}.overview-account-status{display:none}.account-actions{width:100%;display:grid;grid-template-columns:1fr 1fr}.account-actions form{width:100%}.account-actions .btn{width:100%;justify-content:center}.pages-toolbar{align-items:flex-start;flex-direction:column}.select-actions{width:100%}.tool-btn{flex:1}.upload-box{flex-wrap:wrap}.upload-action{margin-left:auto}.dashboard-footer{flex-wrap:wrap}.results-card{padding:21px}}"
 
   ].join("");
 
@@ -2518,7 +2871,7 @@ function page(
 
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
 
-        '<meta name="theme-color" content="#1877f2">' +
+        '<meta name="theme-color" content="#07152f">' +
 
         "<title>" +
           escapeHtml(title) +
