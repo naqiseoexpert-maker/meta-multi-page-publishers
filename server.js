@@ -60,16 +60,20 @@ export default {
 
       return page(
         "Error",
-        '<div class="error-box">' +
-          "<h2>Something went wrong</h2>" +
-          "<pre>" +
-            escapeHtml(
-              error && (error.stack || error.message)
-                ? error.stack || error.message
-                : String(error)
-            ) +
-          "</pre>" +
-          '<a class="back-btn" href="/">Back to Dashboard</a>' +
+        '<div class="error-page">' +
+          '<div class="error-box">' +
+            '<div class="error-icon">!</div>' +
+            "<h2>Something went wrong</h2>" +
+            "<p>The application encountered an unexpected error.</p>" +
+            "<pre>" +
+              escapeHtml(
+                error && (error.stack || error.message)
+                  ? error.stack || error.message
+                  : String(error)
+              ) +
+            "</pre>" +
+            '<a class="back-btn" href="/">Back to Dashboard</a>' +
+          "</div>" +
         "</div>"
       );
     }
@@ -171,25 +175,69 @@ function parseCookies(header) {
 function showLoginPage(errorMessage) {
   const errorHtml = errorMessage
     ? '<div class="login-error">' +
-      escapeHtml(errorMessage) +
+      '<span class="login-error-icon">!</span>' +
+      "<span>" +
+        escapeHtml(errorMessage) +
+      "</span>" +
       "</div>"
     : "";
 
   return page(
-    "Password Required",
+    "Login",
+
     '<div class="login-wrapper">' +
+
+      '<div class="login-background-shape shape-one"></div>' +
+      '<div class="login-background-shape shape-two"></div>' +
+
       '<div class="login-card">' +
-        '<div class="login-logo">🔐</div>' +
-        "<h1>" +
-          escapeHtml(APP_NAME) +
-        "</h1>" +
-        "<p>Enter your password to continue.</p>" +
-        errorHtml +
-        '<form method="POST" action="/login">' +
-          '<input type="password" name="password" placeholder="Enter password" autocomplete="current-password" required autofocus />' +
-          '<button type="submit" class="login-btn">Login</button>' +
-        "</form>" +
+
+        '<div class="login-brand">' +
+          '<div class="login-logo">' +
+            '<span class="logo-symbol">M</span>' +
+          "</div>" +
+
+          '<div class="login-brand-text">' +
+            "<strong>Meta Publisher</strong>" +
+            "<span>Multi Page Management</span>" +
+          "</div>" +
+        "</div>" +
+
+        '<div class="login-content">' +
+
+          "<h1>Welcome back</h1>" +
+
+          "<p>" +
+            "Sign in to manage and publish content across your Facebook Pages." +
+          "</p>" +
+
+          errorHtml +
+
+          '<form method="POST" action="/login" class="login-form">' +
+
+            '<label for="password">Password</label>' +
+
+            '<div class="password-field">' +
+              '<span class="field-icon">●</span>' +
+              '<input id="password" type="password" name="password" placeholder="Enter your password" autocomplete="current-password" required autofocus />' +
+            "</div>" +
+
+            '<button type="submit" class="login-btn">' +
+              "<span>Sign In</span>" +
+              '<span class="login-arrow">→</span>' +
+            "</button>" +
+
+          "</form>" +
+
+          '<div class="login-footer">' +
+            '<span class="secure-dot"></span>' +
+            "Private & secure dashboard" +
+          "</div>" +
+
+        "</div>" +
+
       "</div>" +
+
     "</div>"
   );
 }
@@ -372,13 +420,30 @@ async function showDashboard(env) {
     groupedPages[p.account_id].push(p);
   }
 
+  const totalAccounts = accounts.length;
+  const totalPages = pages.length;
+
   let accountHtml = "";
 
   if (accounts.length === 0) {
     accountHtml =
-      '<div class="empty-box">' +
+      '<div class="empty-state">' +
+
+        '<div class="empty-icon">' +
+          "f" +
+        "</div>" +
+
         "<h3>No Facebook account connected</h3>" +
-        "<p>Click Connect Facebook Account to add your first or second account.</p>" +
+
+        "<p>" +
+          "Connect your Facebook account to start managing and publishing to your Pages." +
+        "</p>" +
+
+        '<a class="empty-connect-btn" href="/auth/meta">' +
+          '<span>+</span>' +
+          " Connect Facebook Account" +
+        "</a>" +
+
       "</div>";
   } else {
     for (const account of accounts) {
@@ -389,22 +454,45 @@ async function showDashboard(env) {
 
       if (accountPages.length > 0) {
         pageHtml =
-          '<div class="list-toolbar">' +
-            "<strong>Select Pages</strong>" +
+          '<div class="pages-toolbar">' +
+
+            '<div class="pages-toolbar-title">' +
+              '<span class="toolbar-check">✓</span>' +
+              "<div>" +
+                "<strong>Select Pages</strong>" +
+                "<small>Choose where you want to publish</small>" +
+              "</div>" +
+            "</div>" +
+
             '<div class="select-actions">' +
-              '<button type="button" class="small-btn" onclick="selectAccountPages(' +
-                Number(account.id) +
-                ',true)">Select All</button>' +
 
               '<button type="button" class="small-btn" onclick="selectAccountPages(' +
                 Number(account.id) +
-                ',false)">Unselect All</button>' +
+                ',true)">' +
+                "Select All" +
+              "</button>" +
+
+              '<button type="button" class="small-btn" onclick="selectAccountPages(' +
+                Number(account.id) +
+                ',false)">' +
+                "Clear" +
+              "</button>" +
+
             "</div>" +
+
           "</div>" +
 
           '<div class="page-list">';
 
         for (const p of accountPages) {
+          const pageInitial =
+            String(
+              p.page_name || "P"
+            )
+              .trim()
+              .charAt(0)
+              .toUpperCase() || "P";
+
           pageHtml +=
             '<label class="page-row">' +
 
@@ -413,6 +501,12 @@ async function showDashboard(env) {
                 '" type="checkbox" name="page_ids" value="' +
                 escapeHtml(p.id) +
                 '" form="publish-form" />' +
+
+              '<span class="custom-checkbox"></span>' +
+
+              '<div class="page-avatar">' +
+                escapeHtml(pageInitial) +
+              "</div>" +
 
               '<div class="page-info">' +
 
@@ -423,12 +517,13 @@ async function showDashboard(env) {
                 "</div>" +
 
                 '<div class="page-id">' +
-                  "Page ID: <code>" +
+                  "Page ID: " +
                   escapeHtml(p.facebook_page_id) +
-                  "</code>" +
                 "</div>" +
 
               "</div>" +
+
+              '<span class="page-arrow">›</span>' +
 
             "</label>";
         }
@@ -437,71 +532,112 @@ async function showDashboard(env) {
       } else {
         pageHtml =
           '<div class="no-pages">' +
-            "No Pages found for this account. Click " +
-            "<strong>Sync Pages</strong> to refresh." +
+
+            '<div class="no-pages-icon">↻</div>' +
+
+            "<div>" +
+              "<strong>No Pages found</strong>" +
+              "<p>Click Sync Pages to refresh your Facebook Pages.</p>" +
+            "</div>" +
+
           "</div>";
       }
+
+      const accountInitial =
+        String(
+          account.account_name || "F"
+        )
+          .trim()
+          .charAt(0)
+          .toUpperCase() || "F";
 
       accountHtml +=
         '<section class="account-card">' +
 
           '<div class="account-header">' +
 
-            "<div>" +
+            '<div class="account-main">' +
 
-              "<h2>" +
-                escapeHtml(
-                  account.account_name ||
-                  "Facebook Account"
-                ) +
-              "</h2>" +
-
-              '<div class="facebook-id">' +
-                "Facebook ID: <code>" +
-                escapeHtml(
-                  account.facebook_user_id
-                ) +
-                "</code>" +
+              '<div class="account-avatar">' +
+                escapeHtml(accountInitial) +
               "</div>" +
 
-              '<div class="page-count">' +
-                accountPages.length +
-                " Connected Page" +
-                (
-                  accountPages.length === 1
-                    ? ""
-                    : "s"
-                ) +
+              '<div class="account-details">' +
+
+                '<div class="account-title-row">' +
+
+                  "<h2>" +
+                    escapeHtml(
+                      account.account_name ||
+                      "Facebook Account"
+                    ) +
+                  "</h2>" +
+
+                  '<span class="connected-badge">' +
+                    '<span class="status-dot"></span>' +
+                    "Connected" +
+                  "</span>" +
+
+                "</div>" +
+
+                '<div class="facebook-id">' +
+                  '<span class="fb-mini">f</span>' +
+                  " Facebook ID: " +
+                  "<code>" +
+                  escapeHtml(
+                    account.facebook_user_id
+                  ) +
+                  "</code>" +
+                "</div>" +
+
               "</div>" +
 
             "</div>" +
 
-            '<div class="account-actions">' +
+            '<div class="account-right">' +
 
-              '<form method="POST" action="/sync">' +
+              '<div class="account-page-stat">' +
+                '<strong>' +
+                  accountPages.length +
+                "</strong>" +
+                "<span>" +
+                  (
+                    accountPages.length === 1
+                      ? "Page"
+                      : "Pages"
+                  ) +
+                "</span>" +
+              "</div>" +
 
-                '<input type="hidden" name="account_id" value="' +
-                  escapeHtml(account.id) +
-                '" />' +
+              '<div class="account-actions">' +
 
-                '<button class="btn btn-blue" type="submit">' +
-                  "Sync Pages" +
-                "</button>" +
+                '<form method="POST" action="/sync" onsubmit="showButtonLoading(this, \'Syncing...\')">' +
 
-              "</form>" +
+                  '<input type="hidden" name="account_id" value="' +
+                    escapeHtml(account.id) +
+                  '" />' +
 
-              '<form method="POST" action="/remove-account" ' +
-                'onsubmit="return confirm(\'Remove this Facebook account and all its connected Pages?\');">' +
+                  '<button class="btn btn-blue" type="submit">' +
+                    '<span class="btn-icon">↻</span>' +
+                    "Sync Pages" +
+                  "</button>" +
 
-                '<input type="hidden" name="account_id" value="' +
-                  escapeHtml(account.id) +
-                '" />' +
+                "</form>" +
 
-                '<button class="btn btn-red" type="submit">' +
-                  "Remove" +
-                "</button>" +
+                '<form method="POST" action="/remove-account" ' +
+                  'onsubmit="return confirm(\'Remove this Facebook account and all its connected Pages?\');">' +
 
-              "</form>" +
+                  '<input type="hidden" name="account_id" value="' +
+                    escapeHtml(account.id) +
+                  '" />' +
+
+                  '<button class="btn btn-delete" type="submit">' +
+                    "Remove" +
+                  "</button>" +
+
+                "</form>" +
+
+              "</div>" +
 
             "</div>" +
 
@@ -524,41 +660,90 @@ async function showDashboard(env) {
     publisherHtml =
       '<section class="publisher-card">' +
 
-        '<div class="publisher-header">' +
+        '<div class="publisher-heading">' +
 
-          "<h2>Create Post</h2>" +
+          '<div class="publisher-title-wrap">' +
 
-          '<div id="selected-count">' +
+            '<div class="publisher-icon">' +
+              "✎" +
+            "</div>" +
+
+            "<div>" +
+              "<h2>Create & Publish</h2>" +
+              "<p>Create a post and publish it to your selected Pages.</p>" +
+            "</div>" +
+
+          "</div>" +
+
+          '<div id="selected-count" class="selected-badge">' +
             "0 Pages Selected" +
           "</div>" +
 
         "</div>" +
 
+        '<div class="publisher-divider"></div>' +
+
         '<form id="publish-form" method="POST" action="/publish" enctype="multipart/form-data">' +
 
           '<div class="field">' +
 
-            '<label for="message">Post Text</label>' +
+            '<label for="message">' +
+              "Post Text" +
+              '<span class="optional-label">Optional</span>' +
+            "</label>" +
 
-            '<textarea id="message" name="message" rows="7" placeholder="Write your post..."></textarea>' +
+            '<textarea id="message" name="message" rows="7" maxlength="63206" placeholder="What would you like to share with your audience?"></textarea>' +
+
+            '<div class="field-bottom">' +
+              '<span>Write your message, announcement or update.</span>' +
+              '<span id="char-count">0 characters</span>' +
+            "</div>" +
 
           "</div>" +
 
           '<div class="field">' +
 
-            '<label for="media">Image / Video</label>' +
+            '<label for="media">' +
+              "Media" +
+              '<span class="optional-label">Optional</span>' +
+            "</label>" +
 
-            '<input id="media" type="file" name="media" accept="image/*,video/*" />' +
+            '<label class="file-drop" for="media">' +
+
+              '<div class="file-icon">↑</div>' +
+
+              '<div class="file-text">' +
+                "<strong>Choose an image or video</strong>" +
+                "<span>PNG, JPG, GIF, MP4 and other supported formats</span>" +
+              "</div>" +
+
+              '<span class="browse-btn">Browse</span>' +
+
+            "</label>" +
+
+            '<input id="media" class="hidden-file" type="file" name="media" accept="image/*,video/*" />' +
+
+            '<div id="file-name" class="selected-file"></div>' +
 
             '<div class="hint">' +
-              "Leave empty for a text-only post." +
+              "Leave empty for a text-only post. Maximum supported file size is 100 MB." +
             "</div>" +
 
           "</div>" +
 
-          '<button class="publish-btn" type="submit" onclick="return validatePublish()">' +
-            "Publish to Selected Pages" +
-          "</button>" +
+          '<div class="publish-footer">' +
+
+            '<div class="publish-info">' +
+              '<span class="publish-info-icon">✓</span>' +
+              '<span>Posts will be published to every selected Page.</span>' +
+            "</div>" +
+
+            '<button id="publish-btn" class="publish-btn" type="submit">' +
+              '<span class="publish-btn-icon">↑</span>' +
+              "<span>Publish to Selected Pages</span>" +
+            "</button>" +
+
+          "</div>" +
 
         "</form>" +
 
@@ -575,18 +760,47 @@ async function showDashboard(env) {
         "const counter=document.getElementById('selected-count');" +
 
         "if(counter){" +
-          "counter.textContent=" +
-          "checked.length+' Page'+(checked.length===1?'':'s')+' Selected';" +
+
+          "counter.textContent=checked.length+' Page'+(checked.length===1?'':'s')+' Selected';" +
+
+          "if(checked.length>0){" +
+            "counter.classList.add('active');" +
+          "}else{" +
+            "counter.classList.remove('active');" +
+          "}" +
+
         "}" +
+
+        "document.querySelectorAll('.page-row').forEach(function(row){" +
+
+          "const checkbox=row.querySelector('.page-checkbox');" +
+
+          "if(checkbox&&checkbox.checked){" +
+            "row.classList.add('selected');" +
+          "}else{" +
+            "row.classList.remove('selected');" +
+          "}" +
+
+        "});" +
 
       "}" +
 
       "function selectAccountPages(accountId,select){" +
 
-        "document.querySelectorAll('.account-'+accountId)" +
-        ".forEach(function(c){c.checked=select;});" +
+        "document.querySelectorAll('.account-'+accountId).forEach(function(c){c.checked=select;});" +
 
         "updateSelectedCount();" +
+
+      "}" +
+
+      "function showButtonLoading(form,text){" +
+
+        "const button=form.querySelector('button[type=submit]');" +
+
+        "if(button){" +
+          "button.disabled=true;" +
+          "button.innerHTML='<span class=\"spinner\"></span>'+text;" +
+        "}" +
 
       "}" +
 
@@ -594,6 +808,37 @@ async function showDashboard(env) {
 
         "if(e.target&&e.target.classList.contains('page-checkbox')){" +
           "updateSelectedCount();" +
+        "}" +
+
+        "if(e.target&&e.target.id==='media'){" +
+
+          "const fileName=document.getElementById('file-name');" +
+
+          "if(e.target.files&&e.target.files.length){" +
+            "fileName.textContent='Selected: '+e.target.files[0].name;" +
+            "fileName.classList.add('visible');" +
+          "}else{" +
+            "fileName.textContent='';" +
+            "fileName.classList.remove('visible');" +
+          "}" +
+
+        "}" +
+
+      "});" +
+
+      "document.addEventListener('click',function(e){" +
+
+        "const row=e.target.closest('.page-row');" +
+
+        "if(row&&e.target.tagName!=='INPUT'){" +
+
+          "const checkbox=row.querySelector('.page-checkbox');" +
+
+          "if(checkbox){" +
+            "checkbox.checked=!checkbox.checked;" +
+            "updateSelectedCount();" +
+          "}" +
+
         "}" +
 
       "});" +
@@ -616,7 +861,26 @@ async function showDashboard(env) {
           "return false;" +
         "}" +
 
+        "const button=document.getElementById('publish-btn');" +
+
+        "if(button){" +
+          "button.disabled=true;" +
+          "button.innerHTML='<span class=\"spinner\"></span><span>Publishing...</span>';" +
+        "}" +
+
         "return true;" +
+
+      "}" +
+
+      "const messageBox=document.getElementById('message');" +
+
+      "const charCount=document.getElementById('char-count');" +
+
+      "if(messageBox&&charCount){" +
+
+        "messageBox.addEventListener('input',function(){" +
+          "charCount.textContent=this.value.length.toLocaleString()+' characters';" +
+        "});" +
 
       "}" +
 
@@ -627,41 +891,135 @@ async function showDashboard(env) {
   return page(
     APP_NAME,
 
-    '<div class="topbar">' +
+    '<div class="app-shell">' +
 
-      "<div>" +
+      '<header class="topbar">' +
 
-        '<div class="brand">' +
-          escapeHtml(APP_NAME) +
+        '<div class="topbar-inner">' +
+
+          '<div class="brand-area">' +
+
+            '<div class="brand-logo">' +
+              '<span>M</span>' +
+            "</div>" +
+
+            '<div class="brand-copy">' +
+              '<div class="brand">' +
+                escapeHtml(APP_NAME) +
+              "</div>" +
+              '<div class="subtitle">' +
+                "Multi-page publishing dashboard" +
+              "</div>" +
+            "</div>" +
+
+          "</div>" +
+
+          '<div class="top-actions">' +
+
+            '<a class="connect-btn" href="/auth/meta">' +
+              '<span class="connect-plus">+</span>' +
+              "Connect Facebook" +
+            "</a>" +
+
+            '<form method="POST" action="/logout" class="logout-form">' +
+
+              '<button class="logout-btn" type="submit">' +
+                '<span class="logout-icon">↪</span>' +
+                "Logout" +
+              "</button>" +
+
+            "</form>" +
+
+          "</div>" +
+
         "</div>" +
 
-        '<div class="subtitle">' +
-          "Publish to multiple Facebook Pages" +
+      "</header>" +
+
+      '<main class="main-content">' +
+
+        '<div class="container">' +
+
+          '<div class="welcome-section">' +
+
+            '<div>' +
+              '<div class="eyebrow">DASHBOARD</div>' +
+              "<h1>Manage your Facebook Pages</h1>" +
+              "<p>Connect accounts, select Pages and publish content from one place.</p>" +
+            "</div>" +
+
+            '<div class="dashboard-stats">' +
+
+              '<div class="stat-card">' +
+                '<div class="stat-icon account-stat-icon">◎</div>' +
+                '<div>' +
+                  '<strong>' +
+                    totalAccounts +
+                  "</strong>" +
+                  "<span>" +
+                    (
+                      totalAccounts === 1
+                        ? "Account"
+                        : "Accounts"
+                    ) +
+                  "</span>" +
+                "</div>" +
+              "</div>" +
+
+              '<div class="stat-card">' +
+                '<div class="stat-icon page-stat-icon">▦</div>' +
+                '<div>' +
+                  '<strong>' +
+                    totalPages +
+                  "</strong>" +
+                  "<span>" +
+                    (
+                      totalPages === 1
+                        ? "Page"
+                        : "Pages"
+                    ) +
+                  "</span>" +
+                "</div>" +
+              "</div>" +
+
+            "</div>" +
+
+          "</div>" +
+
+          '<div class="section-heading">' +
+
+            '<div>' +
+              "<h2>Connected Accounts</h2>" +
+              "<p>Manage your connected Facebook accounts and Pages.</p>" +
+            "</div>" +
+
+            '<span class="account-count">' +
+              totalAccounts +
+              (
+                totalAccounts === 1
+                  ? " account"
+                  : " accounts"
+              ) +
+            "</span>" +
+
+          "</div>" +
+
+          accountHtml +
+
+          publisherHtml +
+
         "</div>" +
 
-      "</div>" +
+      "</main>" +
 
-      '<div class="top-actions">' +
+      '<footer class="app-footer">' +
+        '<div>' +
+          "Meta Multi Page Publisher" +
+          '<span class="footer-dot">•</span>' +
+          "Secure dashboard" +
+        "</div>" +
+      "</footer>" +
 
-        '<a class="connect-btn" href="/auth/meta">' +
-          "+ Connect Facebook Account" +
-        "</a>" +
-
-        '<form method="POST" action="/logout" class="logout-form">' +
-
-          '<button class="logout-btn" type="submit">' +
-            "Logout" +
-          "</button>" +
-
-        "</form>" +
-
-      "</div>" +
-
-    "</div>" +
-
-    '<div class="container">' +
-      accountHtml +
-      publisherHtml +
     "</div>" +
 
     script
@@ -736,23 +1094,33 @@ async function metaCallback(request, env) {
     return page(
       "Facebook Login Error",
 
-      '<div class="error-box">' +
+      '<div class="error-page">' +
 
-        "<h2>Facebook Login Error</h2>" +
+        '<div class="error-box">' +
 
-        "<p>" +
-          escapeHtml(error) +
-        "</p>" +
+          '<div class="error-icon">!</div>' +
 
-        "<p>" +
-          escapeHtml(
-            errorDescription || ""
+          "<h2>Facebook Login Error</h2>" +
+
+          "<p>" +
+            escapeHtml(error) +
+          "</p>" +
+
+          (
+            errorDescription
+              ? "<p>" +
+                escapeHtml(
+                  errorDescription
+                ) +
+                "</p>"
+              : ""
           ) +
-        "</p>" +
 
-        '<a class="back-btn" href="/">' +
-          "Back to Dashboard" +
-        "</a>" +
+          '<a class="back-btn" href="/">' +
+            "Back to Dashboard" +
+          "</a>" +
+
+        "</div>" +
 
       "</div>"
     );
@@ -1294,20 +1662,35 @@ async function publishPost(
       ) +
       '">' +
 
-        "<div>" +
+        '<div class="result-left">' +
 
-          "<strong>" +
+          '<div class="result-page-avatar">' +
             escapeHtml(
-              r.page ||
-              "Unnamed Page"
+              String(
+                r.page || "P"
+              )
+                .trim()
+                .charAt(0)
+                .toUpperCase() || "P"
             ) +
-          "</strong>" +
+          "</div>" +
 
-          '<div class="result-page-id">' +
-            "Page ID: " +
-            escapeHtml(
-              r.pageId
-            ) +
+          "<div>" +
+
+            "<strong>" +
+              escapeHtml(
+                r.page ||
+                "Unnamed Page"
+              ) +
+            "</strong>" +
+
+            '<div class="result-page-id">' +
+              "Page ID: " +
+              escapeHtml(
+                r.pageId
+              ) +
+            "</div>" +
+
           "</div>" +
 
         "</div>" +
@@ -1315,8 +1698,8 @@ async function publishPost(
         '<div class="result-status">' +
           (
             r.success
-              ? "✓ Published"
-              : "✕ Failed"
+              ? '<span class="success-icon">✓</span> Published'
+              : '<span class="failed-icon">×</span> Failed'
           ) +
         "</div>" +
 
@@ -1325,7 +1708,7 @@ async function publishPost(
 
             ? (
                 r.postId
-                  ? '<div class="result-error">' +
+                  ? '<div class="result-extra">' +
                     "Post ID: " +
                     escapeHtml(
                       r.postId
@@ -1334,7 +1717,7 @@ async function publishPost(
                   : ""
               )
 
-            : '<div class="result-error">' +
+            : '<div class="result-extra result-error-text">' +
               escapeHtml(
                 r.error || ""
               ) +
@@ -1347,24 +1730,58 @@ async function publishPost(
   return page(
     "Publish Results",
 
-    '<div class="results-card">' +
+    '<div class="results-page">' +
 
-      "<h2>Publish Results</h2>" +
+      '<div class="results-header">' +
 
-      '<div class="result-summary">' +
-        successCount +
-        " successful / " +
-        results.length +
-        " total" +
+        '<a class="results-back-link" href="/">' +
+          "← Dashboard" +
+        "</a>" +
+
+        '<div class="results-title">' +
+          '<div class="publisher-icon">' +
+            "✓" +
+          "</div>" +
+
+          "<div>" +
+            "<h1>Publish Results</h1>" +
+            "<p>Your publishing activity has been completed.</p>" +
+          "</div>" +
+        "</div>" +
+
       "</div>" +
 
-      '<div class="results-list">' +
-        resultsHtml +
-      "</div>" +
+      '<div class="results-card">' +
 
-      '<a class="back-btn" href="/">' +
-        "Back to Dashboard" +
-      "</a>" +
+        '<div class="result-summary-card">' +
+
+          '<div class="summary-big">' +
+            successCount +
+          "</div>" +
+
+          '<div class="summary-text">' +
+            "<strong>Successfully Published</strong>" +
+            "<span>out of " +
+              results.length +
+              (
+                results.length === 1
+                  ? " selected Page"
+                  : " selected Pages"
+              ) +
+            "</span>" +
+          "</div>" +
+
+        "</div>" +
+
+        '<div class="results-list">' +
+          resultsHtml +
+        "</div>" +
+
+        '<a class="back-btn" href="/">' +
+          "Back to Dashboard" +
+        "</a>" +
+
+      "</div>" +
 
     "</div>"
   );
@@ -1623,7 +2040,7 @@ function formatGraphError(data) {
 
 
 /* =========================================================
-   HTML PAGE + CSS
+   HTML PAGE + PROFESSIONAL CSS
    ========================================================= */
 
 function page(
@@ -1631,145 +2048,446 @@ function page(
   content
 ) {
   const css = [
+
     "*{box-sizing:border-box}",
 
-    "body{margin:0;background:#f4f7fb;color:#172033;font-family:Arial,Helvetica,sans-serif}",
+    ":root{--primary:#1877f2;--primary-dark:#0d65d9;--navy:#101828;--text:#172033;--muted:#667085;--border:#e4e7ec;--bg:#f6f8fc;--white:#fff}",
 
-    ".topbar{background:#fff;border-bottom:1px solid #e2e7ef;padding:20px 30px;display:flex;justify-content:space-between;align-items:center;gap:20px;position:sticky;top:0;z-index:20}",
+    "html{scroll-behavior:smooth}",
 
-    ".brand{font-size:23px;font-weight:800}",
+    "body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased}",
 
-    ".subtitle{margin-top:4px;color:#687386;font-size:13px}",
+    "button,input,textarea{font-family:inherit}",
 
-    ".top-actions{display:flex;align-items:center;gap:8px}",
+    "button:disabled{opacity:.7;cursor:not-allowed}",
 
-    ".connect-btn{display:inline-flex;align-items:center;justify-content:center;background:#1877f2;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700}",
+    "a{transition:all .2s ease}",
+
+
+    /* APP */
+
+    ".app-shell{min-height:100vh;display:flex;flex-direction:column}",
+
+    ".main-content{flex:1}",
+
+    ".topbar{background:rgba(255,255,255,.96);border-bottom:1px solid #e6eaf0;position:sticky;top:0;z-index:50;backdrop-filter:blur(14px)}",
+
+    ".topbar-inner{max-width:1280px;margin:0 auto;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;gap:25px}",
+
+    ".brand-area{display:flex;align-items:center;gap:12px;min-width:0}",
+
+    ".brand-logo{width:43px;height:43px;border-radius:12px;background:linear-gradient(135deg,#1877f2,#0756c9);display:flex;align-items:center;justify-content:center;box-shadow:0 5px 15px rgba(24,119,242,.22);flex:0 0 auto}",
+
+    ".brand-logo span{color:#fff;font-weight:900;font-size:22px}",
+
+    ".brand-copy{min-width:0}",
+
+    ".brand{font-size:16px;font-weight:800;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+
+    ".subtitle{font-size:12px;color:#8a94a6;margin-top:2px}",
+
+    ".top-actions{display:flex;align-items:center;gap:9px}",
+
+    ".connect-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:#1877f2;color:#fff;text-decoration:none;padding:11px 16px;border-radius:9px;font-size:13px;font-weight:750;box-shadow:0 3px 8px rgba(24,119,242,.18)}",
+
+    ".connect-btn:hover{background:#0d65d9;transform:translateY(-1px);box-shadow:0 5px 13px rgba(24,119,242,.25)}",
+
+    ".connect-plus{font-size:19px;line-height:12px;font-weight:400}",
 
     ".logout-form{margin:0}",
 
-    ".logout-btn{border:1px solid #dfe4eb;background:#fff;color:#455066;border-radius:8px;padding:11px 14px;font-weight:700;cursor:pointer}",
+    ".logout-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #e1e5eb;background:#fff;color:#475467;border-radius:9px;padding:10px 13px;font-weight:700;font-size:13px;cursor:pointer}",
 
-    ".container{max-width:1100px;margin:30px auto;padding:0 18px 60px}",
+    ".logout-btn:hover{background:#f8fafc;border-color:#cfd5dd}",
 
-    ".account-card,.publisher-card,.results-card,.empty-box,.error-box{background:#fff;border:1px solid #e1e6ee;border-radius:14px;box-shadow:0 5px 20px rgba(20,30,50,.05);margin-bottom:24px}",
+    ".logout-icon{font-size:16px}",
 
-    ".account-card{overflow:hidden}",
 
-    ".account-header{padding:22px;display:flex;justify-content:space-between;gap:20px;align-items:center;border-bottom:1px solid #edf0f5}",
+    /* MAIN */
 
-    ".account-header h2{margin:0 0 8px;font-size:20px}",
+    ".container{max-width:1280px;margin:0 auto;padding:35px 28px 65px}",
 
-    ".facebook-id{color:#697589;font-size:13px;margin-bottom:8px}",
+    ".welcome-section{display:flex;align-items:flex-end;justify-content:space-between;gap:25px;margin-bottom:34px}",
 
-    "code{background:#f0f3f7;padding:3px 6px;border-radius:5px;font-size:12px;color:#27344a;word-break:break-all}",
+    ".eyebrow{font-size:11px;letter-spacing:1.5px;font-weight:800;color:#1877f2;margin-bottom:8px}",
 
-    ".page-count{display:inline-block;background:#eef5ff;color:#1769d2;font-weight:700;font-size:13px;padding:6px 10px;border-radius:20px}",
+    ".welcome-section h1{font-size:30px;line-height:1.2;letter-spacing:-.8px;margin:0 0 7px;font-weight:800;color:#101828}",
 
-    ".account-actions{display:flex;gap:8px;align-items:center}",
+    ".welcome-section p{font-size:14px;color:#667085;margin:0;line-height:1.6}",
+
+    ".dashboard-stats{display:flex;gap:12px}",
+
+    ".stat-card{min-width:150px;background:#fff;border:1px solid #e4e7ec;border-radius:13px;padding:13px 15px;display:flex;align-items:center;gap:11px;box-shadow:0 3px 12px rgba(16,24,40,.035)}",
+
+    ".stat-icon{width:39px;height:39px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700}",
+
+    ".account-stat-icon{background:#eef5ff;color:#1877f2}",
+
+    ".page-stat-icon{background:#f0fdf4;color:#16a34a}",
+
+    ".stat-card strong{display:block;font-size:20px;line-height:1.1;color:#101828}",
+
+    ".stat-card span{display:block;color:#667085;font-size:11px;margin-top:3px}",
+
+
+    /* SECTION */
+
+    ".section-heading{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:15px}",
+
+    ".section-heading h2{margin:0;font-size:18px;letter-spacing:-.25px}",
+
+    ".section-heading p{margin:4px 0 0;font-size:12px;color:#7a8494}",
+
+    ".account-count{font-size:12px;color:#667085;background:#fff;border:1px solid #e4e7ec;padding:7px 11px;border-radius:20px;font-weight:700}",
+
+
+    /* ACCOUNT */
+
+    ".account-card{background:#fff;border:1px solid #e1e6ee;border-radius:16px;box-shadow:0 4px 18px rgba(16,24,40,.045);margin-bottom:18px;overflow:hidden;transition:box-shadow .2s ease,border-color .2s ease}",
+
+    ".account-card:hover{border-color:#d5dce6;box-shadow:0 7px 24px rgba(16,24,40,.07)}",
+
+    ".account-header{padding:20px 22px;display:flex;align-items:center;justify-content:space-between;gap:25px}",
+
+    ".account-main{display:flex;align-items:center;gap:13px;min-width:0}",
+
+    ".account-avatar{width:46px;height:46px;flex:0 0 auto;border-radius:12px;background:linear-gradient(135deg,#1877f2,#0756c9);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;box-shadow:0 5px 13px rgba(24,119,242,.18)}",
+
+    ".account-details{min-width:0}",
+
+    ".account-title-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}",
+
+    ".account-header h2{margin:0;font-size:16px;font-weight:800;color:#172033}",
+
+    ".connected-badge{display:inline-flex;align-items:center;gap:5px;background:#ecfdf3;color:#15803d;border:1px solid #d1fadf;padding:4px 7px;border-radius:20px;font-size:10px;font-weight:800}",
+
+    ".status-dot{width:6px;height:6px;background:#22c55e;border-radius:50%;display:inline-block}",
+
+    ".facebook-id{margin-top:5px;color:#8993a3;font-size:11px;display:flex;align-items:center;gap:5px}",
+
+    ".fb-mini{width:16px;height:16px;border-radius:4px;background:#1877f2;color:#fff;font-size:11px;font-weight:900;display:inline-flex;align-items:center;justify-content:center}",
+
+    "code{background:#f2f4f7;padding:2px 5px;border-radius:4px;font-size:10px;color:#475467;word-break:break-all}",
+
+    ".account-right{display:flex;align-items:center;gap:20px}",
+
+    ".account-page-stat{text-align:right;min-width:50px}",
+
+    ".account-page-stat strong{display:block;font-size:18px;line-height:1;color:#172033}",
+
+    ".account-page-stat span{display:block;color:#8993a3;font-size:10px;margin-top:4px}",
+
+    ".account-actions{display:flex;gap:7px;align-items:center}",
 
     ".account-actions form{margin:0}",
 
-    ".btn{border:0;border-radius:7px;padding:10px 14px;cursor:pointer;font-weight:700}",
+    ".btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:8px;padding:9px 12px;cursor:pointer;font-weight:750;font-size:11px;white-space:nowrap;transition:all .18s ease}",
 
-    ".btn-blue{background:#1877f2;color:#fff}",
+    ".btn-blue{background:#1877f2;color:#fff;box-shadow:0 2px 6px rgba(24,119,242,.14)}",
 
-    ".btn-red{background:#fff0f0;color:#d32f2f;border:1px solid #ffd1d1}",
+    ".btn-blue:hover{background:#0d65d9;transform:translateY(-1px)}",
 
-    ".pages-section{padding:20px 22px 24px}",
+    ".btn-delete{background:#fff;color:#d92d20;border:1px solid #f0d1cf}",
 
-    ".list-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:15px}",
+    ".btn-delete:hover{background:#fff5f4;border-color:#efb5b1}",
 
-    ".select-actions{display:flex;gap:7px}",
+    ".btn-icon{font-size:15px}",
 
-    ".small-btn{background:#f4f6f9;color:#27344a;border:1px solid #dfe4eb;border-radius:6px;padding:7px 10px;cursor:pointer;font-size:12px;font-weight:700}",
 
-    ".page-list{display:flex;flex-direction:column;gap:8px}",
+    /* PAGES */
 
-    ".page-row{display:flex;align-items:center;gap:14px;min-height:68px;padding:13px 15px;background:#fafbfd;border:1px solid #e5e9f0;border-radius:9px;cursor:pointer}",
+    ".pages-section{padding:0 22px 22px}",
 
-    ".page-row:hover{background:#f5f9ff;border-color:#b8d3f7}",
+    ".pages-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:13px 14px;margin-bottom:10px;background:#f8fafc;border:1px solid #edf0f4;border-radius:10px}",
 
-    ".page-checkbox{width:19px;height:19px;flex:0 0 auto;cursor:pointer}",
+    ".pages-toolbar-title{display:flex;align-items:center;gap:9px}",
+
+    ".toolbar-check{width:25px;height:25px;border-radius:7px;background:#eaf2ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900}",
+
+    ".pages-toolbar-title strong{display:block;font-size:12px;color:#344054}",
+
+    ".pages-toolbar-title small{display:block;font-size:10px;color:#98a2b3;margin-top:2px}",
+
+    ".select-actions{display:flex;gap:6px}",
+
+    ".small-btn{background:#fff;color:#475467;border:1px solid #dfe4eb;border-radius:7px;padding:7px 10px;cursor:pointer;font-size:10px;font-weight:750;transition:.18s}",
+
+    ".small-btn:hover{border-color:#b7c0cc;background:#f8fafc}",
+
+    ".page-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}",
+
+    ".page-row{position:relative;display:flex;align-items:center;gap:10px;min-height:59px;padding:10px 12px;background:#fff;border:1px solid #e7eaf0;border-radius:9px;cursor:pointer;transition:all .18s ease}",
+
+    ".page-row:hover{background:#f9fbff;border-color:#bcd5f7;transform:translateY(-1px)}",
+
+    ".page-row.selected{background:#f5f9ff;border-color:#9fc5f4}",
+
+    ".page-checkbox{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}",
+
+    ".custom-checkbox{width:17px;height:17px;flex:0 0 auto;border:1.5px solid #c9d0da;border-radius:5px;background:#fff;position:relative;transition:.18s}",
+
+    ".page-row.selected .custom-checkbox{background:#1877f2;border-color:#1877f2}",
+
+    ".page-row.selected .custom-checkbox:after{content:'✓';position:absolute;left:2px;top:-1px;color:#fff;font-size:12px;font-weight:900}",
+
+    ".page-avatar{width:34px;height:34px;flex:0 0 auto;border-radius:9px;background:#eef4ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800}",
 
     ".page-info{min-width:0;flex:1}",
 
-    ".page-name{font-size:15px;font-weight:700;margin-bottom:6px;color:#1c2738}",
+    ".page-name{font-size:12px;font-weight:750;margin-bottom:3px;color:#1d2939;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 
-    ".page-id{font-size:12px;color:#758095}",
+    ".page-id{font-size:9px;color:#98a2b3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 
-    ".page-id code{background:transparent;padding:0;color:#687386}",
+    ".page-arrow{font-size:18px;color:#c2c8d1;margin-left:3px}",
 
-    ".no-pages{padding:20px;background:#f8fafc;border-radius:8px;color:#697589;text-align:center}",
+    ".no-pages{padding:22px;background:#f8fafc;border:1px dashed #d9dee7;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:12px;text-align:left}",
 
-    ".publisher-card{padding:24px}",
+    ".no-pages-icon{width:34px;height:34px;border-radius:9px;background:#fff;color:#667085;border:1px solid #e4e7ec;display:flex;align-items:center;justify-content:center;font-size:18px}",
 
-    ".publisher-header{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:22px}",
+    ".no-pages strong{font-size:12px;color:#344054}",
 
-    ".publisher-header h2{margin:0}",
+    ".no-pages p{margin:3px 0 0;font-size:10px;color:#98a2b3}",
 
-    "#selected-count{background:#eef5ff;color:#1769d2;border-radius:20px;padding:7px 11px;font-size:13px;font-weight:700}",
+
+    /* EMPTY */
+
+    ".empty-state{background:#fff;border:1px solid #e4e7ec;border-radius:16px;padding:55px 25px;text-align:center;box-shadow:0 4px 18px rgba(16,24,40,.035);margin-bottom:25px}",
+
+    ".empty-icon{width:58px;height:58px;border-radius:16px;background:#eef5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;margin:0 auto 17px}",
+
+    ".empty-state h3{margin:0 0 7px;font-size:18px}",
+
+    ".empty-state p{margin:0 auto 20px;max-width:460px;color:#667085;font-size:13px;line-height:1.6}",
+
+    ".empty-connect-btn{display:inline-flex;align-items:center;gap:7px;background:#1877f2;color:#fff;text-decoration:none;border-radius:9px;padding:11px 16px;font-size:12px;font-weight:800}",
+
+    ".empty-connect-btn:hover{background:#0d65d9}",
+
+    ".empty-connect-btn span{font-size:18px}",
+
+
+    /* PUBLISHER */
+
+    ".publisher-card{background:#fff;border:1px solid #e1e6ee;border-radius:16px;box-shadow:0 4px 18px rgba(16,24,40,.045);padding:23px;margin-top:28px}",
+
+    ".publisher-heading{display:flex;align-items:center;justify-content:space-between;gap:15px}",
+
+    ".publisher-title-wrap{display:flex;align-items:center;gap:11px}",
+
+    ".publisher-icon{width:40px;height:40px;border-radius:11px;background:#eef5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:800;flex:0 0 auto}",
+
+    ".publisher-title-wrap h2{margin:0;font-size:17px;letter-spacing:-.2px}",
+
+    ".publisher-title-wrap p{margin:3px 0 0;color:#8993a3;font-size:11px}",
+
+    ".selected-badge{background:#f2f4f7;color:#667085;border:1px solid #e4e7ec;border-radius:20px;padding:7px 11px;font-size:10px;font-weight:800;white-space:nowrap}",
+
+    ".selected-badge.active{background:#eef5ff;color:#1769d2;border-color:#d7e7fc}",
+
+    ".publisher-divider{height:1px;background:#edf0f4;margin:20px 0}",
 
     ".field{margin-bottom:20px}",
 
-    ".field label{display:block;font-weight:700;margin-bottom:8px}",
+    ".field label{display:flex;align-items:center;gap:7px;font-weight:750;font-size:12px;color:#344054;margin-bottom:8px}",
 
-    "textarea{width:100%;resize:vertical;border:1px solid #dce2eb;border-radius:8px;padding:13px;font:inherit;outline:none}",
+    ".optional-label{font-size:9px;font-weight:600;color:#98a2b3;background:#f2f4f7;padding:3px 6px;border-radius:10px}",
 
-    "textarea:focus{border-color:#1877f2;box-shadow:0 0 0 3px rgba(24,119,242,.1)}",
+    "textarea{width:100%;resize:vertical;min-height:145px;border:1px solid #dfe3e9;border-radius:10px;padding:13px;font:inherit;font-size:13px;line-height:1.6;outline:none;color:#172033;background:#fff;transition:.18s}",
 
-    "input[type=file]{width:100%;border:1px solid #dce2eb;border-radius:8px;padding:11px;background:#fff}",
+    "textarea::placeholder{color:#a2aab7}",
 
-    ".hint{color:#7a8495;font-size:12px;margin-top:7px}",
+    "textarea:focus{border-color:#1877f2;box-shadow:0 0 0 3px rgba(24,119,242,.08)}",
 
-    ".publish-btn{width:100%;border:0;background:#1877f2;color:#fff;padding:14px;border-radius:9px;font-size:15px;font-weight:800;cursor:pointer}",
+    ".field-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:6px;color:#98a2b3;font-size:9px}",
 
-    ".empty-box,.error-box,.results-card{padding:28px}",
+    ".file-drop{display:flex!important;align-items:center;gap:11px;width:100%;padding:13px 14px;border:1px dashed #cdd4de;border-radius:10px;background:#fafbfc;cursor:pointer;transition:.18s}",
 
-    ".error-box{max-width:900px;margin:50px auto}",
+    ".file-drop:hover{background:#f5f9ff;border-color:#9fc5f4}",
 
-    ".error-box h2{margin-top:0}",
+    ".file-icon{width:34px;height:34px;border-radius:9px;background:#eef5ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:800;flex:0 0 auto}",
 
-    "pre{background:#f5f6f8;padding:15px;border-radius:8px;overflow:auto;white-space:pre-wrap;word-break:break-word}",
+    ".file-text{flex:1;min-width:0}",
 
-    ".back-btn{display:inline-block;margin-top:20px;padding:11px 16px;background:#1877f2;color:#fff;text-decoration:none;border-radius:7px;font-weight:700}",
+    ".file-text strong{display:block;font-size:11px;color:#344054}",
 
-    ".result-summary{margin:12px 0 20px;font-weight:700;color:#536075}",
+    ".file-text span{display:block;font-size:9px;color:#98a2b3;margin-top:3px}",
 
-    ".results-list{display:flex;flex-direction:column;gap:9px}",
+    ".browse-btn{border:1px solid #d9dee7;background:#fff;color:#475467;border-radius:7px;padding:7px 10px;font-size:10px;font-weight:750}",
 
-    ".result-row{border:1px solid #e1e6ee;border-radius:9px;padding:14px;display:grid;grid-template-columns:1fr auto;gap:8px 15px}",
+    ".hidden-file{display:none!important}",
 
-    ".result-success{background:#f6fff8;border-color:#cdebd5}",
+    ".selected-file{display:none;margin-top:7px;padding:8px 10px;background:#eefaf3;border:1px solid #d2f2df;border-radius:7px;color:#16834b;font-size:10px;font-weight:700}",
 
-    ".result-failed{background:#fff8f8;border-color:#f1d0d0}",
+    ".selected-file.visible{display:block}",
 
-    ".result-page-id{margin-top:5px;color:#7b8596;font-size:12px}",
+    ".hint{color:#98a2b3;font-size:9px;margin-top:7px}",
 
-    ".result-status{font-weight:800}",
+    ".publish-footer{border-top:1px solid #edf0f4;padding-top:17px;display:flex;align-items:center;justify-content:space-between;gap:15px}",
 
-    ".result-success .result-status{color:#218838}",
+    ".publish-info{display:flex;align-items:center;gap:7px;color:#667085;font-size:10px}",
 
-    ".result-failed .result-status{color:#d32f2f}",
+    ".publish-info-icon{width:19px;height:19px;background:#ecfdf3;color:#16a34a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900}",
 
-    ".result-error{grid-column:1 / -1;color:#697589;font-size:12px;word-break:break-word}",
+    ".publish-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;background:#1877f2;color:#fff;padding:12px 17px;border-radius:9px;font-size:11px;font-weight:800;cursor:pointer;box-shadow:0 3px 9px rgba(24,119,242,.18);transition:.18s}",
 
-    ".login-wrapper{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}",
+    ".publish-btn:hover{background:#0d65d9;transform:translateY(-1px);box-shadow:0 5px 14px rgba(24,119,242,.24)}",
 
-    ".login-card{width:100%;max-width:420px;background:#fff;border:1px solid #e1e6ee;border-radius:16px;box-shadow:0 10px 35px rgba(20,30,50,.08);padding:34px;text-align:center}",
+    ".publish-btn-icon{font-size:15px}",
 
-    ".login-logo{font-size:42px;margin-bottom:12px}",
 
-    ".login-card h1{margin:0 0 8px;font-size:24px}",
+    /* LOADING */
 
-    ".login-card p{color:#687386;margin-bottom:24px}",
+    ".spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}",
 
-    ".login-card input[type=password]{width:100%;padding:13px;border:1px solid #dce2eb;border-radius:8px;font-size:15px;outline:none;margin-bottom:12px}",
+    "@keyframes spin{to{transform:rotate(360deg)}}",
 
-    ".login-btn{width:100%;border:0;background:#1877f2;color:#fff;padding:13px;border-radius:8px;font-weight:800;font-size:15px;cursor:pointer}",
 
-    ".login-error{background:#fff0f0;border:1px solid #ffd1d1;color:#c62828;padding:10px;border-radius:8px;margin-bottom:14px;font-size:13px}",
+    /* RESULTS */
 
-    "@media(max-width:700px){.topbar{flex-direction:column;align-items:stretch}.top-actions{width:100%;flex-direction:column}.connect-btn,.logout-form,.logout-btn{width:100%}.account-header{flex-direction:column;align-items:stretch}.account-actions{width:100%}.account-actions form{flex:1}.account-actions button{width:100%}.list-toolbar{flex-direction:column;align-items:stretch}.select-actions{width:100%}.small-btn{flex:1}.publisher-header{flex-direction:column;align-items:stretch}.result-row{grid-template-columns:1fr}}"
+    ".results-page{max-width:950px;margin:0 auto;padding:35px 20px 70px}",
+
+    ".results-header{margin-bottom:20px}",
+
+    ".results-back-link{display:inline-block;color:#667085;text-decoration:none;font-size:12px;font-weight:700;margin-bottom:22px}",
+
+    ".results-back-link:hover{color:#1877f2}",
+
+    ".results-title{display:flex;align-items:center;gap:12px}",
+
+    ".results-title h1{margin:0;font-size:25px;letter-spacing:-.5px}",
+
+    ".results-title p{margin:4px 0 0;color:#8993a3;font-size:12px}",
+
+    ".results-card{background:#fff;border:1px solid #e1e6ee;border-radius:16px;box-shadow:0 5px 22px rgba(16,24,40,.05);padding:22px}",
+
+    ".result-summary-card{display:flex;align-items:center;gap:13px;padding:15px;background:#f8fafc;border:1px solid #edf0f4;border-radius:11px;margin-bottom:17px}",
+
+    ".summary-big{width:48px;height:48px;border-radius:12px;background:#ecfdf3;color:#15803d;display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:900}",
+
+    ".summary-text strong{display:block;font-size:13px;color:#344054}",
+
+    ".summary-text span{display:block;font-size:10px;color:#98a2b3;margin-top:3px}",
+
+    ".results-list{display:flex;flex-direction:column;gap:8px}",
+
+    ".result-row{border:1px solid #e4e7ec;border-radius:10px;padding:12px;display:grid;grid-template-columns:1fr auto;gap:8px 15px}",
+
+    ".result-success{background:#f7fdf9;border-color:#d6f0df}",
+
+    ".result-failed{background:#fff9f8;border-color:#f3d9d5}",
+
+    ".result-left{display:flex;align-items:center;gap:9px;min-width:0}",
+
+    ".result-page-avatar{width:33px;height:33px;border-radius:8px;background:#eef4ff;color:#1877f2;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex:0 0 auto}",
+
+    ".result-row strong{font-size:12px;color:#344054}",
+
+    ".result-page-id{margin-top:3px;color:#98a2b3;font-size:9px}",
+
+    ".result-status{font-size:10px;font-weight:800;display:flex;align-items:center;white-space:nowrap}",
+
+    ".result-success .result-status{color:#16834b}",
+
+    ".result-failed .result-status{color:#d92d20}",
+
+    ".success-icon,.failed-icon{width:17px;height:17px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-right:4px;font-size:10px}",
+
+    ".success-icon{background:#dcfae6;color:#15803d}",
+
+    ".failed-icon{background:#fee4e2;color:#d92d20}",
+
+    ".result-extra{grid-column:1 / -1;color:#667085;font-size:9px;word-break:break-word;background:rgba(255,255,255,.65);padding:7px 8px;border-radius:6px}",
+
+    ".result-error-text{color:#b42318}",
+
+    ".back-btn{display:inline-flex;align-items:center;justify-content:center;margin-top:18px;padding:10px 14px;background:#1877f2;color:#fff;text-decoration:none;border-radius:8px;font-size:11px;font-weight:800}",
+
+    ".back-btn:hover{background:#0d65d9}",
+
+
+    /* ERROR */
+
+    ".error-page{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:30px;background:#f6f8fc}",
+
+    ".error-box{width:100%;max-width:850px;background:#fff;border:1px solid #e4e7ec;border-radius:16px;box-shadow:0 8px 30px rgba(16,24,40,.07);padding:30px}",
+
+    ".error-icon{width:44px;height:44px;border-radius:12px;background:#fee4e2;color:#d92d20;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;margin-bottom:14px}",
+
+    ".error-box h2{margin:0 0 7px;font-size:20px}",
+
+    ".error-box p{color:#667085;font-size:13px;line-height:1.6}",
+
+    "pre{background:#f8fafc;border:1px solid #edf0f4;padding:14px;border-radius:9px;overflow:auto;white-space:pre-wrap;word-break:break-word;color:#475467;font-size:11px;line-height:1.5}",
+
+
+    /* LOGIN */
+
+    ".login-wrapper{position:relative;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:25px;background:linear-gradient(145deg,#f7faff,#eef4fc);overflow:hidden}",
+
+    ".login-background-shape{position:absolute;border-radius:50%;filter:blur(2px);pointer-events:none}",
+
+    ".shape-one{width:430px;height:430px;background:rgba(24,119,242,.055);top:-180px;right:-120px}",
+
+    ".shape-two{width:350px;height:350px;background:rgba(24,119,242,.04);bottom:-170px;left:-130px}",
+
+    ".login-card{position:relative;width:100%;max-width:430px;background:#fff;border:1px solid #e1e6ee;border-radius:19px;box-shadow:0 18px 55px rgba(16,24,40,.09);overflow:hidden}",
+
+    ".login-brand{display:flex;align-items:center;gap:11px;padding:22px 25px;border-bottom:1px solid #edf0f4}",
+
+    ".login-logo{width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#1877f2,#0756c9);display:flex;align-items:center;justify-content:center;box-shadow:0 5px 13px rgba(24,119,242,.2)}",
+
+    ".logo-symbol{color:#fff;font-size:20px;font-weight:900}",
+
+    ".login-brand-text strong{display:block;font-size:13px;color:#172033}",
+
+    ".login-brand-text span{display:block;color:#98a2b3;font-size:9px;margin-top:2px}",
+
+    ".login-content{padding:29px 25px 24px}",
+
+    ".login-content h1{margin:0 0 7px;font-size:25px;letter-spacing:-.5px;color:#101828}",
+
+    ".login-content>p{margin:0 0 23px;color:#667085;font-size:12px;line-height:1.6}",
+
+    ".login-form label{display:block;font-size:11px;font-weight:750;color:#344054;margin-bottom:7px}",
+
+    ".password-field{position:relative}",
+
+    ".password-field .field-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:7px;color:#98a2b3}",
+
+    ".login-card input[type=password]{width:100%;padding:12px 12px 12px 28px;border:1px solid #dfe3e9;border-radius:9px;font-size:13px;outline:none;color:#172033;background:#fff;transition:.18s;margin:0 0 12px}",
+
+    ".login-card input[type=password]:focus{border-color:#1877f2;box-shadow:0 0 0 3px rgba(24,119,242,.08)}",
+
+    ".login-btn{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:#1877f2;color:#fff;padding:12px 14px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;transition:.18s}",
+
+    ".login-btn:hover{background:#0d65d9;box-shadow:0 4px 12px rgba(24,119,242,.2)}",
+
+    ".login-arrow{font-size:17px}",
+
+    ".login-error{display:flex;align-items:center;gap:7px;background:#fff5f4;border:1px solid #f4d3d0;color:#b42318;padding:9px 10px;border-radius:8px;margin-bottom:13px;font-size:10px;line-height:1.4}",
+
+    ".login-error-icon{width:17px;height:17px;border-radius:50%;background:#fee4e2;color:#d92d20;display:flex;align-items:center;justify-content:center;font-weight:900;flex:0 0 auto}",
+
+    ".login-footer{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:20px;color:#98a2b3;font-size:9px}",
+
+    ".secure-dot{width:6px;height:6px;border-radius:50%;background:#22c55e}",
+
+
+    /* FOOTER */
+
+    ".app-footer{text-align:center;padding:17px 20px;color:#98a2b3;font-size:9px;border-top:1px solid #e6eaf0;background:#fff}",
+
+    ".footer-dot{margin:0 6px;color:#d0d5dd}",
+
+
+    /* MOBILE */
+
+    "@media(max-width:900px){.welcome-section{align-items:flex-start;flex-direction:column}.dashboard-stats{width:100%}.stat-card{flex:1}.account-header{align-items:flex-start;flex-direction:column}.account-right{width:100%;justify-content:space-between}.account-page-stat{text-align:left}.page-list{grid-template-columns:1fr}}",
+
+    "@media(max-width:650px){.topbar-inner{padding:13px 15px;flex-direction:column;align-items:stretch;gap:12px}.brand-area{justify-content:center}.brand-copy{text-align:left}.top-actions{width:100%;display:grid;grid-template-columns:1fr 90px}.connect-btn,.logout-btn{width:100%;height:40px}.container{padding:25px 14px 45px}.welcome-section{margin-bottom:27px}.welcome-section h1{font-size:24px}.dashboard-stats{gap:8px}.stat-card{min-width:0;padding:11px}.stat-card strong{font-size:18px}.section-heading{align-items:flex-start}.account-count{display:none}.account-header{padding:16px}.account-main{width:100%}.account-right{gap:10px;flex-wrap:wrap}.account-actions{flex:1}.account-actions form{flex:1}.btn{width:100%;padding:9px 8px}.pages-section{padding:0 13px 15px}.pages-toolbar{align-items:flex-start;flex-direction:column}.select-actions{width:100%}.small-btn{flex:1}.publisher-card{padding:16px;margin-top:20px}.publisher-heading{align-items:flex-start;flex-direction:column}.selected-badge{align-self:flex-start}.publish-footer{align-items:stretch;flex-direction:column}.publish-btn{width:100%}.publish-info{align-items:flex-start}.results-page{padding:25px 12px 50px}.result-row{grid-template-columns:1fr}.result-status{justify-content:flex-start}.login-card{max-width:100%}}",
+
+    "@media(max-width:400px){.brand{font-size:14px}.subtitle{font-size:10px}.dashboard-stats{flex-direction:column}.account-title-row{align-items:flex-start;flex-direction:column;gap:5px}.account-actions{width:100%}.file-drop{align-items:flex-start}.browse-btn{display:none}}"
+
   ].join("");
 
   return new Response(
@@ -1781,6 +2499,8 @@ function page(
         '<meta charset="UTF-8">' +
 
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+
+        '<meta name="theme-color" content="#1877f2">' +
 
         "<title>" +
           escapeHtml(title) +
