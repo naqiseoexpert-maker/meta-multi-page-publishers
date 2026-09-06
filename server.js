@@ -1050,7 +1050,7 @@ async function showDashboard(env) {
 
           <div class="brand-copy">
             <div class="brand-name">
-              META PUBLISHER
+              NAQI SHAH
             </div>
 
             <div class="brand-mini">
