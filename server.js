@@ -311,7 +311,7 @@ function showLoginPage(errorMessage) {
             <span>f</span>
           </div>
           <div>
-            <div class="brand-name">META PUBLISHER</div>
+            <div class="brand-name">NAQI SHAH</div>
             <div class="brand-mini">COMMAND CENTER</div>
           </div>
         </div>
