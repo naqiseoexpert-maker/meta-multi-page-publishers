@@ -982,21 +982,18 @@ PUBLISH
 ========================================================= */
 
 async function publishPost(request, env) {
+const form = await request.formData();
 
-const form =
-await request.formData();
-
-const message =
-String(form.get("message") || "").trim();
+const message = String(
+form.get("message") || ""
+).trim();
 
 const selectedPageIds =
 form.getAll("page_ids");
 
-const media =
-form.get("media");
+const media = form.get("media");
 
 if (!selectedPageIds.length) {
-
 return page(
 "No Pages Selected",
 '<div class="error-box">' +
@@ -1005,11 +1002,9 @@ return page(
 '<a class="back-btn" href="/">Back</a>' +
 "</div>"
 );
-
 }
 
 if (!message && (!media || !media.name)) {
-
 return page(
 "Empty Post",
 '<div class="error-box">' +
@@ -1018,11 +1013,9 @@ return page(
 '<a class="back-btn" href="/">Back</a>' +
 "</div>"
 );
-
 }
 
-const numericPageIds =
-selectedPageIds
+const numericPageIds = selectedPageIds
 .map(function(id) {
 return Number(id);
 })
@@ -1034,15 +1027,13 @@ if (!numericPageIds.length) {
 throw new Error("Invalid selected Page IDs.");
 }
 
-const placeholders =
-numericPageIds
+const placeholders = numericPageIds
 .map(function() {
 return "?";
 })
 .join(",");
 
-const pagesResult =
-await env.DB.prepare(
+const pagesResult = await env.DB.prepare(
 "SELECT id, facebook_page_id, page_name, access_token " +
 "FROM pages " +
 "WHERE id IN (" +
@@ -1053,8 +1044,7 @@ placeholders +
 .bind(...numericPageIds)
 .all();
 
-const pages =
-pagesResult.results || [];
+const pages = pagesResult.results || [];
 
 if (!pages.length) {
 throw new Error(
@@ -1062,8 +1052,7 @@ throw new Error(
 );
 }
 
-const config =
-getMetaConfig(env);
+const config = getMetaConfig(env);
 
 let mediaBuffer = null;
 let mediaType = null;
@@ -1074,25 +1063,16 @@ media &&
 typeof media === "object" &&
 media.name
 ) {
+mediaName = media.name;
 
-mediaName =
-media.name;
-
-const contentType =
-media.type || "";
+const contentType = media.type || "";
 
 if (contentType.startsWith("image/")) {
-
   mediaType = "image";
-
 } else if (contentType.startsWith("video/")) {
-
   mediaType = "video";
-
 } else {
-
-  const lower =
-  mediaName.toLowerCase();
+  const lower = mediaName.toLowerCase();
 
   if (
     lower.endsWith(".jpg") ||
@@ -1101,9 +1081,7 @@ if (contentType.startsWith("image/")) {
     lower.endsWith(".gif") ||
     lower.endsWith(".webp")
   ) {
-
     mediaType = "image";
-
   } else if (
     lower.endsWith(".mp4") ||
     lower.endsWith(".mov") ||
@@ -1111,116 +1089,83 @@ if (contentType.startsWith("image/")) {
     lower.endsWith(".mkv") ||
     lower.endsWith(".webm")
   ) {
-
     mediaType = "video";
-
   }
-
 }
 
 if (!mediaType) {
-throw new Error(
-"Unsupported media type. Please upload an image or video."
-);
+  throw new Error(
+    "Unsupported media type. Please upload an image or video."
+  );
 }
 
-mediaBuffer =
-await media.arrayBuffer();
+mediaBuffer = await media.arrayBuffer();
 
-if (
-mediaBuffer.byteLength >
-100 * 1024 * 1024
-) {
-throw new Error(
-"File is too large. Please use a smaller file."
-);
+if (mediaBuffer.byteLength > 100 * 1024 * 1024) {
+  throw new Error(
+    "File is too large. Please use a smaller file."
+  );
+}
 }
 
-}
+/*
+ * SAFE PUBLISHING MODE
+ *
+ * Meta Code 368 is a temporary security/action restriction.
+ * The important thing here is to avoid creating a large burst of
+ * Graph API requests when many Pages are selected.
+ *
+ * Text posts: 2 concurrent requests, staggered by 2500ms.
+ * Image/video: 1 request at a time, with 3000ms between starts.
+ *
+ * This does NOT bypass a Meta restriction. It simply makes the
+ * publisher much less aggressive and stops immediately on Code 368.
+ */
 
-/* =========================================================
-CONTROLLED PUBLISHING
-=========================================================
-
-Do not fire 100+ Meta requests at the same moment.
-
-Text:
-3 workers
-
-Image/video:
-2 workers
-
-There is also a delay before each new task starts.
-
-If Meta returns Code 368, we stop launching new Pages.
-========================================================= */
+const concurrency = mediaType ? 1 : 2;
+const startDelayMs = mediaType ? 3000 : 2500;
 
 const results = [];
-
-const concurrency =
-mediaType ? 2 : 3;
-
-const startDelayMs =
-mediaType ? 1400 : 1000;
-
+let securityRestrictionDetected = false;
 let nextIndex = 0;
 
-let securityRestrictionDetected =
-false;
-
 async function publishOnePage(fbPage) {
-
 try {
-
 let result;
 
 if (!mediaBuffer) {
-
-  result =
-  await publishTextPost(
+  result = await publishTextPost(
     fbPage,
     message,
     config.graphVersion
   );
-
 } else if (mediaType === "image") {
-
-  result =
-  await publishImagePost(
+  result = await publishImagePost(
     fbPage,
     message,
     mediaBuffer,
     mediaName,
     config.graphVersion
   );
-
 } else {
-
-  result =
-  await publishVideoPost(
+  result = await publishVideoPost(
     fbPage,
     message,
     mediaBuffer,
     mediaName,
     config.graphVersion
   );
-
 }
 
 results.push({
 page: fbPage.page_name,
 pageId: fbPage.facebook_page_id,
 success: true,
-postId:
-result && result.id
-? result.id
-: ""
+postId: result && result.id ? result.id : ""
 });
 
 } catch (error) {
-
-const errorMessage =
-error && error.message
+const errorMessage = error && error.message
 ? error.message
 : String(error);
 
@@ -1231,57 +1176,39 @@ success: false,
 error: errorMessage
 });
 
-/*
-Code 368 is a Meta security/action restriction.
-
-Do not retry it.
-Do not continue launching new Pages.
-*/
-
-if (
-isMetaSecurityRestrictionError(
-errorMessage
-)
-) {
-
-securityRestrictionDetected =
-true;
-
+if (isMetaSecurityRestrictionError(errorMessage)) {
+securityRestrictionDetected = true;
+}
+}
 }
 
-}
-
-}
-
-async function publishWorker() {
-
+async function publishWorker(workerNumber) {
 while (!securityRestrictionDetected) {
-
-const index =
-nextIndex++;
+const index = nextIndex++;
 
 if (index >= pages.length) {
 return;
 }
 
-if (index > 0) {
-await sleep(startDelayMs);
+/*
+ * Give every Page a predictable start time. This prevents several
+ * workers from waking up together and creating a request burst.
+ */
+const scheduledDelay = index * startDelayMs;
+
+if (scheduledDelay > 0) {
+await sleep(scheduledDelay);
 }
 
 if (securityRestrictionDetected) {
 return;
 }
 
-await publishOnePage(
-pages[index]
-);
-
+await publishOnePage(pages[index]);
+}
 }
 
-}
-
-const workerCount =
-Math.min(
+const workerCount = Math.min(
 concurrency,
 pages.length
 );
@@ -1289,66 +1216,51 @@ pages.length
 await Promise.all(
 Array.from(
 { length: workerCount },
-function() {
-return publishWorker();
+function(_, index) {
+return publishWorker(index);
 }
 )
 );
 
 /*
-If Meta returned a security restriction,
-mark Pages that were not started as skipped.
-*/
+ * Anything that was not started because Meta returned Code 368 is shown
+ * as skipped. We do not send another request for those Pages.
+ */
+if (securityRestrictionDetected) {
+const startedPageIds = new Set(
+results.map(function(result) {
+return String(result.pageId);
+})
+);
 
-if (
-securityRestrictionDetected &&
-nextIndex < pages.length
-) {
-
-for (
-let i = nextIndex;
-i < pages.length;
-i++
-) {
-
+for (const fbPage of pages) {
+if (!startedPageIds.has(String(fbPage.facebook_page_id))) {
 results.push({
-page: pages[i].page_name,
-pageId: pages[i].facebook_page_id,
+page: fbPage.page_name,
+pageId: fbPage.facebook_page_id,
 success: false,
 error:
 "Skipped because Meta returned Code 368 (temporary security restriction)."
 });
-
 }
-
 }
-
-/*
-Keep result order same as selected Page order.
-*/
+}
 
 results.sort(function(a, b) {
-
-const aIndex =
-pages.findIndex(function(p) {
-return String(p.facebook_page_id) ===
-String(a.pageId);
+const aIndex = pages.findIndex(function(p) {
+return String(p.facebook_page_id) === String(a.pageId);
 });
 
-const bIndex =
-pages.findIndex(function(p) {
-return String(p.facebook_page_id) ===
-String(b.pageId);
+const bIndex = pages.findIndex(function(p) {
+return String(p.facebook_page_id) === String(b.pageId);
 });
 
 return aIndex - bIndex;
-
 });
 
 let resultsHtml = "";
 
 for (const r of results) {
-
 resultsHtml +=
 '<div class="result-row ' +
 (r.success
@@ -1356,107 +1268,86 @@ resultsHtml +=
 : "result-failed") +
 '">' +
 
-"<div>" +
+    "<div>" +
+      "<strong>" +
+        escapeHtml(r.page || "Unnamed Page") +
+      "</strong>" +
 
-"<strong>" +
-escapeHtml(
-r.page || "Unnamed Page"
-) +
-"</strong>" +
+      '<div class="result-page-id">' +
+        "Page ID: " +
+        escapeHtml(r.pageId) +
+      "</div>" +
+    "</div>" +
 
-'<div class="result-page-id">' +
-"Page ID: " +
-escapeHtml(r.pageId) +
-"</div>" +
+    '<div class="result-status">' +
+      (r.success
+        ? "✓ Published"
+        : "✕ Failed") +
+    "</div>" +
 
-"</div>" +
+    (
+      r.success
+        ? (
+            r.postId
+              ? '<div class="result-error">Post ID: ' +
+                escapeHtml(r.postId) +
+                "</div>"
+              : ""
+          )
+        : '<div class="result-error">' +
+          escapeHtml(r.error || "") +
+          "</div>"
+    ) +
 
-'<div class="result-status">' +
-
-(
-r.success
-? "✓ Published"
-: "✕ Failed"
-) +
-
-"</div>" +
-
-(
-r.success
-? (
-r.postId
-? '<div class="result-error">Post ID: ' +
-escapeHtml(r.postId) +
-"</div>"
-: ""
-)
-
-: '<div class="result-error">' +
-escapeHtml(r.error || "") +
-"</div>"
-) +
-
-"</div>";
-
+  "</div>";
 }
 
-const successCount =
-results.filter(function(r) {
+const successCount = results.filter(function(r) {
 return r.success;
 }).length;
 
-const restrictionCount =
-results.filter(function(r) {
-return (
-!r.success &&
-isMetaSecurityRestrictionError(
-r.error || ""
-)
-);
+const restrictionCount = results.filter(function(r) {
+return !r.success && isMetaSecurityRestrictionError(r.error || "");
 }).length;
 
 let warningHtml = "";
 
 if (restrictionCount > 0) {
-
 warningHtml =
 '<div class="publish-warning">' +
 "<strong>Meta security protection detected.</strong><br>" +
-"Meta returned Code 368. New Page publishing was stopped to avoid sending repeated requests. " +
+"Meta returned Code 368. New Page requests were stopped to avoid repeated requests. " +
 "Please wait until Meta removes the temporary limitation before trying again." +
 "</div>";
-
 }
 
 return page(
 "Publish Results",
-
 '<div class="results-card">' +
 
-"<h2>Publish Results</h2>" +
+  "<h2>Publish Results</h2>" +
 
-'<div class="result-summary">' +
-successCount +
-" successful / " +
-results.length +
-" total" +
-"</div>" +
+  '<div class="result-summary">' +
+    successCount +
+    " successful / " +
+    results.length +
+    " total" +
+  "</div>" +
 
-warningHtml +
+  warningHtml +
 
-'<div class="results-list">' +
-resultsHtml +
-"</div>" +
+  '<div class="results-list">' +
+    resultsHtml +
+  "</div>" +
 
-'<a class="back-btn" href="/">Back to Dashboard</a>' +
+  '<a class="back-btn" href="/">Back to Dashboard</a>' +
 
 "</div>"
 );
-
 }
 
 /* =========================================================
-PUBLISH HELPERS
+FACEBOOK PUBLISH HELPERS
 ========================================================= */
 
 async function publishTextPost(
@@ -1464,7 +1355,6 @@ fbPage,
 message,
 graphVersion
 ) {
-
 const url =
 "https://graph.facebook.com/" +
 graphVersion +
@@ -1472,23 +1362,12 @@ graphVersion +
 fbPage.facebook_page_id +
 "/feed";
 
-const body =
-new URLSearchParams();
+const body = new URLSearchParams();
 
-body.set(
-"message",
-message
-);
+body.set("message", message);
+body.set("access_token", fbPage.access_token);
 
-body.set(
-"access_token",
-fbPage.access_token
-);
-
-return graphPost(
-url,
-body
-);
+return graphPost(url, body);
 }
 
 async function publishImagePost(
@@ -1498,7 +1377,6 @@ mediaBuffer,
 mediaName,
 graphVersion
 ) {
-
 const url =
 "https://graph.facebook.com/" +
 graphVersion +
@@ -1506,8 +1384,7 @@ graphVersion +
 fbPage.facebook_page_id +
 "/photos";
 
-const form =
-new FormData();
+const form = new FormData();
 
 form.append(
 "access_token",
@@ -1515,12 +1392,7 @@ fbPage.access_token
 );
 
 if (message) {
-
-form.append(
-"caption",
-message
-);
-
+form.append("caption", message);
 }
 
 form.append(
@@ -1531,10 +1403,7 @@ mediaName || "image.jpg"
 )
 );
 
-return graphPostFormData(
-url,
-form
-);
+return graphPostFormData(url, form);
 }
 
 async function publishVideoPost(
@@ -1544,7 +1413,6 @@ mediaBuffer,
 mediaName,
 graphVersion
 ) {
-
 const url =
 "https://graph.facebook.com/" +
 graphVersion +
@@ -1552,8 +1420,7 @@ graphVersion +
 fbPage.facebook_page_id +
 "/videos";
 
-const form =
-new FormData();
+const form = new FormData();
 
 form.append(
 "access_token",
@@ -1561,12 +1428,7 @@ fbPage.access_token
 );
 
 if (message) {
-
-form.append(
-"description",
-message
-);
-
+form.append("description", message);
 }
 
 form.append(
@@ -1577,36 +1439,17 @@ mediaName || "video.mp4"
 )
 );
 
-return graphPostFormData(
-url,
-form
-);
+return graphPostFormData(url, form);
 }
-
-/* =========================================================
-RATE / SECURITY HELPERS
-========================================================= */
 
 function sleep(ms) {
-
-return new Promise(
-function(resolve) {
-setTimeout(
-resolve,
-ms
-);
-}
-);
-
+return new Promise(function(resolve) {
+setTimeout(resolve, ms);
+});
 }
 
-function isMetaSecurityRestrictionError(
-message
-) {
-
-const text =
-String(message || "")
-.toLowerCase();
+function isMetaSecurityRestrictionError(message) {
+const text = String(message || "").toLowerCase();
 
 return (
 text.includes("code: 368") ||
@@ -1615,20 +1458,10 @@ text.includes(
 "for security reasons, your account has limited access"
 )
 );
-
 }
 
-/* =========================================================
-GRAPH POST
-========================================================= */
-
-async function graphPost(
-url,
-body
-) {
-
-const response =
-await fetch(
+async function graphPost(url, body) {
+const response = await fetch(
 url,
 {
 method: "POST",
@@ -1641,35 +1474,19 @@ body: body
 );
 
 const data =
-await readGraphResponse(
-response
-);
+await readGraphResponse(response);
 
-if (
-!response.ok ||
-data.error
-) {
-
+if (!response.ok || data.error) {
 throw new Error(
 formatGraphError(data)
 );
-
 }
 
 return data;
 }
 
-/* =========================================================
-GRAPH FORM DATA POST
-========================================================= */
-
-async function graphPostFormData(
-url,
-form
-) {
-
-const response =
-await fetch(
+async function graphPostFormData(url, form) {
+const response = await fetch(
 url,
 {
 method: "POST",
@@ -1678,41 +1495,23 @@ body: form
 );
 
 const data =
-await readGraphResponse(
-response
-);
+await readGraphResponse(response);
 
-if (
-!response.ok ||
-data.error
-) {
-
+if (!response.ok || data.error) {
 throw new Error(
 formatGraphError(data)
 );
-
 }
 
 return data;
 }
 
-/* =========================================================
-READ GRAPH RESPONSE
-========================================================= */
-
-async function readGraphResponse(
-response
-) {
-
-const text =
-await response.text();
+async function readGraphResponse(response) {
+const text = await response.text();
 
 try {
-
 return JSON.parse(text);
-
 } catch (error) {
-
 return {
 error: {
 message:
@@ -1725,24 +1524,14 @@ type: "NonJSONResponse",
 code: response.status
 }
 };
-
+}
 }
 
-}
-
-/* =========================================================
-FORMAT GRAPH ERROR
-========================================================= */
-
-function formatGraphError(
-data
-) {
-
+function formatGraphError(data) {
 if (
 data &&
 data.error
 ) {
-
 const e =
 data.error;
 
@@ -1761,48 +1550,30 @@ e.code !== undefined
 e.error_subcode !== undefined
 ? "Subcode: " + e.error_subcode
 : ""
-
 ]
 .filter(Boolean)
 .join(" | ");
-
 }
 
 return JSON.stringify(data);
-
 }
 
 /* =========================================================
 HTML
 ========================================================= */
 
-function page(
-title,
-content
-) {
-
+function page(title, content) {
 return new Response(
-
 "<!DOCTYPE html>" +
-
 '<html lang="en">' +
-
 "<head>" +
-
 '<meta charset="UTF-8" />' +
-
 '<meta name="viewport" content="width=device-width, initial-scale=1.0" />' +
-
 "<title>" +
-
 escapeHtml(title) +
-
 " - " +
-
 escapeHtml(APP_NAME) +
-
 "</title>" +
-
 "<style>" +
 
 "*{box-sizing:border-box}" +
@@ -1825,8 +1596,11 @@ escapeHtml(APP_NAME) +
 ".hero-brand:after{" +
 "content:\"\";" +
 "position:absolute;" +
-"width:280px;height:280px;border-radius:50%;" +
-"right:-90px;top:-150px;" +
+"width:280px;" +
+"height:280px;" +
+"border-radius:50%;" +
+"right:-90px;" +
+"top:-150px;" +
 "background:rgba(255,255,255,.08);" +
 "}" +
 
