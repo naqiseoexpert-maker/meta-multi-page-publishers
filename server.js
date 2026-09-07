@@ -165,6 +165,29 @@ export default {
     } catch (error) {
       console.error(error);
 
+      // API endpoints must always return JSON.
+      // Otherwise the browser may receive the HTML error page and
+      // fail with: Unexpected token '<' / invalid JSON.
+      const url = new URL(request.url);
+      const path = url.pathname;
+
+      if (
+        request.method === "POST" &&
+        (path === "/publish" ||
+          path === "/publish-batch")
+      ) {
+        return jsonResponse(
+          {
+            error:
+              error &&
+              error.message
+                ? error.message
+                : String(error)
+          },
+          500
+        );
+      }
+
       return page(
         "Error",
         `
@@ -481,6 +504,1799 @@ function showLoginPage(errorMessage) {
             Dashboard Password
           </label>
 
+          <div class="password-wrap">
+            <input
+              id="password"
+              type="password"
+              name="password"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+              required
+              autofocus
+            />
+
+            <button
+              type="button"
+              class="show-password"
+              onclick="togglePassword()"
+              aria-label="Show password"
+            >
+              <svg
+                id="eyeIcon"
+                viewBox="0 0 24 24"
+              >
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="2.5"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            class="login-submit"
+          >
+            <span>Enter Dashboard</span>
+
+            <svg viewBox="0 0 24 24">
+              <path d="M5 12h14"/>
+              <path d="m13 6 6 6-6 6"/>
+            </svg>
+          </button>
+        </form>
+
+        <div class="login-security">
+          <span class="security-dot"></span>
+          Protected dashboard session
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      function togglePassword() {
+        const input =
+          document.getElementById("password");
+
+        const icon =
+          document.getElementById("eyeIcon");
+
+        if (input.type === "password") {
+          input.type = "text";
+
+          icon.innerHTML =
+            '<path d="M3 3l18 18"/>' +
+            '<path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>' +
+            '<path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 3.8"/>' +
+            '<path d="M6.6 6.6C3.6 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 3.1-.5"/>';
+        } else {
+          input.type = "password";
+
+          icon.innerHTML =
+            '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>' +
+            '<circle cx="12" cy="12" r="2.5"/>';
+        }
+      }
+    </script>
+    `
+  );
+}
+
+// =============================================================
+// DATABASE
+// =============================================================
+
+async function ensureDatabaseSchema(db) {
+  if (!db) {
+    throw new Error(
+      "D1 database binding DB is missing. Check your Cloudflare Worker D1 binding name."
+    );
+  }
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS accounts (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "facebook_user_id TEXT NOT NULL UNIQUE, " +
+        "account_name TEXT, " +
+        "access_token TEXT NOT NULL, " +
+        "created_at TEXT DEFAULT (datetime('now'))" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS pages (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "facebook_page_id TEXT NOT NULL UNIQUE, " +
+        "page_name TEXT, " +
+        "access_token TEXT NOT NULL, " +
+        "account_id INTEGER NOT NULL, " +
+        "created_at TEXT DEFAULT (datetime('now'))" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_pages_account_id " +
+        "ON pages(account_id)"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS auth_sessions (" +
+        "id TEXT PRIMARY KEY, " +
+        "created_at TEXT NOT NULL, " +
+        "dashboard_ticket INTEGER NOT NULL DEFAULT 0" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS publish_runs (" +
+        "id TEXT PRIMARY KEY, " +
+        "session_id TEXT NOT NULL, " +
+        "message TEXT, " +
+        "media_type TEXT, " +
+        "media_name TEXT, " +
+        "created_at TEXT NOT NULL, " +
+        "completed_at TEXT, " +
+        "status TEXT NOT NULL DEFAULT 'processing'" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS publish_run_pages (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "run_id TEXT NOT NULL, " +
+        "page_db_id INTEGER NOT NULL, " +
+        "facebook_page_id TEXT NOT NULL, " +
+        "page_name TEXT, " +
+        "status TEXT NOT NULL DEFAULT 'pending', " +
+        "post_id TEXT, " +
+        "error TEXT, " +
+        "created_at TEXT NOT NULL, " +
+        "completed_at TEXT, " +
+        "UNIQUE(run_id, page_db_id)" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_publish_run_pages_run_id " +
+        "ON publish_run_pages(run_id)"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_publish_run_pages_status " +
+        "ON publish_run_pages(run_id, status)"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "DELETE FROM auth_sessions " +
+        "WHERE created_at < datetime('now', '-1 day')"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "DELETE FROM publish_runs " +
+        "WHERE created_at < datetime('now', '-2 day')"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "DELETE FROM publish_run_pages " +
+        "WHERE run_id NOT IN " +
+        "(SELECT id FROM publish_runs)"
+    )
+    .run();
+}
+
+// =============================================================
+// META CONFIG
+// =============================================================
+
+function getMetaConfig(env) {
+  const appId = String(
+    env.META_APP_ID || ""
+  ).trim();
+
+  const appSecret = String(
+    env.META_APP_SECRET || ""
+  ).trim();
+
+  let graphVersion = String(
+    env.META_GRAPH_VERSION || ""
+  ).trim();
+
+  const missing = [];
+
+  if (!appId) {
+    missing.push("META_APP_ID");
+  }
+
+  if (!appSecret) {
+    missing.push("META_APP_SECRET");
+  }
+
+  if (!graphVersion) {
+    graphVersion = "v24.0";
+  }
+
+  if (missing.length) {
+    throw new Error(
+      "Meta configuration is missing: " +
+        missing.join(", ") +
+        ". Make sure these exact names exist in Cloudflare Worker > Settings > Variables and Secrets."
+    );
+  }
+
+  if (!graphVersion.startsWith("v")) {
+    graphVersion = "v" + graphVersion;
+  }
+
+  return {
+    appId,
+    appSecret,
+    graphVersion
+  };
+}
+
+// =============================================================
+// DASHBOARD
+// =============================================================
+
+async function showDashboard(env) {
+  const accountsResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_user_id, account_name, created_at " +
+        "FROM accounts ORDER BY id ASC"
+    ).all();
+
+  const accounts =
+    accountsResult.results || [];
+
+  const pagesResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_page_id, page_name, account_id " +
+        "FROM pages " +
+        "ORDER BY account_id ASC, " +
+        "page_name COLLATE NOCASE ASC"
+    ).all();
+
+  const pages =
+    pagesResult.results || [];
+
+  const groupedPages = {};
+
+  for (const account of accounts) {
+    groupedPages[account.id] = [];
+  }
+
+  for (const p of pages) {
+    if (!groupedPages[p.account_id]) {
+      groupedPages[p.account_id] = [];
+    }
+
+    groupedPages[p.account_id].push(p);
+  }
+
+  const totalAccounts =
+    accounts.length;
+
+  const totalPages =
+    pages.length;
+
+  let accountHtml = "";
+
+  if (!accounts.length) {
+    accountHtml = `
+      <section class="empty-state">
+
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M19 8v6"/>
+            <path d="M22 11h-6"/>
+          </svg>
+        </div>
+
+        <div class="eyebrow">
+          GET STARTED
+        </div>
+
+        <h3>
+          No Facebook account connected
+        </h3>
+
+        <p>
+          Connect your Facebook account to bring your Pages
+          into the publishing command center.
+        </p>
+
+        <a class="primary-btn" href="/auth/meta">
+          <span class="fb-symbol">f</span>
+          Connect Facebook Account
+        </a>
+
+      </section>
+    `;
+  } else {
+    for (const account of accounts) {
+      const accountPages =
+        groupedPages[account.id] || [];
+
+      let pageHtml = "";
+
+      if (accountPages.length) {
+        pageHtml = `
+          <div class="page-toolbar">
+
+            <div>
+              <div class="toolbar-title">
+                Connected Pages
+              </div>
+
+              <div class="toolbar-subtitle">
+                Select the Pages you want to publish to
+              </div>
+            </div>
+
+            <div class="toolbar-actions">
+              <button
+                type="button"
+                class="toolbar-btn"
+                onclick="selectAccountPages(${Number(
+                  account.id
+                )}, true)"
+              >
+                Select all
+              </button>
+
+              <button
+                type="button"
+                class="toolbar-btn"
+                onclick="selectAccountPages(${Number(
+                  account.id
+                )}, false)"
+              >
+                Clear
+              </button>
+            </div>
+
+          </div>
+
+          <div class="page-list">
+        `;
+
+        for (const p of accountPages) {
+          const initial =
+            getInitials(
+              p.page_name || "Page"
+            );
+
+          pageHtml += `
+            <label class="page-row">
+
+              <input
+                class="page-checkbox account-${Number(
+                  account.id
+                )}"
+                type="checkbox"
+                name="page_ids"
+                value="${escapeHtml(p.id)}"
+                form="publish-form"
+              />
+
+              <span class="custom-check">
+                <svg viewBox="0 0 24 24">
+                  <path d="m5 12 4 4L19 6"/>
+                </svg>
+              </span>
+
+              <span class="page-avatar">
+                ${escapeHtml(initial)}
+              </span>
+
+              <span class="page-info">
+
+                <span class="page-name">
+                  ${escapeHtml(
+                    p.page_name ||
+                      "Unnamed Page"
+                  )}
+                </span>
+
+                <span class="page-id">
+                  ID:
+                  ${escapeHtml(
+                    p.facebook_page_id
+                  )}
+                </span>
+
+              </span>
+
+              <span class="page-ready">
+                <span class="ready-dot"></span>
+                Ready
+              </span>
+
+            </label>
+          `;
+        }
+
+        pageHtml += `</div>`;
+      } else {
+        pageHtml = `
+          <div class="no-pages">
+
+            <div class="no-pages-icon">
+              !
+            </div>
+
+            <div>
+              <strong>
+                No Pages found
+              </strong>
+
+              <p>
+                Click <b>Sync Pages</b> to refresh
+                this Facebook account.
+              </p>
+            </div>
+
+          </div>
+        `;
+      }
+
+      const accountInitials =
+        getInitials(
+          account.account_name ||
+            "Facebook Account"
+        );
+
+      accountHtml += `
+        <section class="account-card">
+
+          <div class="account-top">
+
+            <div class="account-identity">
+
+              <div class="account-avatar">
+                ${escapeHtml(
+                  accountInitials
+                )}
+              </div>
+
+              <div class="account-details">
+
+                <div class="account-name-line">
+
+                  <h2>
+                    ${escapeHtml(
+                      account.account_name ||
+                        "Facebook Account"
+                    )}
+                  </h2>
+
+                  <span class="connected-badge">
+                    <span></span>
+                    Connected
+                  </span>
+
+                </div>
+
+                <div class="facebook-id">
+                  Facebook ID:
+                  <code>
+                    ${escapeHtml(
+                      account.facebook_user_id
+                    )}
+                  </code>
+                </div>
+
+                <div class="account-meta">
+
+                  <span>
+                    <strong>
+                      ${accountPages.length}
+                    </strong>
+                    Pages
+                  </span>
+
+                </div>
+
+              </div>
+
+            </div>
+
+            <div class="account-actions">
+
+              <form
+                method="POST"
+                action="/sync"
+                class="inline-form"
+                onsubmit="return handleSync(this)"
+              >
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${escapeHtml(account.id)}"
+                />
+
+                <button
+                  type="submit"
+                  class="secondary-btn"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M20 11a8.1 8.1 0 0 0-15.5-2"/>
+                    <path d="M4 5v4h4"/>
+                    <path d="M4 13a8.1 8.1 0 0 0 15.5 2"/>
+                    <path d="M20 19v-4h-4"/>
+                  </svg>
+                  Sync Pages
+                </button>
+              </form>
+
+              <form
+                method="POST"
+                action="/remove-account"
+                class="inline-form"
+                onsubmit="return confirmRemoveAccount()"
+              >
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${escapeHtml(account.id)}"
+                />
+
+                <button
+                  type="submit"
+                  class="danger-btn"
+                >
+                  Remove
+                </button>
+              </form>
+
+            </div>
+
+          </div>
+
+          ${pageHtml}
+
+        </section>
+      `;
+    }
+  }
+
+  return page(
+    APP_NAME,
+    `
+    <div class="dashboard-shell">
+
+      <header class="topbar">
+
+        <div class="topbar-left">
+
+          <div class="top-brand-mark">
+            <span>f</span>
+          </div>
+
+          <div class="top-brand-text">
+
+            <div class="top-brand-name">
+              NAQI SHAH
+            </div>
+
+            <div class="top-brand-sub">
+              META MULTI PAGE PUBLISHER
+            </div>
+
+          </div>
+
+        </div>
+
+        <div class="topbar-right">
+
+          <div class="status-pill">
+            <span class="status-dot"></span>
+            SYSTEM ONLINE
+          </div>
+
+          <a
+            href="/logout"
+            class="logout-btn"
+          >
+            Logout
+          </a>
+
+        </div>
+
+      </header>
+
+      <main class="dashboard-main">
+
+        <section class="hero-section">
+
+          <div class="hero-copy">
+
+            <div class="eyebrow">
+              PUBLISHING COMMAND CENTER
+            </div>
+
+            <h1>
+              Manage all your
+              <span>Facebook Pages</span>
+              in one place.
+            </h1>
+
+            <p>
+              Connect your Facebook accounts, select the Pages
+              you need, and publish content across multiple
+              Pages from a single dashboard.
+            </p>
+
+          </div>
+
+          <div class="hero-stats">
+
+            <div class="stat-card">
+              <div class="stat-icon">
+                <svg viewBox="0 0 24 24">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M19 8v6"/>
+                  <path d="M22 11h-6"/>
+                </svg>
+              </div>
+
+              <div class="stat-value">
+                ${totalAccounts}
+              </div>
+
+              <div class="stat-label">
+                Accounts
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon">
+                <svg viewBox="0 0 24 24">
+                  <rect
+                    x="3"
+                    y="4"
+                    width="18"
+                    height="16"
+                    rx="3"
+                  />
+                  <path d="M7 8h10"/>
+                  <path d="M7 12h10"/>
+                  <path d="M7 16h6"/>
+                </svg>
+              </div>
+
+              <div class="stat-value">
+                ${totalPages}
+              </div>
+
+              <div class="stat-label">
+                Pages
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon">
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 3v18"/>
+                  <path d="M3 12h18"/>
+                  <path d="m5 5 14 14"/>
+                  <path d="m19 5-14 14"/>
+                </svg>
+              </div>
+
+              <div class="stat-value">
+                100+
+              </div>
+
+              <div class="stat-label">
+                Publishing Capacity
+              </div>
+            </div>
+
+          </div>
+
+        </section>
+
+        <section class="connect-section">
+
+          <div class="section-heading">
+
+            <div>
+              <div class="eyebrow">
+                FACEBOOK CONNECTIONS
+              </div>
+
+              <h2>
+                Connected Accounts
+              </h2>
+
+              <p>
+                Manage your Facebook accounts and their Pages.
+              </p>
+            </div>
+
+            <a
+              href="/auth/meta"
+              class="primary-btn"
+            >
+              <span class="fb-symbol">f</span>
+              Connect Facebook
+            </a>
+
+          </div>
+
+          <div class="accounts-list">
+            ${accountHtml}
+          </div>
+
+        </section>
+
+        <section class="publisher-section">
+
+          <div class="publisher-heading">
+
+            <div>
+              <div class="eyebrow">
+                CONTENT PUBLISHER
+              </div>
+
+              <h2>
+                Create a New Post
+              </h2>
+
+              <p>
+                Select one or more Pages and publish text,
+                images, or videos.
+              </p>
+            </div>
+
+            <div class="batch-info">
+              <span class="batch-dot"></span>
+              Automatic batch publishing enabled
+            </div>
+
+          </div>
+
+          <form
+            id="publish-form"
+            class="publisher-card"
+            onsubmit="return handlePublish(event)"
+          >
+
+            <div class="composer">
+
+              <label
+                for="message"
+                class="field-label"
+              >
+                Post Message
+              </label>
+
+              <textarea
+                id="message"
+                name="message"
+                rows="7"
+                placeholder="Write your Facebook post here..."
+              ></textarea>
+
+              <div class="composer-footer">
+                <span>
+                  You can publish text-only posts or attach
+                  an image/video below.
+                </span>
+
+                <span id="char-count">
+                  0 characters
+                </span>
+              </div>
+
+            </div>
+
+            <div class="media-area">
+
+              <label
+                for="media"
+                class="field-label"
+              >
+                Media
+                <span class="optional">
+                  Optional
+                </span>
+              </label>
+
+              <label
+                for="media"
+                class="media-dropzone"
+                id="media-dropzone"
+              >
+
+                <input
+                  id="media"
+                  name="media"
+                  type="file"
+                  accept="image/*,video/*"
+                  onchange="handleMediaChange(this)"
+                />
+
+                <div class="media-icon">
+                  <svg viewBox="0 0 24 24">
+                    <rect
+                      x="3"
+                      y="3"
+                      width="18"
+                      height="18"
+                      rx="3"
+                    />
+                    <circle
+                      cx="8.5"
+                      cy="8.5"
+                      r="1.5"
+                    />
+                    <path
+                      d="m21 15-5-5L5 21"
+                    />
+                  </svg>
+                </div>
+
+                <div class="media-title">
+                  Choose an image or video
+                </div>
+
+                <div class="media-subtitle">
+                  JPG, PNG, WEBP, MP4 and supported media
+                </div>
+
+              </label>
+
+              <div
+                id="media-selected"
+                class="media-selected hidden"
+              >
+                <span
+                  id="media-name"
+                ></span>
+
+                <button
+                  type="button"
+                  onclick="clearMedia()"
+                >
+                  Remove
+                </button>
+              </div>
+
+            </div>
+
+            <div class="publisher-footer">
+
+              <div class="selection-summary">
+                <span class="selection-icon">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M4 6h16"/>
+                    <path d="M4 12h16"/>
+                    <path d="M4 18h10"/>
+                  </svg>
+                </span>
+
+                <span>
+                  <strong id="selected-count">
+                    0
+                  </strong>
+                  Pages selected
+                </span>
+              </div>
+
+              <button
+                type="submit"
+                class="publish-btn"
+                id="publish-btn"
+              >
+                <span>
+                  Publish to Selected Pages
+                </span>
+
+                <svg viewBox="0 0 24 24">
+                  <path d="M5 12h14"/>
+                  <path d="m13 6 6 6-6 6"/>
+                </svg>
+              </button>
+
+            </div>
+
+          </form>
+
+        </section>
+
+        <section
+          id="publish-progress-section"
+          class="progress-section hidden"
+        >
+
+          <div class="progress-card">
+
+            <div class="progress-top">
+
+              <div>
+                <div class="eyebrow">
+                  PUBLISHING
+                </div>
+
+                <h2>
+                  Publishing your post...
+                </h2>
+
+                <p id="progress-message">
+                  Preparing selected Pages.
+                </p>
+              </div>
+
+              <div
+                id="progress-percent"
+                class="progress-percent"
+              >
+                0%
+              </div>
+
+            </div>
+
+            <div class="progress-track">
+              <div
+                id="progress-bar"
+                class="progress-bar"
+                style="width:0%"
+              ></div>
+            </div>
+
+            <div class="progress-meta">
+
+              <span id="progress-count">
+                0 / 0 Pages
+              </span>
+
+              <span id="progress-status">
+                Starting...
+              </span>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <section
+          id="publish-results-section"
+          class="results-section hidden"
+        >
+
+          <div class="results-card">
+
+            <div class="results-header">
+
+              <div>
+                <div class="eyebrow">
+                  PUBLISH RESULTS
+                </div>
+
+                <h2>
+                  Publishing Complete
+                </h2>
+              </div>
+
+              <div
+                id="results-summary"
+                class="results-summary"
+              ></div>
+
+            </div>
+
+            <div
+              id="results-list"
+              class="results-list"
+            ></div>
+
+          </div>
+
+        </section>
+
+      </main>
+
+      <footer class="dashboard-footer">
+        <div>
+          ${escapeHtml(APP_NAME)}
+        </div>
+
+        <div>
+          NAQI SHAH
+        </div>
+      </footer>
+
+    </div>
+
+    <script>
+      const PUBLISH_BATCH_SIZE = 15;
+
+      function sleep(ms) {
+        return new Promise(function(resolve) {
+          setTimeout(resolve, ms);
+        });
+      }
+
+      // Always read API responses safely. If the Worker/Cloudflare
+      // returns HTML instead of JSON, show a useful error instead of
+      // throwing an unhelpful JSON parsing error.
+      async function readApiResponse(response) {
+        const text = await response.text();
+        let data = null;
+
+        try {
+          data = text
+            ? JSON.parse(text)
+            : null;
+        } catch (parseError) {
+          const cleaned = text
+            .replace(/<[^>]*>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          throw new Error(
+            cleaned ||
+            ("Server returned HTTP " +
+              response.status)
+          );
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            data && data.error
+              ? String(data.error)
+              : ("Server returned HTTP " +
+                  response.status)
+          );
+        }
+
+        return data;
+      }
+
+      function updateSelectedCount() {
+        const checked =
+          document.querySelectorAll(
+            'input[name="page_ids"]:checked'
+          );
+
+        const count =
+          document.getElementById(
+            "selected-count"
+          );
+
+        if (count) {
+          count.textContent =
+            checked.length;
+        }
+      }
+
+      function selectAccountPages(
+        accountId,
+        shouldSelect
+      ) {
+        const boxes =
+          document.querySelectorAll(
+            ".account-" + accountId
+          );
+
+        boxes.forEach(function(box) {
+          box.checked =
+            shouldSelect;
+        });
+
+        updateSelectedCount();
+      }
+
+      document.addEventListener(
+        "change",
+        function(event) {
+          if (
+            event.target &&
+            event.target.name === "page_ids"
+          ) {
+            updateSelectedCount();
+          }
+        }
+      );
+
+      function confirmRemoveAccount() {
+        return confirm(
+          "Are you sure you want to remove this Facebook account and all of its connected Pages?"
+        );
+      }
+
+      function handleSync(form) {
+        const button =
+          form.querySelector(
+            "button[type='submit']"
+          );
+
+        if (button) {
+          button.disabled = true;
+          button.innerHTML =
+            "Syncing Pages...";
+        }
+
+        return true;
+      }
+
+      function handleMediaChange(input) {
+        const selected =
+          document.getElementById(
+            "media-selected"
+          );
+
+        const name =
+          document.getElementById(
+            "media-name"
+          );
+
+        const dropzone =
+          document.getElementById(
+            "media-dropzone"
+          );
+
+        if (
+          input.files &&
+          input.files.length
+        ) {
+          name.textContent =
+            input.files[0].name;
+
+          selected.classList.remove(
+            "hidden"
+          );
+
+          dropzone.classList.add(
+            "has-file"
+          );
+        } else {
+          clearMedia();
+        }
+      }
+
+      function clearMedia() {
+        const input =
+          document.getElementById(
+            "media"
+          );
+
+        const selected =
+          document.getElementById(
+            "media-selected"
+          );
+
+        const dropzone =
+          document.getElementById(
+            "media-dropzone"
+          );
+
+        if (input) {
+          input.value = "";
+        }
+
+        if (selected) {
+          selected.classList.add(
+            "hidden"
+          );
+        }
+
+        if (dropzone) {
+          dropzone.classList.remove(
+            "has-file"
+          );
+        }
+      }
+
+      const messageInput =
+        document.getElementById(
+          "message"
+        );
+
+      if (messageInput) {
+        messageInput.addEventListener(
+          "input",
+          function() {
+            const count =
+              document.getElementById(
+                "char-count"
+              );
+
+            if (count) {
+              count.textContent =
+                this.value.length +
+                " characters";
+            }
+          }
+        );
+      }
+
+      function showProgress() {
+        const section =
+          document.getElementById(
+            "publish-progress-section"
+          );
+
+        if (section) {
+          section.classList.remove(
+            "hidden"
+          );
+        }
+
+        const results =
+          document.getElementById(
+            "publish-results-section"
+          );
+
+        if (results) {
+          results.classList.add(
+            "hidden"
+          );
+        }
+      }
+
+      function hideProgress() {
+        const section =
+          document.getElementById(
+            "publish-progress-section"
+          );
+
+        if (section) {
+          section.classList.add(
+            "hidden"
+          );
+        }
+      }
+
+      function updateProgress(
+        processed,
+        total,
+        message
+      ) {
+        const safeTotal =
+          Math.max(
+            Number(total) || 0,
+            1
+          );
+
+        const safeProcessed =
+          Math.max(
+            0,
+            Math.min(
+              Number(processed) || 0,
+              safeTotal
+            )
+          );
+
+        const percent =
+          Math.round(
+            (safeProcessed /
+              safeTotal) *
+              100
+          );
+
+        const bar =
+          document.getElementById(
+            "progress-bar"
+          );
+
+        const percentText =
+          document.getElementById(
+            "progress-percent"
+          );
+
+        const count =
+          document.getElementById(
+            "progress-count"
+          );
+
+        const status =
+          document.getElementById(
+            "progress-status"
+          );
+
+        const progressMessage =
+          document.getElementById(
+            "progress-message"
+          );
+
+        if (bar) {
+          bar.style.width =
+            percent + "%";
+        }
+
+        if (percentText) {
+          percentText.textContent =
+            percent + "%";
+        }
+
+        if (count) {
+          count.textContent =
+            safeProcessed +
+            " / " +
+            total +
+            " Pages";
+        }
+
+        if (status) {
+          status.textContent =
+            safeProcessed >= safeTotal
+              ? "Complete"
+              : "Publishing...";
+        }
+
+        if (
+          progressMessage &&
+          message
+        ) {
+          progressMessage.textContent =
+            message;
+        }
+      }
+
+      function showResults(
+        results
+      ) {
+        const section =
+          document.getElementById(
+            "publish-results-section"
+          );
+
+        const list =
+          document.getElementById(
+            "results-list"
+          );
+
+        const summary =
+          document.getElementById(
+            "results-summary"
+          );
+
+        if (!section || !list) {
+          return;
+        }
+
+        section.classList.remove(
+          "hidden"
+        );
+
+        list.innerHTML = "";
+
+        let successCount = 0;
+        let failureCount = 0;
+
+        (results || []).forEach(
+          function(item) {
+            if (
+              item.status ===
+              "success"
+            ) {
+              successCount++;
+            } else {
+              failureCount++;
+            }
+
+            const row =
+              document.createElement(
+                "div"
+              );
+
+            row.className =
+              "result-row " +
+              (item.status ===
+              "success"
+                ? "result-success"
+                : "result-failure");
+
+            const icon =
+              item.status ===
+              "success"
+                ? "✓"
+                : "!";
+
+            row.innerHTML =
+              '<div class="result-status">' +
+              icon +
+              "</div>" +
+              '<div class="result-info">' +
+              '<div class="result-page-name">' +
+              escapeClientHtml(
+                item.page_name ||
+                  "Unnamed Page"
+              ) +
+              "</div>" +
+              '<div class="result-detail">' +
+              escapeClientHtml(
+                item.error ||
+                  (item.post_id
+                    ? "Published successfully"
+                    : "Completed")
+              ) +
+              "</div>" +
+              "</div>";
+            
+            list.appendChild(row);
+          }
+        );
+
+        if (summary) {
+          summary.innerHTML =
+            '<span class="result-success-count">' +
+            successCount +
+            " successful</span>" +
+            '<span class="result-failure-count">' +
+            failureCount +
+            " failed</span>";
+        }
+      }
+
+      function escapeClientHtml(
+        value
+      ) {
+        const div =
+          document.createElement(
+            "div"
+          );
+
+        div.textContent =
+          String(
+            value == null
+              ? ""
+              : value
+          );
+
+        return div.innerHTML;
+      }
+
+      async function handlePublish(
+        event
+      ) {
+        event.preventDefault();
+
+        const form =
+          document.getElementById(
+            "publish-form"
+          );
+
+        const button =
+          document.getElementById(
+            "publish-btn"
+          );
+
+        const selected =
+          Array.from(
+            document.querySelectorAll(
+              'input[name="page_ids"]:checked'
+            )
+          );
+
+        const message =
+          document.getElementById(
+            "message"
+          ).value.trim();
+
+        const media =
+          document.getElementById(
+            "media"
+          );
+
+        if (!selected.length) {
+          alert(
+            "Please select at least one Facebook Page."
+          );
+          return false;
+        }
+
+        if (
+          !message &&
+          !(
+            media.files &&
+            media.files.length
+          )
+        ) {
+          alert(
+            "Please enter a message or select an image/video."
+          );
+          return false;
+        }
+
+        const total =
+          selected.length;
+
+        if (total > PUBLISH_BATCH_SIZE) {
+          const confirmed =
+            confirm(
+              "You selected " +
+                total +
+                " Pages. The system will automatically publish them in batches of " +
+                PUBLISH_BATCH_SIZE +
+                ". Continue?"
+            );
+
+          if (!confirmed) {
+            return false;
+          }
+        }
+
+        if (button) {
+          button.disabled = true;
+
+          button.innerHTML =
+            "<span>Preparing...</span>";
+        }
+
+        showProgress();
+
+        updateProgress(
+          0,
+          total,
+          "Preparing your post..."
+        );
+
+        try {
+          const startData =
+            new FormData();
+
+          startData.append(
+            "message",
+            message
+          );
+
+          selected.forEach(
+            function(box) {
+              startData.append(
+                "page_ids",
+                box.value
+              );
+            }
+          );
+
+          if (
+            media.files &&
+            media.files.length
+          ) {
+            startData.append(
+              "media",
+              media.files[0]
+            );
+          }
+
+          const startResponse =
+            await fetch(
+              "/publish",
+              {
+                method: "POST",
+                body: startData,
+                credentials:
+                  "same-origin",
+                cache: "no-store"
+              }
+            );
+
+          const startResult =
+            await readApiResponse(
+              startResponse
+            );
+
+          const runId =
+            startResult.runId;
+
+          if (!runId) {
+            throw new Error(
+              "The server did not return a publishing run ID."
+            );
+          }
+
+          const allPageIds =
+            selected.map(
+              function(box) {
+                return box.value;
+              }
+            );
+
+          let processed = 0;
+          let finalResults = [];
+
+          for (
+            let index = 0;
+            index <
+            allPageIds.length;
+            index +=
+              PUBLISH_BATCH_SIZE
+          ) {
+            const batch =
+              allPageIds.slice(
+                index,
+                index +
+                  PUBLISH_BATCH_SIZE
+              );
+
+            updateProgress(
+              processed,
+              total,
+              "Publishing batch " +
+                (Math.floor(
+                  index /
+                    PUBLISH_BATCH_SIZE
+                ) +
+                  1) +
+                "..."
+            );
+
+            const batchForm =
+              new FormData();
+
+            batchForm.append(
+              "run_id",
+              runId
+            );
+
+            batch.forEach(
+              function(pageId) {
+                batchForm.append(
+                  "page_ids",
+                  pageId
+                );
+              }
+            );
+
+            if (
+              media.files &&
+              media.files.length
+            ) {
+              batchForm.append(
+                "media",
+                media.files[0]
+              );
+            }
+
+            const batchResponse =
+              await fetch(
+                "/publish-batch",
+                {
+                  method: "POST",
+                  body: batchForm,
+                  credentials:
+                    "same-origin",
+                  cache: "no-store"
+                }
+              );
+
+            const batchResult =
+              await readApiResponse(
+                batchResponse
+              );
+
+            if (
+              Array.isArray(
+                batchResult.results
+              )
+            ) {
+              finalResults =
+                finalResults.concat(
+                  batchResult.results
+                );
+            }
+
+            processed +=
+              batch.length;
+
+            updateProgress(
+              processed,
+              total,
+              batchResult.complete
+                ? "Publishing complete."
+                : "Publishing the next batch..."
+            );
+
+            if (
+              !batchResult.complete &&
+              batchResult.pending >
+                0
+            ) {
+              await sleep(150);
+            }
+          }
+
+          updateProgress(
+            total,
+            total,
+            "All selected Pages have been processed."
+          );
+
+          hideProgress();
+
+          showResults(
+            finalResults
+          );
+
+          if (button) {
+            button.disabled = false;
+
+            button.innerHTML =
+              "<span>Publish to Selected Pages</span>" +
+              '<svg viewBox="0 0 24 24">' +
+              '<path d="M5 12h14"/>' +
+              '<path d="m13 6 6 6-6 6"/>' +
+              "</svg>";
+          }
+
+          alert(
+            "Publishing process completed."
+          );
+
+        } catch (error) {
+          console.error(
+            "Publishing error:",
+            error
+          );
+
+          hideProgress();
+
+          if (button) {
+            button.disabled =
+              false;
+
+            button.innerHTML =
+              "<span>Publish to Selected Pages</span>" +
+              '<svg viewBox="0 0 24 24">' +
+              '<path d="M5 12h14"/>' +
+              '<path d="m13 6 6 6-6 6"/>' +
+              "</svg>";
+          }
+
+          alert(
+            "Publishing failed: " +
+              (
+                error &&
+                error.message
+                  ? error.message
+                  : String(error)
+              )
+          );
+        }
+
+        return false;
+      }
+
+      updateSelectedCount();
+    </script>
+    `
+  );
+}
           <div class="password-wrap">
             <input
               id="password"
@@ -1430,6 +3246,38 @@ async function showDashboard(env) {
     );
   }
 
+  // Always read API responses safely. If the Worker/Cloudflare
+  // returns HTML instead of JSON, show a useful error instead of
+  // throwing an unhelpful JSON parsing error.
+  async function readApiResponse(response) {
+    const text = await response.text();
+    let data = null;
+
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (parseError) {
+      const cleaned = text
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      throw new Error(
+        cleaned ||
+        ("Server returned HTTP " + response.status)
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        data && data.error
+          ? String(data.error)
+          : ("Server returned HTTP " + response.status)
+      );
+    }
+
+    return data;
+  }
+
   async function publishInBatches(
     selectedIds
   ) {
@@ -1525,24 +3373,15 @@ async function showDashboard(env) {
           method: "POST",
           body: startData,
           credentials:
-            "same-origin"
+            "same-origin",
+          cache: "no-store"
         }
       );
 
-    if (
-      !startResponse.ok
-    ) {
-      const errorText =
-        await startResponse.text();
-
-      throw new Error(
-        errorText ||
-        "Could not start publishing."
-      );
-    }
-
     const startResult =
-      await startResponse.json();
+      await readApiResponse(
+        startResponse
+      );
 
     if (
       !startResult ||
@@ -1604,24 +3443,15 @@ async function showDashboard(env) {
             method: "POST",
             body: batchForm,
             credentials:
-              "same-origin"
+              "same-origin",
+            cache: "no-store"
           }
         );
 
-      if (
-        !batchResponse.ok
-      ) {
-        const errorText =
-          await batchResponse.text();
-
-        throw new Error(
-          errorText ||
-          "A publishing batch failed."
-        );
-      }
-
       const batchResult =
-        await batchResponse.json();
+        await readApiResponse(
+          batchResponse
+        );
 
       if (
         batchResult &&
@@ -2265,7 +4095,6 @@ async function metaCallback(
     }
   });
 }
-
 // =============================================================
 // SYNC PAGES
 // =============================================================
@@ -2617,35 +4446,32 @@ async function startPublishRun(
       (media.type || "")
         .startsWith("image/")
     ) {
-      mediaType = "image";
+      mediaType =
+        "image";
     } else if (
       (media.type || "")
         .startsWith("video/")
     ) {
-      mediaType = "video";
+      mediaType =
+        "video";
     } else {
       return jsonResponse(
         {
           error:
-            "Unsupported media type."
+            "Unsupported media type. Please use an image or video."
         },
         400
       );
     }
 
-    const size =
-      Number(
-        media.size || 0
-      );
-
     if (
-      size >
-      100 * 1024 * 1024
+      typeof media.size === "number" &&
+      media.size > 100 * 1024 * 1024
     ) {
       return jsonResponse(
         {
           error:
-            "File is too large. Maximum supported size is 100 MB."
+            "Media file is larger than the 100 MB limit."
         },
         400
       );
@@ -2655,50 +4481,54 @@ async function startPublishRun(
   const runId =
     crypto.randomUUID();
 
+  const createdAt =
+    new Date().toISOString();
+
   await env.DB.prepare(
     "INSERT INTO publish_runs " +
       "(id, session_id, message, media_type, media_name, created_at, status) " +
-      "VALUES (?, ?, ?, ?, ?, datetime('now'), 'processing')"
+      "VALUES (?, ?, ?, ?, ?, ?, 'processing')"
   )
     .bind(
       runId,
       sessionId,
       message,
       mediaType,
-      mediaName
+      mediaName,
+      createdAt
     )
     .run();
 
-  // One database record per Page.
-  // UNIQUE(run_id, page_db_id) prevents duplicates.
   for (
-    const fbPage of pages
+    const p of pages
   ) {
     await env.DB.prepare(
-      "INSERT OR IGNORE INTO publish_run_pages " +
+      "INSERT INTO publish_run_pages " +
         "(run_id, page_db_id, facebook_page_id, page_name, status, created_at) " +
-        "VALUES (?, ?, ?, ?, 'pending', datetime('now'))"
+        "VALUES (?, ?, ?, ?, 'pending', ?)"
     )
       .bind(
         runId,
-        Number(fbPage.id),
+        Number(p.id),
         String(
-          fbPage.facebook_page_id
+          p.facebook_page_id
         ),
-        fbPage.page_name ||
-          "Unnamed Page"
+        p.page_name ||
+          "Unnamed Page",
+        createdAt
       )
       .run();
   }
 
   return jsonResponse({
     runId,
-    total: pages.length
+    total:
+      pages.length
   });
 }
 
 // =============================================================
-// PUBLISH - BATCH
+// PUBLISH - PROCESS BATCH
 // =============================================================
 
 async function processPublishBatch(
@@ -2715,14 +4545,9 @@ async function processPublishBatch(
     ).trim();
 
   const selectedPageIds =
-    form
-      .getAll("page_ids")
-      .map(Number)
-      .filter(
-        id =>
-          Number.isInteger(id) &&
-          id > 0
-      );
+    form.getAll(
+      "page_ids"
+    );
 
   const media =
     form.get("media");
@@ -2740,7 +4565,8 @@ async function processPublishBatch(
   const run =
     await env.DB.prepare(
       "SELECT id, session_id, message, media_type, media_name, status " +
-        "FROM publish_runs WHERE id = ?"
+        "FROM publish_runs " +
+        "WHERE id = ?"
     )
       .bind(runId)
       .first();
@@ -2762,15 +4588,13 @@ async function processPublishBatch(
     return jsonResponse(
       {
         error:
-          "This publishing run does not belong to the current session."
+          "You are not authorized to process this publishing run."
       },
       403
     );
   }
 
-  if (
-    !selectedPageIds.length
-  ) {
+  if (!selectedPageIds.length) {
     return jsonResponse(
       {
         error:
@@ -2780,13 +4604,8 @@ async function processPublishBatch(
     );
   }
 
-  // ---------------------------------------------------------
-  // HARD SERVER-SIDE BATCH LIMIT
-  // ---------------------------------------------------------
-  // Browser sends 15 Pages at a time.
-  // This prevents a modified browser request from attempting
-  // to publish hundreds of Pages in one Worker invocation.
-  // ---------------------------------------------------------
+  // Server-side safety limit.
+  // The browser also uses the same batch size.
   const SERVER_BATCH_LIMIT = 15;
 
   if (
@@ -2796,72 +4615,57 @@ async function processPublishBatch(
     return jsonResponse(
       {
         error:
-          "Batch too large. Maximum " +
+          "Too many Pages in one batch. Maximum is " +
           SERVER_BATCH_LIMIT +
-          " Pages per request."
+          "."
       },
       400
     );
   }
 
-  // Remove duplicates inside the batch.
-  const uniqueBatchIds =
+  const numericPageIds =
+    selectedPageIds
+      .map(Number)
+      .filter(
+        id =>
+          Number.isInteger(id) &&
+          id > 0
+      );
+
+  const uniquePageIds =
     [...new Set(
-      selectedPageIds
+      numericPageIds
     )];
+
+  if (!uniquePageIds.length) {
+    return jsonResponse(
+      {
+        error:
+          "Invalid Page IDs in this batch."
+      },
+      400
+    );
+  }
 
   const config =
     getMetaConfig(env);
 
   let mediaBuffer = null;
 
-  let mediaType =
-    run.media_type || null;
-
-  let mediaName =
-    run.media_name || null;
-
   if (
     media &&
     typeof media === "object" &&
     media.name
   ) {
-    mediaName =
-      media.name;
-
     if (
-      (media.type || "")
-        .startsWith("image/")
-    ) {
-      mediaType = "image";
-    } else if (
-      (media.type || "")
-        .startsWith("video/")
-    ) {
-      mediaType = "video";
-    } else {
-      return jsonResponse(
-        {
-          error:
-            "Unsupported media type."
-        },
-        400
-      );
-    }
-
-    const size =
-      Number(
-        media.size || 0
-      );
-
-    if (
-      size >
-      100 * 1024 * 1024
+      typeof media.size === "number" &&
+      media.size >
+        100 * 1024 * 1024
     ) {
       return jsonResponse(
         {
           error:
-            "File is too large. Maximum supported size is 100 MB."
+            "Media file is larger than the 100 MB limit."
         },
         400
       );
@@ -2869,20 +4673,23 @@ async function processPublishBatch(
 
     mediaBuffer =
       await media.arrayBuffer();
-  } else if (
-    mediaType
+  }
+
+  if (
+    run.media_type &&
+    !mediaBuffer
   ) {
     return jsonResponse(
       {
         error:
-          "Media is missing from this publishing batch. Please retry the publishing run."
+          "This publishing run requires its media file, but no media file was received."
       },
       400
     );
   }
 
   const placeholders =
-    uniqueBatchIds
+    uniquePageIds
       .map(() => "?")
       .join(",");
 
@@ -2895,40 +4702,32 @@ async function processPublishBatch(
         ")"
     )
       .bind(
-        ...uniqueBatchIds
+        ...uniquePageIds
       )
       .all();
 
   const pages =
     pagesResult.results || [];
 
-  if (!pages.length) {
-    return jsonResponse(
-      {
-        error:
-          "The selected Pages could not be found."
-      },
-      404
-    );
-  }
-
   if (
     pages.length !==
-    uniqueBatchIds.length
+    uniquePageIds.length
   ) {
     return jsonResponse(
       {
         error:
-          "One or more Pages could not be found. Please sync Pages and try again."
+          "One or more Pages in this batch could not be found. Please sync Pages and try again."
       },
-      404
+      400
     );
   }
 
-  const batchResults = [];
+  const results = [];
+
+  let processed = 0;
 
   for (
-    const fbPage of pages
+    const p of pages
   ) {
     const runPage =
       await env.DB.prepare(
@@ -2938,50 +4737,51 @@ async function processPublishBatch(
       )
         .bind(
           runId,
-          Number(fbPage.id)
+          Number(p.id)
         )
         .first();
 
     if (!runPage) {
-      batchResults.push({
-        page:
-          fbPage.page_name,
+      results.push({
         pageId:
-          fbPage.facebook_page_id,
+          p.facebook_page_id,
+        pageName:
+          p.page_name ||
+          "Unnamed Page",
         success: false,
         error:
-          "Page was not registered in this publishing run."
+          "This Page is not part of the publishing run."
       });
 
       continue;
     }
 
-    // Never publish a successfully completed Page again.
+    // If a Page was already published successfully,
+    // do not publish it again.
     if (
-      String(
-        runPage.status
-      ) === "success"
+      runPage.status ===
+      "success"
     ) {
-      batchResults.push({
-        page:
-          fbPage.page_name,
+      results.push({
         pageId:
-          fbPage.facebook_page_id,
+          p.facebook_page_id,
+        pageName:
+          p.page_name ||
+          "Unnamed Page",
         success: true,
         postId:
-          runPage.post_id || "",
-        alreadyProcessed: true
+          runPage.post_id ||
+          null,
+        skipped: true
       });
 
       continue;
     }
 
-    // Mark processing before calling Meta.
     await env.DB.prepare(
       "UPDATE publish_run_pages " +
-        "SET status = 'processing' " +
-        "WHERE id = ? " +
-        "AND status IN ('pending', 'failed')"
+        "SET status = 'processing', error = NULL " +
+        "WHERE id = ?"
     )
       .bind(
         Number(runPage.id)
@@ -2989,71 +4789,88 @@ async function processPublishBatch(
       .run();
 
     try {
-      let result;
+      let postResult;
 
-      if (!mediaBuffer) {
-        result =
-          await publishTextPost(
-            fbPage,
-            String(
-              run.message || ""
-            ),
-            config.graphVersion
+      if (
+        run.media_type ===
+        "image"
+      ) {
+        postResult =
+          await publishImageToPage(
+            config.graphVersion,
+            p.facebook_page_id,
+            p.access_token,
+            run.message || "",
+            mediaBuffer,
+            media &&
+            media.name
+              ? media.name
+              : run.media_name
           );
       } else if (
-        mediaType === "image"
+        run.media_type ===
+        "video"
       ) {
-        result =
-          await publishImagePost(
-            fbPage,
-            String(
-              run.message || ""
-            ),
+        postResult =
+          await publishVideoToPage(
+            config.graphVersion,
+            p.facebook_page_id,
+            p.access_token,
+            run.message || "",
             mediaBuffer,
-            mediaName,
-            config.graphVersion
+            media &&
+            media.name
+              ? media.name
+              : run.media_name
           );
       } else {
-        result =
-          await publishVideoPost(
-            fbPage,
-            String(
-              run.message || ""
-            ),
-            mediaBuffer,
-            mediaName,
-            config.graphVersion
+        postResult =
+          await publishTextToPage(
+            config.graphVersion,
+            p.facebook_page_id,
+            p.access_token,
+            run.message || ""
           );
       }
 
       const postId =
-        result &&
-        result.id
-          ? String(result.id)
-          : "";
+        postResult &&
+        (
+          postResult.id ||
+          postResult.post_id
+        )
+          ? String(
+              postResult.id ||
+              postResult.post_id
+            )
+          : null;
 
       await env.DB.prepare(
         "UPDATE publish_run_pages " +
           "SET status = 'success', " +
           "post_id = ?, " +
           "error = NULL, " +
-          "completed_at = datetime('now') " +
+          "completed_at = ? " +
           "WHERE id = ?"
       )
         .bind(
           postId,
+          new Date().toISOString(),
           Number(runPage.id)
         )
         .run();
 
-      batchResults.push({
-        page:
-          fbPage.page_name,
+      results.push({
         pageId:
-          fbPage.facebook_page_id,
+          p.facebook_page_id,
+        pageName:
+          p.page_name ||
+          "Unnamed Page",
         success: true,
         postId
       });
+
+      processed++;
     } catch (error) {
       const errorMessage =
         error &&
@@ -3065,55 +4882,73 @@ async function processPublishBatch(
         "UPDATE publish_run_pages " +
           "SET status = 'failed', " +
           "error = ?, " +
-          "completed_at = datetime('now') " +
+          "completed_at = ? " +
           "WHERE id = ?"
       )
         .bind(
           errorMessage,
+          new Date().toISOString(),
           Number(runPage.id)
         )
         .run();
 
-      batchResults.push({
-        page:
-          fbPage.page_name,
+      results.push({
         pageId:
-          fbPage.facebook_page_id,
+          p.facebook_page_id,
+        pageName:
+          p.page_name ||
+          "Unnamed Page",
         success: false,
         error:
           errorMessage
       });
+
+      processed++;
     }
   }
 
-  const pending =
+  const remaining =
     await env.DB.prepare(
-      "SELECT COUNT(*) AS count " +
+      "SELECT " +
+        "SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending, " +
+        "SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing " +
         "FROM publish_run_pages " +
-        "WHERE run_id = ? " +
-        "AND status IN ('pending', 'processing')"
+        "WHERE run_id = ?"
     )
       .bind(runId)
       .first();
 
-  const pendingCount =
+  const pending =
     Number(
-      pending &&
-      pending.count
-        ? pending.count
+      remaining &&
+      remaining.pending
+        ? remaining.pending
         : 0
     );
 
-  if (
-    pendingCount === 0
-  ) {
+  const processing =
+    Number(
+      remaining &&
+      remaining.processing
+        ? remaining.processing
+        : 0
+    );
+
+  const complete =
+    pending === 0 &&
+    processing === 0;
+
+  if (complete) {
     await env.DB.prepare(
       "UPDATE publish_runs " +
         "SET status = 'completed', " +
-        "completed_at = datetime('now') " +
+        "completed_at = ? " +
         "WHERE id = ?"
     )
-      .bind(runId)
+      .bind(
+        new Date().toISOString(),
+        runId
+      )
       .run();
 
     await allowNextDashboardLoad(
@@ -3124,17 +4959,12 @@ async function processPublishBatch(
 
   return jsonResponse({
     runId,
-    processed:
-      batchResults.length,
-    pending:
-      pendingCount,
-    complete:
-      pendingCount === 0,
-    results:
-      batchResults
+    processed,
+    pending,
+    complete,
+    results
   });
 }
-
 // =============================================================
 // PUBLISH RESULTS
 // =============================================================
@@ -3817,17 +5647,17 @@ body {
   min-height: 100vh;
   background:
     radial-gradient(
-      circle at 10% 0%,
-      rgba(24, 119, 242, .12),
-      transparent 30%
+      circle at 20% 0%,
+      rgba(37, 99, 235, 0.13),
+      transparent 35%
     ),
     radial-gradient(
-      circle at 90% 10%,
-      rgba(0, 191, 255, .08),
-      transparent 28%
+      circle at 85% 20%,
+      rgba(14, 165, 233, 0.08),
+      transparent 30%
     ),
-    #f5f8fc;
-  color: #162033;
+    #07111f;
+  color: #e8eef7;
   font-family:
     Inter,
     ui-sans-serif,
@@ -3838,367 +5668,93 @@ body {
     sans-serif;
 }
 
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
 button,
 input,
 textarea {
   font: inherit;
 }
 
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
-}
-
-svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.brand-mark {
-  width: 48px;
-  height: 48px;
-  border-radius: 15px;
-  background:
-    linear-gradient(
-      145deg,
-      #1877f2,
-      #0c55bd
-    );
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 900;
-  font-size: 30px;
-  box-shadow:
-    0 12px 28px rgba(24, 119, 242, .28);
-  flex: 0 0 auto;
-}
-
-.brand-mark span {
-  transform: translateY(3px);
-}
-
-.brand-name {
-  font-size: 13px;
-  line-height: 1;
-  font-weight: 900;
-  letter-spacing: .13em;
-  color: inherit;
-}
-
-.brand-mini {
-  margin-top: 6px;
-  font-size: 9px;
-  line-height: 1;
-  font-weight: 800;
-  letter-spacing: .18em;
-  opacity: .58;
-}
-
-.eyebrow {
-  color: #1877f2;
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: .18em;
-}
-
-.login-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 30px;
-  position: relative;
-  overflow: hidden;
-  background:
-    radial-gradient(
-      circle at 15% 20%,
-      rgba(24, 119, 242, .20),
-      transparent 30%
-    ),
-    radial-gradient(
-      circle at 85% 80%,
-      rgba(0, 140, 255, .15),
-      transparent 32%
-    ),
-    #06101d;
-}
-
-.login-background-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(2px);
-  pointer-events: none;
-}
-
-.orb-one {
-  width: 320px;
-  height: 320px;
-  top: -150px;
-  left: -100px;
-  background:
-    radial-gradient(
-      circle,
-      rgba(24, 119, 242, .20),
-      transparent 70%
-    );
-}
-
-.orb-two {
-  width: 380px;
-  height: 380px;
-  bottom: -200px;
-  right: -100px;
-  background:
-    radial-gradient(
-      circle,
-      rgba(0, 191, 255, .13),
-      transparent 70%
-    );
-}
-
-.login-card {
-  width: 100%;
-  max-width: 470px;
-  position: relative;
-  z-index: 2;
-  padding: 42px;
-  border-radius: 26px;
-  background:
-    linear-gradient(
-      145deg,
-      rgba(19, 34, 55, .96),
-      rgba(9, 21, 36, .98)
-    );
-  border: 1px solid rgba(255,255,255,.10);
-  box-shadow:
-    0 35px 100px rgba(0,0,0,.45);
-  color: #fff;
-}
-
-.login-brand {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 42px;
-}
-
-.login-brand .brand-mini {
-  color: #91a8c5;
-}
-
-.login-icon {
-  width: 62px;
-  height: 62px;
-  border-radius: 19px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background:
-    rgba(24,119,242,.12);
-  border: 1px solid rgba(24,119,242,.25);
-  color: #4d9bff;
-  margin-bottom: 22px;
-}
-
-.login-icon svg {
-  width: 28px;
-  height: 28px;
-}
-
-.login-card h1 {
-  margin: 8px 0 12px;
-  font-size: 32px;
-  letter-spacing: -.04em;
-}
-
-.login-description {
-  color: #94a7bd;
-  line-height: 1.65;
-  margin: 0 0 28px;
-  font-size: 14px;
-}
-
-.login-form label {
-  display: block;
-  color: #d8e3f0;
-  font-size: 12px;
-  font-weight: 800;
-  margin-bottom: 9px;
-}
-
-.password-wrap {
-  position: relative;
-}
-
-.password-wrap input {
-  width: 100%;
-  height: 54px;
-  padding: 0 52px 0 16px;
-  border-radius: 13px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.055);
-  color: #fff;
-  outline: none;
-  transition: .2s;
-}
-
-.password-wrap input::placeholder {
-  color: #667b95;
-}
-
-.password-wrap input:focus {
-  border-color: rgba(24,119,242,.7);
-  box-shadow:
-    0 0 0 4px rgba(24,119,242,.10);
-}
-
-.show-password {
-  position: absolute;
-  right: 5px;
-  top: 5px;
-  width: 44px;
-  height: 44px;
-  border: 0;
-  background: transparent;
-  color: #7890ab;
+button {
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.show-password svg {
-  width: 19px;
-  height: 19px;
-}
-
-.login-submit {
-  width: 100%;
-  height: 54px;
-  border: 0;
-  border-radius: 13px;
-  margin-top: 14px;
-  cursor: pointer;
-  background:
-    linear-gradient(
-      135deg,
-      #1877f2,
-      #0d5fd2
-    );
-  color: #fff;
-  font-weight: 900;
-  box-shadow:
-    0 14px 28px rgba(24,119,242,.24);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  transition:
-    transform .18s,
-    box-shadow .18s;
-}
-
-.login-submit:hover {
-  transform: translateY(-1px);
-  box-shadow:
-    0 18px 34px rgba(24,119,242,.30);
-}
-
-.login-submit svg {
-  width: 18px;
-}
-
-.login-error {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(239,68,68,.10);
-  border: 1px solid rgba(239,68,68,.20);
-  color: #ff9b9b;
-  font-size: 12px;
-  margin-bottom: 16px;
-}
-
-.login-error-icon {
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: rgba(239,68,68,.18);
-  font-weight: 900;
-}
-
-.login-security {
-  margin-top: 24px;
-  color: #60758f;
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-
-.security-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #36d399;
-  box-shadow:
-    0 0 10px rgba(54,211,153,.6);
 }
 
 .dashboard-header {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  color: #fff;
+  position: relative;
+  z-index: 20;
+  border-bottom: 1px solid
+    rgba(255,255,255,0.07);
   background:
-    linear-gradient(
-      105deg,
-      #071426,
-      #0a1c34 60%,
-      #09203c
-    );
-  border-bottom:
-    1px solid rgba(255,255,255,.08);
-  box-shadow:
-    0 10px 30px rgba(5,15,30,.12);
+    rgba(5, 13, 25, 0.88);
+  backdrop-filter:
+    blur(18px);
 }
 
 .header-inner {
-  max-width: 1280px;
-  min-height: 76px;
-  margin: auto;
-  padding: 0 26px;
+  width: min(
+    1380px,
+    calc(100% - 48px)
+  );
+  margin: 0 auto;
+  min-height: 82px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
 }
 
-.brand-area {
+.brand-area,
+.results-brand {
   display: flex;
   align-items: center;
   gap: 13px;
 }
 
-.header-mark {
+.brand-mark {
   width: 42px;
   height: 42px;
-  border-radius: 13px;
-  font-size: 26px;
-  box-shadow: none;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(
+      145deg,
+      #1877f2,
+      #0d5bd7
+    );
+  box-shadow:
+    0 10px 28px
+    rgba(24,119,242,0.28);
+}
+
+.brand-mark span {
+  color: white;
+  font-size: 25px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.brand-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.brand-mini {
+  color: #728198;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
 }
 
 .header-actions {
@@ -4207,310 +5763,307 @@ svg {
   gap: 10px;
 }
 
-.header-actions form {
-  margin: 0;
-}
-
 .connect-account-btn {
-  height: 42px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  padding: 0 16px;
-  border-radius: 11px;
-  background: #1877f2;
-  color: #fff;
-  text-decoration: none;
-  font-size: 12px;
-  font-weight: 900;
-  box-shadow:
-    0 9px 20px rgba(24,119,242,.22);
+  padding: 10px 15px;
+  border-radius: 10px;
+  border: 1px solid
+    rgba(255,255,255,0.08);
+  background:
+    rgba(255,255,255,0.04);
+  color: #dfe8f4;
+  font-size: 13px;
+  font-weight: 700;
+  transition:
+    0.2s ease;
 }
 
 .connect-account-btn:hover {
-  background: #2380f5;
+  border-color:
+    rgba(24,119,242,0.45);
+  background:
+    rgba(24,119,242,0.10);
 }
 
 .plus-icon {
-  font-size: 18px;
+  color: #69a8ff;
+  font-size: 19px;
   line-height: 1;
 }
 
 .header-logout {
-  height: 42px;
-  padding: 0 13px;
+  border: 0;
+  background: transparent;
+  color: #8795a9;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  border-radius: 11px;
-  border:
-    1px solid rgba(255,255,255,.11);
-  background:
-    rgba(255,255,255,.055);
-  color: #b7c7d9;
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .header-logout:hover {
-  color: #fff;
-  background:
-    rgba(255,255,255,.09);
+  color: #ffffff;
 }
 
 .header-logout svg {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .dashboard-container {
-  max-width: 1280px;
+  width: min(
+    1380px,
+    calc(100% - 48px)
+  );
   margin: 0 auto;
-  padding: 0 26px 70px;
+  padding: 56px 0 80px;
 }
 
 .hero {
   position: relative;
-  min-height: 285px;
-  margin: 28px 0 22px;
-  padding: 48px;
-  border-radius: 27px;
   overflow: hidden;
-  color: #fff;
+  min-height: 285px;
+  padding: 50px;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 24px;
   background:
-    radial-gradient(
-      circle at 85% 15%,
-      rgba(24,119,242,.25),
-      transparent 35%
-    ),
     linear-gradient(
-      125deg,
-      #08172b,
-      #0b2341 58%,
-      #0b2b50
+      135deg,
+      rgba(17,32,55,0.96),
+      rgba(8,19,35,0.94)
     );
   box-shadow:
-    0 22px 55px rgba(12,32,57,.15);
+    0 25px 80px
+    rgba(0,0,0,0.24);
 }
 
 .hero-glow {
   position: absolute;
-  width: 450px;
-  height: 450px;
-  right: -180px;
-  bottom: -280px;
+  width: 430px;
+  height: 430px;
+  right: -120px;
+  top: -210px;
   border-radius: 50%;
   background:
-    radial-gradient(
-      circle,
-      rgba(24,119,242,.25),
-      transparent 68%
-    );
+    rgba(24,119,242,0.15);
+  filter: blur(5px);
 }
 
 .hero-content {
-  max-width: 700px;
   position: relative;
   z-index: 2;
+  max-width: 780px;
+}
+
+.eyebrow {
+  color: #5ea0ff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
 }
 
 .hero-eyebrow {
-  color: #6fb0ff;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .hero h1 {
   margin: 0;
-  max-width: 720px;
-  font-size:
-    clamp(32px, 4vw, 51px);
-  line-height: 1.02;
-  letter-spacing: -.055em;
+  font-size: clamp(
+    34px,
+    4vw,
+    58px
+  );
+  line-height: 1.04;
+  letter-spacing: -0.04em;
 }
 
 .hero h1 span {
   display: block;
-  color: #4d9bff;
+  color: #77b0ff;
 }
 
 .hero p {
-  max-width: 640px;
-  margin: 18px 0 0;
-  color: #a8bad0;
-  line-height: 1.65;
-  font-size: 14px;
+  max-width: 690px;
+  margin: 20px 0 0;
+  color: #8797ad;
+  font-size: 15px;
+  line-height: 1.75;
 }
 
 .hero-decoration {
   position: absolute;
-  right: 50px;
-  top: 55px;
-  width: 250px;
-  height: 160px;
+  right: 44px;
+  bottom: 34px;
+  z-index: 3;
 }
 
 .floating-card {
-  position: absolute;
-  min-width: 145px;
-  padding: 13px 15px;
-  border-radius: 14px;
+  min-width: 165px;
+  padding: 13px 16px;
+  border-radius: 13px;
+  border: 1px solid
+    rgba(255,255,255,0.08);
   background:
-    rgba(255,255,255,.07);
-  border:
-    1px solid rgba(255,255,255,.10);
-  backdrop-filter: blur(10px);
-  color: #a9bad0;
-  font-size: 10px;
+    rgba(7,17,31,0.72);
+  box-shadow:
+    0 18px 45px
+    rgba(0,0,0,0.25);
+  backdrop-filter:
+    blur(15px);
+  color: #7f8fa6;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .floating-card strong {
   display: block;
-  color: #fff;
-  font-size: 22px;
-  margin-top: 4px;
+  margin-top: 3px;
+  color: #eef5ff;
+  font-size: 18px;
 }
 
 .floating-one {
-  top: 5px;
-  right: 0;
+  transform: translateX(-40px);
 }
 
 .floating-two {
-  bottom: 0;
-  left: 0;
+  margin-top: -4px;
+  transform: translateX(45px);
 }
 
-.mini-status {
+.mini-status,
+.ready-dot {
   display: inline-block;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #36d399;
   margin-right: 6px;
+  background: #35d399;
   box-shadow:
-    0 0 10px rgba(54,211,153,.7);
+    0 0 0 4px
+    rgba(53,211,153,0.08);
 }
 
 .mini-facebook {
-  display: inline-flex;
+  display: inline-grid;
+  place-items: center;
   width: 18px;
   height: 18px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
+  margin-right: 5px;
+  border-radius: 5px;
   background: #1877f2;
   color: #fff;
-  font-weight: 900;
-  font-size: 14px;
-  margin-right: 6px;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .stats-grid {
   display: grid;
   grid-template-columns:
-    repeat(3, minmax(0, 1fr));
+    repeat(3, 1fr);
   gap: 16px;
-  margin-bottom: 25px;
+  margin-top: 18px;
 }
 
 .stat-card {
-  min-height: 116px;
-  padding: 21px;
-  border-radius: 18px;
-  background: #fff;
-  border:
-    1px solid #e6ebf2;
-  box-shadow:
-    0 9px 28px rgba(18,34,55,.055);
   display: flex;
   align-items: center;
   gap: 16px;
-}
-
-.stat-highlight {
+  min-height: 125px;
+  padding: 22px;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 18px;
   background:
-    linear-gradient(
-      135deg,
-      #fff,
-      #f4f9ff
-    );
+    rgba(11,24,42,0.82);
 }
 
 .stat-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 15px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-}
-
-.accounts-icon {
-  color: #1877f2;
-  background: #edf5ff;
-}
-
-.pages-icon {
-  color: #7958e8;
-  background: #f2efff;
-}
-
-.ready-icon {
-  color: #10a879;
-  background: #eafaf4;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background:
+    rgba(255,255,255,0.04);
 }
 
 .stat-icon svg {
-  width: 24px;
-  height: 24px;
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.accounts-icon {
+  color: #69a8ff;
+}
+
+.pages-icon {
+  color: #8cbcff;
+}
+
+.ready-icon {
+  color: #53d6a1;
+}
+
+.stat-data {
+  min-width: 0;
 }
 
 .stat-data span {
   display: block;
-  color: #647188;
+  color: #8190a4;
   font-size: 11px;
-  font-weight: 800;
-  margin-bottom: 4px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .stat-data strong {
   display: block;
-  color: #162033;
+  margin-top: 5px;
+  color: #f1f6fd;
   font-size: 27px;
-  letter-spacing: -.04em;
-  line-height: 1.05;
+  line-height: 1;
 }
 
 .stat-data small {
   display: block;
-  color: #98a3b4;
+  margin-top: 6px;
+  color: #5f7087;
   font-size: 10px;
-  margin-top: 5px;
 }
 
 .account-card {
-  margin-bottom: 18px;
-  border-radius: 20px;
-  background: #fff;
-  border:
-    1px solid #e4eaf2;
-  box-shadow:
-    0 10px 32px rgba(18,34,55,.055);
+  margin-top: 18px;
   overflow: hidden;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 20px;
+  background:
+    rgba(10,23,40,0.88);
 }
 
 .account-top {
-  padding: 23px;
+  padding: 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  border-bottom:
-    1px solid #edf1f5;
+  gap: 25px;
 }
 
 .account-identity {
@@ -4520,30 +6073,24 @@ svg {
   gap: 15px;
 }
 
-.account-avatar,
-.page-avatar,
-.result-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-weight: 900;
+.account-avatar {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
   background:
     linear-gradient(
       145deg,
-      #1877f2,
-      #6a55df
+      #1c80ff,
+      #1056c5
     );
-}
-
-.account-avatar {
-  width: 54px;
-  height: 54px;
-  border-radius: 17px;
-  font-size: 17px;
+  color: #fff;
+  font-weight: 800;
   box-shadow:
-    0 10px 22px rgba(24,119,242,.18);
-  flex: 0 0 auto;
+    0 12px 30px
+    rgba(24,119,242,0.22);
 }
 
 .account-details {
@@ -4553,73 +6100,59 @@ svg {
 .account-name-line {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .account-name-line h2 {
   margin: 0;
   font-size: 17px;
-  letter-spacing: -.02em;
 }
 
 .connected-badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 8px;
-  border-radius: 99px;
-  color: #0d9b6f;
-  background: #eafaf4;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background:
+    rgba(53,211,153,0.08);
+  color: #62dca9;
   font-size: 9px;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: .06em;
+  font-weight: 800;
 }
 
 .connected-badge span {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #15bd82;
+  background: #42d29a;
 }
 
 .facebook-id {
   margin-top: 6px;
-  color: #8b97a8;
+  color: #63748a;
   font-size: 10px;
 }
 
 .facebook-id code {
-  color: #657188;
-}
-
-code {
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Monaco,
-    Consolas,
-    monospace;
-  word-break: break-all;
+  color: #8091a8;
 }
 
 .account-meta {
-  margin-top: 8px;
-  color: #8793a5;
+  margin-top: 9px;
+  color: #63748a;
   font-size: 10px;
 }
 
 .account-meta strong {
-  color: #3c4b61;
+  color: #b9c8da;
 }
 
 .account-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 0 0 auto;
 }
 
 .account-actions form {
@@ -4627,181 +6160,185 @@ code {
 }
 
 .action-btn {
-  height: 38px;
-  padding: 0 12px;
-  border-radius: 10px;
+  min-height: 38px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 900;
-  border:
-    1px solid #e1e7ef;
-  background: #fff;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  background:
+    rgba(255,255,255,0.03);
+  color: #a7b6c9;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.action-btn:hover {
+  background:
+    rgba(255,255,255,0.06);
+  color: #fff;
 }
 
 .action-btn svg {
   width: 15px;
   height: 15px;
-}
-
-.sync-btn {
-  color: #1877f2;
-}
-
-.sync-btn:hover {
-  background: #f2f7ff;
-  border-color: #c9ddfa;
-}
-
-.remove-btn {
-  color: #d94645;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .remove-btn:hover {
-  background: #fff5f5;
-  border-color: #ffd4d4;
+  color: #ff8795;
+  border-color:
+    rgba(255,91,107,0.25);
 }
 
 .pages-area {
-  padding: 20px 23px 24px;
+  border-top: 1px solid
+    rgba(255,255,255,0.055);
+  padding: 0 24px 24px;
 }
 
 .page-toolbar {
+  padding: 21px 0 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 15px;
-  margin-bottom: 13px;
+  gap: 20px;
 }
 
 .toolbar-title {
-  color: #28364c;
+  color: #dfe8f4;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 800;
 }
 
 .toolbar-subtitle {
-  margin-top: 3px;
-  color: #9aa5b5;
+  margin-top: 4px;
+  color: #64758c;
   font-size: 10px;
 }
 
 .toolbar-actions {
   display: flex;
-  gap: 6px;
-}
-
-.toolbar-btn {
-  height: 31px;
-  padding: 0 10px;
-  border-radius: 8px;
-  border:
-    1px solid #e0e6ee;
-  background: #f9fafc;
-  color: #647188;
-  font-size: 9px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.toolbar-btn:hover {
-  border-color: #bdd5f5;
-  color: #1877f2;
-  background: #f4f8ff;
-}
-
-.page-list {
-  display: flex;
-  flex-direction: column;
   gap: 7px;
 }
 
+.toolbar-btn {
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 8px;
+  background:
+    rgba(255,255,255,0.025);
+  color: #8090a5;
+  padding: 7px 10px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.toolbar-btn:hover {
+  color: #fff;
+  background:
+    rgba(255,255,255,0.06);
+}
+
+.page-list {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .page-row {
-  position: relative;
-  min-height: 63px;
-  padding: 10px 13px;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 11px;
-  border-radius: 12px;
-  border:
-    1px solid #e8edf3;
-  background: #fafbfd;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid
+    rgba(255,255,255,0.055);
+  border-radius: 11px;
+  background:
+    rgba(255,255,255,0.018);
   cursor: pointer;
   transition:
-    border-color .16s,
-    background .16s,
-    transform .16s,
-    box-shadow .16s;
+    border-color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s ease;
 }
 
 .page-row:hover {
-  border-color: #c9ddf7;
-  background: #f7faff;
-  transform: translateY(-1px);
+  border-color:
+    rgba(72,144,255,0.22);
+  background:
+    rgba(255,255,255,0.035);
 }
 
 .page-row.selected {
-  border-color: #8fbaf0;
+  border-color:
+    rgba(70,143,255,0.34);
   background:
-    linear-gradient(
-      90deg,
-      #f3f8ff,
-      #fbfdff
-    );
-  box-shadow:
-    0 7px 20px rgba(24,119,242,.06);
+    rgba(24,119,242,0.07);
 }
 
-.page-checkbox {
+.page-row input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
 .custom-check {
-  width: 19px;
-  height: 19px;
-  border-radius: 6px;
-  border:
-    1.5px solid #cdd6e2;
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  color: #fff;
-  transition: .15s;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid
+    rgba(255,255,255,0.16);
+  border-radius: 5px;
+  background:
+    rgba(255,255,255,0.025);
 }
 
 .custom-check svg {
+  display: none;
   width: 13px;
   height: 13px;
-  opacity: 0;
-  transform: scale(.7);
-  transition: .15s;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.page-checkbox:checked
-+ .custom-check {
+.page-row.selected
+.custom-check {
+  border-color: #3d91ff;
   background: #1877f2;
-  border-color: #1877f2;
 }
 
-.page-checkbox:checked
-+ .custom-check svg {
-  opacity: 1;
-  transform: scale(1);
+.page-row.selected
+.custom-check svg {
+  display: block;
 }
 
 .page-avatar {
-  width: 37px;
-  height: 37px;
-  border-radius: 11px;
-  font-size: 11px;
-  flex: 0 0 auto;
+  width: 35px;
+  height: 35px;
+  flex: 0 0 35px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background:
+    rgba(255,255,255,0.06);
+  color: #b9c9dd;
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .page-info {
@@ -4811,84 +6348,148 @@ code {
 
 .page-name {
   display: block;
-  color: #26344a;
-  font-size: 12px;
-  font-weight: 900;
   overflow: hidden;
+  color: #d7e2ef;
+  font-size: 11px;
+  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .page-id {
   display: block;
-  color: #9aa5b5;
-  font-size: 9px;
-  margin-top: 4px;
+  margin-top: 3px;
   overflow: hidden;
+  color: #53657c;
+  font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .page-ready {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: #8490a1;
+  color: #5cae91;
   font-size: 9px;
-  font-weight: 800;
-  flex: 0 0 auto;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-.ready-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #2cc994;
+.page-ready .ready-dot {
+  width: 5px;
+  height: 5px;
+  margin-right: 4px;
+}
+
+.no-pages,
+.empty-state {
+  border: 1px dashed
+    rgba(255,255,255,0.10);
+  border-radius: 15px;
+  background:
+    rgba(255,255,255,0.018);
 }
 
 .no-pages {
+  margin-top: 14px;
+  padding: 18px;
   display: flex;
   align-items: center;
   gap: 13px;
-  padding: 15px;
-  border-radius: 12px;
-  background: #fafbfd;
-  border:
-    1px dashed #dce3ec;
-  color: #778499;
 }
 
 .no-pages-icon {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
   border-radius: 10px;
-  color: #d88920;
-  background: #fff6e7;
-  font-weight: 900;
+  background:
+    rgba(255,186,92,0.08);
+  color: #e5b66d;
+  font-weight: 800;
 }
 
 .no-pages strong {
-  color: #39475c;
   font-size: 11px;
 }
 
 .no-pages p {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
+  color: #66778d;
   font-size: 10px;
 }
 
-.studio-card {
-  margin-top: 24px;
-  padding: 26px;
-  border-radius: 22px;
-  background: #fff;
-  border:
-    1px solid #e4eaf2;
+.empty-state {
+  margin-top: 18px;
+  padding: 55px 30px;
+  text-align: center;
+}
+
+.empty-icon {
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 17px;
+  display: grid;
+  place-items: center;
+  border-radius: 17px;
+  background:
+    rgba(24,119,242,0.08);
+  color: #6aa9ff;
+}
+
+.empty-icon svg {
+  width: 27px;
+  height: 27px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.empty-state h3 {
+  margin: 8px 0;
+  font-size: 19px;
+}
+
+.empty-state p {
+  max-width: 480px;
+  margin: 0 auto 22px;
+  color: #68798f;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 16px;
+  border-radius: 10px;
+  background: #1877f2;
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
   box-shadow:
-    0 13px 38px rgba(18,34,55,.065);
+    0 10px 25px
+    rgba(24,119,242,0.20);
+}
+
+.fb-symbol {
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.studio-card {
+  margin-top: 18px;
+  padding: 27px;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 20px;
+  background:
+    rgba(10,23,40,0.90);
+  box-shadow:
+    0 25px 70px
+    rgba(0,0,0,0.18);
 }
 
 .studio-heading {
@@ -4906,124 +6507,131 @@ code {
 }
 
 .studio-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 15px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #1877f2;
-  background: #edf5ff;
-  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background:
+    rgba(24,119,242,0.10);
+  color: #6faaff;
 }
 
 .studio-icon svg {
   width: 22px;
   height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.studio-title-wrap h2 {
-  margin: 4px 0 3px;
-  font-size: 19px;
-  letter-spacing: -.03em;
+.studio-heading h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  letter-spacing: -0.02em;
 }
 
-.studio-title-wrap p {
-  margin: 0;
-  color: #8d98a9;
+.studio-heading p {
+  margin: 4px 0 0;
+  color: #687a90;
   font-size: 10px;
 }
 
 .selected-pill {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-height: 33px;
-  padding: 0 11px;
-  border-radius: 99px;
-  background: #edf5ff;
-  color: #1877f2;
+  gap: 6px;
+  padding: 8px 11px;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 999px;
+  color: #8c9db2;
+  background:
+    rgba(255,255,255,0.025);
   font-size: 10px;
-  font-weight: 900;
-  white-space: nowrap;
+  font-weight: 750;
 }
 
 .selected-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #1877f2;
+  background: #5c8ed1;
 }
 
 .composer-box {
-  border:
-    1px solid #e3e8ef;
-  border-radius: 14px;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 13px;
   overflow: hidden;
-  background: #fbfcfe;
+  background:
+    rgba(4,12,23,0.55);
 }
 
 .composer-top {
-  min-height: 44px;
-  padding: 0 14px;
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  border-bottom:
-    1px solid #e8edf3;
-  background: #fff;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid
+    rgba(255,255,255,0.05);
 }
 
 .composer-top label {
-  color: #334259;
+  color: #aebed1;
   font-size: 10px;
-  font-weight: 900;
+  font-weight: 800;
 }
 
 #char-count {
-  color: #a1aaba;
+  color: #52647a;
   font-size: 9px;
 }
 
-#message {
+.composer-box textarea {
+  display: block;
   width: 100%;
-  min-height: 145px;
+  min-height: 165px;
   resize: vertical;
-  padding: 16px;
   border: 0;
   outline: 0;
+  padding: 16px;
   background: transparent;
-  color: #253349;
+  color: #e9f0f8;
   font-size: 13px;
   line-height: 1.65;
 }
 
-#message::placeholder {
-  color: #adb7c5;
+.composer-box textarea::placeholder {
+  color: #45566d;
 }
 
 .upload-box {
   position: relative;
-  min-height: 150px;
-  margin-top: 14px;
-  border-radius: 15px;
-  border:
-    1.5px dashed #cfd9e6;
-  background: #fafcff;
+  margin-top: 12px;
+  min-height: 145px;
+  padding: 28px 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  text-align: center;
+  border: 1px dashed
+    rgba(255,255,255,0.10);
+  border-radius: 13px;
+  background:
+    rgba(255,255,255,0.015);
   cursor: pointer;
-  overflow: hidden;
-  transition: .18s;
+  text-align: center;
 }
 
 .upload-box:hover,
 .upload-box.has-file {
-  border-color: #8db9ed;
-  background: #f5f9ff;
+  border-color:
+    rgba(24,119,242,0.35);
+  background:
+    rgba(24,119,242,0.035);
 }
 
 .upload-box input {
@@ -5036,353 +6644,287 @@ code {
 }
 
 .upload-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 13px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #1877f2;
-  background: #eaf3ff;
+  width: 38px;
+  height: 38px;
   margin-bottom: 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background:
+    rgba(255,255,255,0.045);
+  color: #7890ad;
 }
 
 .upload-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .upload-title {
-  color: #36445a;
+  color: #b8c8da;
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 800;
 }
 
 .upload-subtitle {
-  color: #98a4b5;
+  margin-top: 3px;
+  color: #5d6f86;
   font-size: 9px;
-  margin-top: 4px;
 }
 
 .upload-hint {
-  color: #b0b8c5;
+  margin-top: 7px;
+  color: #45566c;
   font-size: 8px;
-  margin-top: 9px;
 }
 
 .file-name {
-  max-width: 80%;
-  color: #1877f2;
-  font-size: 9px;
-  font-weight: 800;
   margin-top: 7px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: #68a8ff;
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .publish-footer {
+  margin-top: 15px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 15px;
-  margin-top: 18px;
 }
 
 .publish-info {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
 }
 
 .publish-info-icon {
   width: 31px;
   height: 31px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  color: #0ca879;
-  background: #eafaf4;
-  font-size: 12px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background:
+    rgba(53,211,153,0.08);
+  color: #53d49f;
+  font-size: 13px;
   font-weight: 900;
 }
 
-.publish-info strong {
+.publish-info strong,
+.publish-info span {
   display: block;
-  color: #39475c;
+}
+
+.publish-info strong {
+  color: #aebed0;
   font-size: 10px;
 }
 
 .publish-info span {
-  display: block;
-  color: #99a4b4;
-  font-size: 9px;
   margin-top: 2px;
+  color: #596b82;
+  font-size: 9px;
 }
 
 .publish-btn {
   min-width: 190px;
-  height: 46px;
-  border: 0;
-  border-radius: 12px;
-  padding: 0 17px;
+  min-height: 43px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 9px;
-  color: #fff;
+  border: 0;
+  border-radius: 10px;
   background:
     linear-gradient(
       135deg,
       #1877f2,
-      #0d5fd2
+      #1162d5
     );
-  font-size: 10px;
-  font-weight: 900;
-  cursor: pointer;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 850;
   box-shadow:
-    0 12px 25px rgba(24,119,242,.22);
-  transition: .18s;
+    0 12px 28px
+    rgba(24,119,242,0.20);
 }
 
 .publish-btn:hover {
-  transform: translateY(-1px);
-  box-shadow:
-    0 16px 30px rgba(24,119,242,.28);
+  filter: brightness(1.07);
 }
 
 .publish-btn:disabled {
+  opacity: 0.7;
   cursor: wait;
-  opacity: .82;
-  transform: none;
 }
 
 .publish-arrow {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .publish-spinner {
   display: none;
   width: 15px;
   height: 15px;
-  border-radius: 50%;
-  border:
-    2px solid rgba(255,255,255,.35);
+  border: 2px solid
+    rgba(255,255,255,0.35);
   border-top-color: #fff;
+  border-radius: 50%;
   animation:
-    spin .7s linear infinite;
+    spin 0.7s linear infinite;
 }
 
 .publish-btn.loading
-.publish-btn-text {
-  display: none;
+.publish-spinner {
+  display: inline-block;
 }
 
 .publish-btn.loading
 .publish-arrow {
   display: none;
-}
-
-.publish-btn.loading
-.publish-spinner {
-  display: block;
 }
 
 @keyframes spin {
   to {
-    transform: rotate(360deg);
+    transform:
+      rotate(360deg);
   }
-}
-
-.empty-state {
-  margin: 24px 0;
-  padding: 60px 30px;
-  text-align: center;
-  border-radius: 22px;
-  background: #fff;
-  border:
-    1px solid #e4eaf2;
-  box-shadow:
-    0 12px 34px rgba(18,34,55,.055);
-}
-
-.empty-icon {
-  width: 65px;
-  height: 65px;
-  margin: 0 auto 17px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 19px;
-  color: #1877f2;
-  background: #edf5ff;
-}
-
-.empty-icon svg {
-  width: 28px;
-  height: 28px;
-}
-
-.empty-state h3 {
-  margin: 8px 0 8px;
-  font-size: 21px;
-  letter-spacing: -.03em;
-}
-
-.empty-state p {
-  max-width: 470px;
-  margin: 0 auto 21px;
-  color: #8793a5;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.primary-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  min-height: 43px;
-  padding: 0 16px;
-  border-radius: 11px;
-  background: #1877f2;
-  color: #fff;
-  text-decoration: none;
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.fb-symbol {
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  background: rgba(255,255,255,.15);
-  font-weight: 900;
-  font-size: 15px;
 }
 
 .error-screen {
   min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 25px;
-  background: #f5f8fc;
+  display: grid;
+  place-items: center;
+  padding: 30px;
 }
 
 .error-box {
-  width: 100%;
-  max-width: 760px;
+  width: min(
+    620px,
+    100%
+  );
   padding: 32px;
-  border-radius: 20px;
-  background: #fff;
-  border:
-    1px solid #e3e8ef;
-  box-shadow:
-    0 16px 50px rgba(18,34,55,.08);
+  border: 1px solid
+    rgba(255,255,255,0.08);
+  border-radius: 18px;
+  background:
+    rgba(10,23,40,0.92);
 }
 
 .error-icon {
-  width: 45px;
-  height: 45px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 14px;
-  background: #fff0f0;
-  color: #d94141;
-  font-size: 20px;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background:
+    rgba(255,91,107,0.09);
+  color: #ff7c89;
   font-weight: 900;
-  margin-bottom: 17px;
+  font-size: 18px;
 }
 
 .error-box h2 {
-  margin: 8px 0;
-  font-size: 24px;
+  margin: 9px 0;
 }
 
 .error-intro,
 .error-detail {
-  color: #7e899a;
+  color: #77879b;
   font-size: 12px;
+  line-height: 1.6;
 }
 
 .error-box pre {
-  margin-top: 18px;
-  padding: 15px;
-  max-height: 330px;
   overflow: auto;
-  border-radius: 12px;
-  background: #f7f8fa;
-  color: #59667a;
-  font-size: 11px;
-  line-height: 1.55;
+  max-height: 320px;
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: 10px;
+  background:
+    rgba(0,0,0,0.25);
+  color: #d3deea;
+  font-size: 10px;
   white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .back-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  min-height: 42px;
-  margin-top: 18px;
-  padding: 0 15px;
-  border-radius: 10px;
-  background: #1877f2;
-  color: #fff;
-  text-decoration: none;
+  margin-top: 15px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background:
+    rgba(255,255,255,0.05);
+  color: #aab9ca;
   font-size: 10px;
-  font-weight: 900;
+  font-weight: 800;
+}
+
+.back-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .results-page {
   min-height: 100vh;
   background:
     radial-gradient(
-      circle at 50% -10%,
-      rgba(24,119,242,.12),
+      circle at 50% 0%,
+      rgba(24,119,242,0.12),
       transparent 35%
     ),
-    #f5f8fc;
+    #07111f;
 }
 
 .results-topbar {
   min-height: 76px;
-  padding: 0 26px;
+  padding: 0 30px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #081628;
-  color: #fff;
-}
-
-.results-brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  color: #fff;
-  text-decoration: none;
+  border-bottom: 1px solid
+    rgba(255,255,255,0.06);
+  background:
+    rgba(5,13,25,0.84);
 }
 
 .small-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  font-size: 25px;
-  box-shadow: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.small-mark span {
+  font-size: 22px;
 }
 
 .results-container {
-  max-width: 950px;
+  width: min(
+    1080px,
+    calc(100% - 40px)
+  );
   margin: 0 auto;
-  padding: 60px 24px 70px;
+  padding: 50px 0 70px;
 }
 
 .results-hero {
@@ -5390,219 +6932,265 @@ code {
 }
 
 .success-big-icon {
-  width: 66px;
-  height: 66px;
-  margin: 0 auto 18px;
-  border-radius: 21px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #eafaf4;
-  color: #0ca879;
-  font-size: 30px;
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 15px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background:
+    rgba(53,211,153,0.09);
+  color: #53d6a1;
+  font-size: 25px;
   font-weight: 900;
 }
 
 .results-hero h1 {
-  margin: 8px 0 10px;
-  font-size: 34px;
-  letter-spacing: -.045em;
+  max-width: 700px;
+  margin: 9px auto 0;
+  font-size: clamp(
+    28px,
+    4vw,
+    44px
+  );
+  letter-spacing: -0.035em;
 }
 
 .results-hero p {
-  margin: 0 auto;
-  max-width: 650px;
-  color: #8793a5;
+  max-width: 600px;
+  margin: 13px auto 0;
+  color: #687a91;
   font-size: 12px;
-  line-height: 1.65;
+  line-height: 1.7;
 }
 
 .results-stats {
   display: grid;
   grid-template-columns:
-    repeat(3, minmax(0, 1fr));
+    repeat(3, 1fr);
   gap: 12px;
-  margin: 32px 0 18px;
+  margin-top: 30px;
 }
 
 .result-stat {
-  padding: 19px;
-  border-radius: 15px;
-  background: #fff;
-  border:
-    1px solid #e4eaf2;
+  padding: 17px;
   text-align: center;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 13px;
+  background:
+    rgba(11,24,42,0.75);
 }
 
 .result-stat span {
   display: block;
-  color: #8c98a9;
+  color: #687a90;
   font-size: 9px;
   font-weight: 800;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: .08em;
 }
 
 .result-stat strong {
   display: block;
-  margin-top: 4px;
-  font-size: 25px;
+  margin-top: 5px;
+  font-size: 24px;
 }
 
 .success-stat strong {
-  color: #0ca879;
+  color: #53d6a1;
 }
 
 .failed-stat strong {
-  color: #d94141;
+  color: #ff7d89;
 }
 
 .total-stat strong {
-  color: #1877f2;
+  color: #83aef2;
 }
 
 .results-card {
-  padding: 22px;
-  border-radius: 20px;
-  background: #fff;
-  border:
-    1px solid #e4eaf2;
-  box-shadow:
-    0 12px 35px rgba(18,34,55,.055);
+  margin-top: 18px;
+  overflow: hidden;
+  border: 1px solid
+    rgba(255,255,255,0.07);
+  border-radius: 18px;
+  background:
+    rgba(10,23,40,0.88);
 }
 
 .results-card-header {
+  padding: 21px 22px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 15px;
-  padding-bottom: 17px;
-  border-bottom:
-    1px solid #edf1f5;
-  margin-bottom: 14px;
+  border-bottom: 1px solid
+    rgba(255,255,255,0.055);
 }
 
 .results-card-header h2 {
   margin: 5px 0 0;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .report-pill {
   padding: 7px 10px;
-  border-radius: 99px;
-  background: #edf5ff;
-  color: #1877f2;
+  border-radius: 999px;
+  background:
+    rgba(255,255,255,0.035);
+  color: #7e90a6;
   font-size: 9px;
-  font-weight: 900;
+  font-weight: 800;
 }
 
 .results-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
 .result-row {
-  padding: 12px;
-  border-radius: 12px;
-  border:
-    1px solid #e5eaf0;
+  min-height: 65px;
+  padding: 12px 22px;
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px 15px;
+  grid-template-columns:
+    minmax(0, 1fr)
+    auto
+    minmax(130px, 0.45fr);
+  align-items: center;
+  gap: 18px;
+  border-bottom: 1px solid
+    rgba(255,255,255,0.045);
 }
 
-.result-success {
-  background: #fbfffd;
-  border-color: #d7eee4;
-}
-
-.result-failed {
-  background: #fffafa;
-  border-color: #f1dddd;
+.result-row:last-child {
+  border-bottom: 0;
 }
 
 .result-main {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
 }
 
 .result-avatar {
   width: 34px;
   height: 34px;
-  border-radius: 10px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background:
+    rgba(255,255,255,0.05);
+  color: #9db0c8;
   font-size: 9px;
-  flex: 0 0 auto;
+  font-weight: 850;
 }
 
 .result-main strong {
-  color: #334259;
-  font-size: 11px;
+  display: block;
+  overflow: hidden;
+  color: #cbd8e7;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result-page-id {
   margin-top: 3px;
-  color: #9ba6b5;
+  color: #53667e;
   font-size: 8px;
 }
 
 .result-status {
-  align-self: center;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  color: #74869d;
   font-size: 9px;
-  font-weight: 900;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .status-success {
-  color: #0ca879;
+  color: #58d5a2;
 }
 
 .status-failed {
-  color: #d94141;
-}
-
-.result-status span {
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: currentColor;
-  color: #fff;
+  color: #ff7f8b;
 }
 
 .result-extra {
-  grid-column: 1 / -1;
-  color: #7e899a;
-  font-size: 9px;
+  overflow: hidden;
+  color: #71839a;
+  font-size: 8px;
   line-height: 1.5;
-  word-break: break-word;
+  text-overflow: ellipsis;
 }
 
 .success-extra {
-  color: #5f907f;
+  color: #536a7f;
 }
 
 .results-actions {
-  text-align: center;
+  display: flex;
+  justify-content: center;
 }
 
 .results-actions .back-btn {
   margin-top: 22px;
 }
 
-@media (max-width: 980px) {
+@media (
+  max-width: 900px
+) {
   .hero-decoration {
-    opacity: .45;
-    right: 15px;
+    display: none;
   }
 
-  .account-top {
+  .page-list {
+    grid-template-columns:
+      1fr;
+  }
+
+  .stats-grid {
+    grid-template-columns:
+      1fr;
+  }
+}
+
+@media (
+  max-width: 700px
+) {
+  .header-inner,
+  .dashboard-container {
+    width: min(
+      100% - 28px,
+      1380px
+    );
+  }
+
+  .header-inner {
+    min-height: 72px;
+  }
+
+  .connect-account-btn {
+    display: none;
+  }
+
+  .dashboard-container {
+    padding-top: 28px;
+  }
+
+  .hero {
+    padding: 30px 23px;
+    min-height: 0;
+  }
+
+  .account-top,
+  .studio-heading,
+  .publish-footer {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -5611,221 +7199,514 @@ code {
     width: 100%;
   }
 
-  .account-actions form {
-    flex: 1;
-  }
-
+  .account-actions form,
   .action-btn {
-    width: 100%;
-    justify-content: center;
-  }
-}
-
-@media (max-width: 760px) {
-  .header-inner {
-    min-height: auto;
-    padding: 15px;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .header-actions {
-    display: grid;
-    grid-template-columns: 1fr auto;
-  }
-
-  .connect-account-btn {
-    width: 100%;
-  }
-
-  .dashboard-container {
-    padding: 0 14px 45px;
-  }
-
-  .hero {
-    min-height: 300px;
-    padding: 30px 24px;
-    margin-top: 14px;
-  }
-
-  .hero h1 {
-    font-size: 34px;
-  }
-
-  .hero-decoration {
-    display: none;
-  }
-
-  .stats-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .account-top {
-    padding: 17px;
-  }
-
-  .account-identity {
-    width: 100%;
-  }
-
-  .pages-area {
-    padding: 16px;
-  }
-
-  .page-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .toolbar-actions {
-    width: 100%;
-  }
-
-  .toolbar-btn {
     flex: 1;
-  }
-
-  .page-ready {
-    display: none;
   }
 
   .studio-card {
-    padding: 18px;
-  }
-
-  .studio-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .selected-pill {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .publish-footer {
-    align-items: stretch;
-    flex-direction: column;
+    padding: 20px;
   }
 
   .publish-btn {
     width: 100%;
   }
 
-  .results-topbar {
-    padding: 14px 16px;
-  }
-
-  .results-container {
-    padding: 40px 14px 50px;
-  }
-
-  .results-hero h1 {
-    font-size: 28px;
-  }
-
   .results-stats {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 520px) {
-  .login-page {
-    padding: 15px;
-  }
-
-  .login-card {
-    padding: 28px 21px;
-    border-radius: 22px;
-  }
-
-  .login-card h1 {
-    font-size: 27px;
-  }
-
-  .brand-mini {
-    font-size: 8px;
-  }
-
-  .header-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .header-logout {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .account-actions {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .page-row {
-    padding: 9px;
-  }
-
-  .page-avatar {
-    width: 34px;
-    height: 34px;
-  }
-
-  .studio-title-wrap {
-    align-items: flex-start;
-  }
-
-  .results-card {
-    padding: 15px;
-  }
-
-  .results-card-header {
-    align-items: flex-start;
-    flex-direction: column;
+    grid-template-columns:
+      1fr;
   }
 
   .result-row {
-    grid-template-columns: 1fr;
+    grid-template-columns:
+      1fr auto;
   }
 
-  .result-status {
-    justify-self: start;
+  .result-extra {
+    grid-column: 1 / -1;
+  }
+
+  .results-topbar {
+    padding: 0 18px;
   }
 }
 `;
 
-  return new Response(
-    "<!DOCTYPE html>" +
-      '<html lang="en">' +
-      "<head>" +
-      '<meta charset="UTF-8">' +
-      '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-      '<meta name="robots" content="noindex,nofollow">' +
-      "<title>" +
-      escapeHtml(title) +
-      " - " +
-      escapeHtml(APP_NAME) +
-      "</title>" +
-      "<style>" +
-      css +
-      "</style>" +
-      "</head>" +
-      "<body>" +
-      content +
-      "</body>" +
-      "</html>",
-    {
-      headers: {
-        "Content-Type":
-          "text/html; charset=UTF-8",
-        "Cache-Control":
-          "no-store, no-cache, must-revalidate, max-age=0",
-        Pragma: "no-cache",
-        Expires: "0"
-      }
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+  <meta
+    name="robots"
+    content="noindex,nofollow"
+  >
+  <title>${escapeHtml(
+    title
+  )}</title>
+
+  <style>
+    ${css}
+  </style>
+</head>
+
+<body>
+  ${content}
+</body>
+</html>`;
+}
+
+// =============================================================
+// AUTHENTICATION HELPERS
+// =============================================================
+
+async function handleLogin(
+  request,
+  env
+) {
+  const form =
+    await request.formData();
+
+  const password =
+    String(
+      form.get("password") || ""
+    );
+
+  const expected =
+    String(
+      env.PUBLISHER_PASSWORD || ""
+    );
+
+  if (
+    !expected ||
+    password !== expected
+  ) {
+    return showLoginPage(
+      "Invalid password. Please try again."
+    );
+  }
+
+  const sessionId =
+    crypto.randomUUID();
+
+  const now =
+    new Date().toISOString();
+
+  await env.DB.prepare(
+    "INSERT INTO auth_sessions " +
+      "(id, created_at, dashboard_ticket) " +
+      "VALUES (?, ?, 1)"
+  )
+    .bind(
+      sessionId,
+      now
+    )
+    .run();
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: "/",
+      "Set-Cookie":
+        authCookie(sessionId),
+      "Cache-Control": "no-store"
     }
+  });
+}
+
+async function getAuthenticatedSession(
+  request,
+  env
+) {
+  const cookie =
+    getCookie(
+      request,
+      "auth_session"
+    );
+
+  if (!cookie) {
+    return null;
+  }
+
+  const session =
+    await env.DB.prepare(
+      "SELECT id, created_at, dashboard_ticket " +
+        "FROM auth_sessions " +
+        "WHERE id = ?"
+    )
+      .bind(cookie)
+      .first();
+
+  if (!session) {
+    return null;
+  }
+
+  const createdAt =
+    new Date(
+      session.created_at
+    ).getTime();
+
+  if (
+    !Number.isFinite(
+      createdAt
+    ) ||
+    Date.now() -
+      createdAt >
+      24 * 60 * 60 * 1000
+  ) {
+    await deleteSession(
+      env.DB,
+      cookie
+    );
+
+    return null;
+  }
+
+  return {
+    sessionId:
+      session.id,
+    dashboardTicket:
+      Number(
+        session.dashboard_ticket || 0
+      )
+  };
+}
+
+async function consumeDashboardTicket(
+  db,
+  sessionId
+) {
+  const result =
+    await db.prepare(
+      "UPDATE auth_sessions " +
+        "SET dashboard_ticket = 0 " +
+        "WHERE id = ? " +
+        "AND dashboard_ticket = 1"
+    )
+      .bind(sessionId)
+      .run();
+
+  return Boolean(
+    result &&
+    result.meta &&
+    result.meta.changes > 0
   );
 }
 
+async function allowNextDashboardLoad(
+  db,
+  sessionId
+) {
+  await db.prepare(
+    "UPDATE auth_sessions " +
+      "SET dashboard_ticket = 1 " +
+      "WHERE id = ?"
+  )
+    .bind(sessionId)
+    .run();
+}
+
+async function deleteSession(
+  db,
+  sessionId
+) {
+  if (!sessionId) {
+    return;
+  }
+
+  await db.prepare(
+    "DELETE FROM auth_sessions " +
+      "WHERE id = ?"
+  )
+    .bind(sessionId)
+    .run();
+}
+
+function authCookie(
+  sessionId
+) {
+  return (
+    "auth_session=" +
+    encodeURIComponent(
+      sessionId
+    ) +
+    "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400"
+  );
+}
+
+function clearAuthCookie() {
+  return (
+    "auth_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+  );
+}
+
+function handleLogout() {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: "/login",
+      "Set-Cookie":
+        clearAuthCookie(),
+      "Cache-Control":
+        "no-store"
+    }
+  });
+}
+
+// =============================================================
+// COOKIE HELPERS
+// =============================================================
+
+function getCookie(
+  request,
+  name
+) {
+  const header =
+    request.headers.get(
+      "Cookie"
+    );
+
+  if (!header) {
+    return null;
+  }
+
+  const cookies =
+    header.split(";");
+
+  for (
+    const cookie of cookies
+  ) {
+    const index =
+      cookie.indexOf("=");
+
+    if (index === -1) {
+      continue;
+    }
+
+    const key =
+      cookie
+        .slice(0, index)
+        .trim();
+
+    if (key !== name) {
+      continue;
+    }
+
+    return decodeURIComponent(
+      cookie
+        .slice(index + 1)
+        .trim()
+    );
+  }
+
+  return null;
+}
+
+// =============================================================
+// HTML ESCAPING
+// =============================================================
+
+function escapeHtml(
+  value
+) {
+  return String(
+    value == null
+      ? ""
+      : value
+  )
+    .replaceAll(
+      "&",
+      "&amp;"
+    )
+    .replaceAll(
+      "<",
+      "&lt;"
+    )
+    .replaceAll(
+      ">",
+      "&gt;"
+    )
+    .replaceAll(
+      '"',
+      "&quot;"
+    )
+    .replaceAll(
+      "'",
+      "&#39;"
+    );
+}
+
+// =============================================================
+// LOGIN PAGE
+// =============================================================
+
+function showLoginPage(
+  errorMessage
+) {
+  return page(
+    "Login",
+    `
+    <div class="login-page">
+
+      <div class="login-bg-glow"></div>
+
+      <div class="login-card">
+
+        <div class="login-brand">
+
+          <div class="brand-mark login-mark">
+            <span>f</span>
+          </div>
+
+          <div class="brand-name">
+            NAQI SHAH
+          </div>
+
+          <div class="brand-mini">
+            META PUBLISHING COMMAND CENTER
+          </div>
+
+        </div>
+
+        <div class="login-heading">
+
+          <div class="eyebrow">
+            SECURE ACCESS
+          </div>
+
+          <h1>
+            Welcome back.
+          </h1>
+
+          <p>
+            Enter your password to access the
+            Facebook publishing dashboard.
+          </p>
+
+        </div>
+
+        ${
+          errorMessage
+            ? `
+              <div class="login-error">
+                ${escapeHtml(
+                  errorMessage
+                )}
+              </div>
+            `
+            : ""
+        }
+
+        <form
+          method="POST"
+          action="/login"
+          class="login-form"
+        >
+
+          <label
+            for="password"
+            class="login-label"
+          >
+            Dashboard Password
+          </label>
+
+          <div class="password-wrap">
+
+            <input
+              id="password"
+              type="password"
+              name="password"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+              required
+              autofocus
+            />
+
+            <button
+              type="button"
+              class="show-password"
+              onclick="togglePassword()"
+              aria-label="Show password"
+            >
+              <svg
+                id="eyeIcon"
+                viewBox="0 0 24 24"
+              >
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="2.5"
+                />
+              </svg>
+            </button>
+
+          </div>
+
+          <button
+            type="submit"
+            class="login-submit"
+          >
+            <span>
+              Enter Dashboard
+            </span>
+
+            <svg viewBox="0 0 24 24">
+              <path d="M5 12h14"/>
+              <path d="m13 6 6 6-6 6"/>
+            </svg>
+          </button>
+
+        </form>
+
+        <div class="login-security">
+          <span class="security-dot"></span>
+          Protected dashboard session
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      function togglePassword() {
+        const input =
+          document.getElementById(
+            "password"
+          );
+
+        const icon =
+          document.getElementById(
+            "eyeIcon"
+          );
+
+        if (
+          input.type ===
+          "password"
+        ) {
+          input.type =
+            "text";
+
+          icon.innerHTML =
+            '<path d="M3 3l18 18"/>' +
+            '<path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>' +
+            '<path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 3.8"/>' +
+            '<path d="M6.6 6.6C3.6 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 3.1-.5"/>';
+        } else {
+          input.type =
+            "password";
+
+          icon.innerHTML =
+            '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>' +
+            '<circle cx="12" cy="12" r="2.5"/>';
+        }
+      }
+    </script>
+    `
+  );
+}
 // =============================================================
 // ESCAPE HTML
 // =============================================================
