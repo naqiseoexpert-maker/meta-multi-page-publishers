@@ -1,150 +1,200 @@
 const APP_NAME = "Meta Multi Page Publisher";
 
 export default {
-async fetch(request, env) {
-try {
-await ensureDatabaseSchema(env.DB);
+  async fetch(request, env) {
+    try {
+      await ensureDatabaseSchema(env.DB);
 
-```
-  const url = new URL(request.url);
-  const path = url.pathname;
+      const url = new URL(request.url);
+      const path = url.pathname;
 
-  // ---------------------------------------------------------
-  // PUBLIC LOGIN
-  // ---------------------------------------------------------
-  if (request.method === "GET" && path === "/login") {
-    return showLoginPage("");
-  }
+      // ---------------------------------------------------------
+      // PUBLIC LOGIN
+      // ---------------------------------------------------------
+      if (request.method === "GET" && path === "/login") {
+        return showLoginPage("");
+      }
 
-  if (request.method === "POST" && path === "/login") {
-    return handleLogin(request, env);
-  }
+      if (request.method === "POST" && path === "/login") {
+        return handleLogin(request, env);
+      }
 
-  // ---------------------------------------------------------
-  // AUTHENTICATION
-  // ---------------------------------------------------------
-  const auth = await getAuthenticatedSession(request, env);
+      // ---------------------------------------------------------
+      // AUTHENTICATION
+      // ---------------------------------------------------------
+      const auth = await getAuthenticatedSession(request, env);
 
-  if (!auth) {
-    return Response.redirect(url.origin + "/login", 302);
-  }
+      if (!auth) {
+        return Response.redirect(url.origin + "/login", 302);
+      }
 
-  // ---------------------------------------------------------
-  // DASHBOARD
-  // ---------------------------------------------------------
-  if (request.method === "GET" && path === "/") {
-    const allowed = await consumeDashboardTicket(env.DB, auth.sessionId);
+      // ---------------------------------------------------------
+      // DASHBOARD
+      // ---------------------------------------------------------
+      if (request.method === "GET" && path === "/") {
+        const allowed = await consumeDashboardTicket(
+          env.DB,
+          auth.sessionId
+        );
 
-    if (!allowed) {
-      await deleteSession(env.DB, auth.sessionId);
+        if (!allowed) {
+          await deleteSession(env.DB, auth.sessionId);
 
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: url.origin + "/login",
-          "Set-Cookie": clearAuthCookie(),
-          "Cache-Control": "no-store"
+          return new Response(null, {
+            status: 302,
+            headers: {
+              Location: url.origin + "/login",
+              "Set-Cookie": clearAuthCookie(),
+              "Cache-Control": "no-store"
+            }
+          });
         }
+
+        return showDashboard(env);
+      }
+
+      // ---------------------------------------------------------
+      // META OAUTH
+      // ---------------------------------------------------------
+      if (request.method === "GET" && path === "/auth/meta") {
+        return startMetaLogin(request, env, auth.sessionId);
+      }
+
+      if (
+        request.method === "GET" &&
+        path === "/auth/meta/callback"
+      ) {
+        return metaCallback(request, env, auth.sessionId);
+      }
+
+      // ---------------------------------------------------------
+      // SYNC
+      // ---------------------------------------------------------
+      if (request.method === "POST" && path === "/sync") {
+        const response = await syncPages(request, env);
+
+        await allowNextDashboardLoad(
+          env.DB,
+          auth.sessionId
+        );
+
+        return response;
+      }
+
+      // ---------------------------------------------------------
+      // REMOVE ACCOUNT
+      // ---------------------------------------------------------
+      if (
+        request.method === "POST" &&
+        path === "/remove-account"
+      ) {
+        const response = await removeAccount(
+          request,
+          env
+        );
+
+        await allowNextDashboardLoad(
+          env.DB,
+          auth.sessionId
+        );
+
+        return response;
+      }
+
+      // ---------------------------------------------------------
+      // PUBLISH - START NEW RUN
+      // ---------------------------------------------------------
+      if (
+        request.method === "POST" &&
+        path === "/publish"
+      ) {
+        return startPublishRun(
+          request,
+          env,
+          auth.sessionId
+        );
+      }
+
+      // ---------------------------------------------------------
+      // PUBLISH - PROCESS BATCH
+      // ---------------------------------------------------------
+      if (
+        request.method === "POST" &&
+        path === "/publish-batch"
+      ) {
+        return processPublishBatch(
+          request,
+          env,
+          auth.sessionId
+        );
+      }
+
+      // ---------------------------------------------------------
+      // PUBLISH - RESULTS
+      // ---------------------------------------------------------
+      if (
+        request.method === "GET" &&
+        path === "/publish-results"
+      ) {
+        return showPublishResults(
+          request,
+          env,
+          auth.sessionId
+        );
+      }
+
+      // ---------------------------------------------------------
+      // LOGOUT
+      // ---------------------------------------------------------
+      if (
+        (request.method === "POST" ||
+          request.method === "GET") &&
+        path === "/logout"
+      ) {
+        await deleteSession(
+          env.DB,
+          auth.sessionId
+        );
+
+        return handleLogout();
+      }
+
+      return new Response("Not Found", {
+        status: 404
       });
+    } catch (error) {
+      console.error(error);
+
+      return page(
+        "Error",
+        `
+        <div class="error-screen">
+          <div class="error-box">
+            <div class="error-icon">!</div>
+            <div class="eyebrow">SYSTEM ERROR</div>
+
+            <h2>Something went wrong</h2>
+
+            <p class="error-intro">
+              The dashboard could not complete this request.
+            </p>
+
+            <pre>${escapeHtml(
+              error &&
+              (error.stack || error.message)
+                ? error.stack || error.message
+                : String(error)
+            )}</pre>
+
+            <a class="back-btn" href="/login">
+              Return to Login
+            </a>
+          </div>
+        </div>
+        `
+      );
     }
-
-    return showDashboard(env);
   }
-
-  // ---------------------------------------------------------
-  // META OAUTH
-  // ---------------------------------------------------------
-  if (request.method === "GET" && path === "/auth/meta") {
-    return startMetaLogin(request, env, auth.sessionId);
-  }
-
-  if (request.method === "GET" && path === "/auth/meta/callback") {
-    return metaCallback(request, env, auth.sessionId);
-  }
-
-  // ---------------------------------------------------------
-  // SYNC
-  // ---------------------------------------------------------
-  if (request.method === "POST" && path === "/sync") {
-    const response = await syncPages(request, env);
-
-    await allowNextDashboardLoad(env.DB, auth.sessionId);
-
-    return response;
-  }
-
-  // ---------------------------------------------------------
-  // REMOVE ACCOUNT
-  // ---------------------------------------------------------
-  if (request.method === "POST" && path === "/remove-account") {
-    const response = await removeAccount(request, env);
-
-    await allowNextDashboardLoad(env.DB, auth.sessionId);
-
-    return response;
-  }
-
-  // ---------------------------------------------------------
-  // PUBLISH - START NEW RUN
-  // ---------------------------------------------------------
-  if (request.method === "POST" && path === "/publish") {
-    return startPublishRun(request, env, auth.sessionId);
-  }
-
-  // ---------------------------------------------------------
-  // PUBLISH - PROCESS BATCH
-  // ---------------------------------------------------------
-  if (request.method === "POST" && path === "/publish-batch") {
-    return processPublishBatch(request, env, auth.sessionId);
-  }
-
-  // ---------------------------------------------------------
-  // PUBLISH - RESULTS
-  // ---------------------------------------------------------
-  if (request.method === "GET" && path === "/publish-results") {
-    return showPublishResults(request, env, auth.sessionId);
-  }
-
-  // ---------------------------------------------------------
-  // LOGOUT
-  // ---------------------------------------------------------
-  if (
-    (request.method === "POST" || request.method === "GET") &&
-    path === "/logout"
-  ) {
-    await deleteSession(env.DB, auth.sessionId);
-    return handleLogout();
-  }
-
-  return new Response("Not Found", { status: 404 });
-} catch (error) {
-  console.error(error);
-
-  return page(
-    "Error",
-    `
-    <div class="error-screen">
-      <div class="error-box">
-        <div class="error-icon">!</div>
-        <div class="eyebrow">SYSTEM ERROR</div>
-        <h2>Something went wrong</h2>
-        <p class="error-intro">
-          The dashboard could not complete this request.
-        </p>
-        <pre>${escapeHtml(
-          error && (error.stack || error.message)
-            ? error.stack || error.message
-            : String(error)
-        )}</pre>
-        <a class="back-btn" href="/login">Return to Login</a>
-      </div>
-    </div>
-    `
-  );
-}
-```
-
-}
 };
 
 // =============================================================
@@ -152,154 +202,206 @@ await ensureDatabaseSchema(env.DB);
 // =============================================================
 
 async function getAuthenticatedSession(request, env) {
-const password = String(env.PUBLISHER_PASSWORD || "").trim();
+  const password = String(
+    env.PUBLISHER_PASSWORD || ""
+  ).trim();
 
-if (!password) {
-throw new Error(
-"PUBLISHER_PASSWORD secret is missing. Add it in Cloudflare Worker > Settings > Variables and Secrets."
-);
-}
+  if (!password) {
+    throw new Error(
+      "PUBLISHER_PASSWORD secret is missing. Add it in Cloudflare Worker > Settings > Variables and Secrets."
+    );
+  }
 
-const cookies = parseCookies(request.headers.get("Cookie") || "");
-const sessionId = cookies.mp_session;
+  const cookies = parseCookies(
+    request.headers.get("Cookie") || ""
+  );
 
-if (!sessionId) {
-return null;
-}
+  const sessionId = cookies.mp_session;
 
-const session = await env.DB.prepare(
-"SELECT id, created_at, dashboard_ticket FROM auth_sessions WHERE id = ?"
-)
-.bind(sessionId)
-.first();
+  if (!sessionId) {
+    return null;
+  }
 
-if (!session) {
-return null;
-}
+  const session = await env.DB.prepare(
+    "SELECT id, created_at, dashboard_ticket " +
+      "FROM auth_sessions WHERE id = ?"
+  )
+    .bind(sessionId)
+    .first();
 
-const created = Date.parse(String(session.created_at || ""));
+  if (!session) {
+    return null;
+  }
 
-if (
-Number.isFinite(created) &&
-Date.now() - created > 24 * 60 * 60 * 1000
-) {
-await deleteSession(env.DB, sessionId);
-return null;
-}
+  const created = Date.parse(
+    String(session.created_at || "")
+  );
 
-return {
-sessionId,
-dashboardTicket: Number(session.dashboard_ticket || 0)
-};
+  if (
+    Number.isFinite(created) &&
+    Date.now() - created >
+      24 * 60 * 60 * 1000
+  ) {
+    await deleteSession(
+      env.DB,
+      sessionId
+    );
+
+    return null;
+  }
+
+  return {
+    sessionId,
+    dashboardTicket: Number(
+      session.dashboard_ticket || 0
+    )
+  };
 }
 
 async function handleLogin(request, env) {
-const configuredPassword = String(env.PUBLISHER_PASSWORD || "").trim();
+  const configuredPassword = String(
+    env.PUBLISHER_PASSWORD || ""
+  ).trim();
 
-if (!configuredPassword) {
-return showLoginPage(
-"PUBLISHER_PASSWORD secret is not configured."
-);
+  if (!configuredPassword) {
+    return showLoginPage(
+      "PUBLISHER_PASSWORD secret is not configured."
+    );
+  }
+
+  const form = await request.formData();
+
+  const password = String(
+    form.get("password") || ""
+  );
+
+  if (
+    !password ||
+    password !== configuredPassword
+  ) {
+    return showLoginPage(
+      "Incorrect password. Please try again."
+    );
+  }
+
+  const sessionId =
+    crypto.randomUUID();
+
+  await env.DB.prepare(
+    "INSERT INTO auth_sessions " +
+      "(id, created_at, dashboard_ticket) " +
+      "VALUES (?, datetime('now'), 1)"
+  )
+    .bind(sessionId)
+    .run();
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: "/",
+      "Set-Cookie":
+        "mp_session=" +
+        encodeURIComponent(sessionId) +
+        "; Path=/; HttpOnly; Secure; SameSite=Lax",
+      "Cache-Control": "no-store"
+    }
+  });
 }
 
-const form = await request.formData();
-const password = String(form.get("password") || "");
+async function consumeDashboardTicket(
+  db,
+  sessionId
+) {
+  const result = await db
+    .prepare(
+      "UPDATE auth_sessions " +
+        "SET dashboard_ticket = 0 " +
+        "WHERE id = ? AND dashboard_ticket = 1"
+    )
+    .bind(sessionId)
+    .run();
 
-if (!password || password !== configuredPassword) {
-return showLoginPage("Incorrect password. Please try again.");
+  return Number(
+    result.meta &&
+      result.meta.changes
+      ? result.meta.changes
+      : 0
+  ) > 0;
 }
 
-const sessionId = crypto.randomUUID();
-
-await env.DB.prepare(
-"INSERT INTO auth_sessions (id, created_at, dashboard_ticket) VALUES (?, datetime('now'), 1)"
-)
-.bind(sessionId)
-.run();
-
-return new Response(null, {
-status: 302,
-headers: {
-Location: "/",
-"Set-Cookie":
-"mp_session=" +
-encodeURIComponent(sessionId) +
-"; Path=/; HttpOnly; Secure; SameSite=Lax",
-"Cache-Control": "no-store"
-}
-});
+async function allowNextDashboardLoad(
+  db,
+  sessionId
+) {
+  await db
+    .prepare(
+      "UPDATE auth_sessions " +
+        "SET dashboard_ticket = 1 " +
+        "WHERE id = ?"
+    )
+    .bind(sessionId)
+    .run();
 }
 
-async function consumeDashboardTicket(db, sessionId) {
-const result = await db
-.prepare(
-"UPDATE auth_sessions SET dashboard_ticket = 0 WHERE id = ? AND dashboard_ticket = 1"
-)
-.bind(sessionId)
-.run();
+async function deleteSession(
+  db,
+  sessionId
+) {
+  if (!sessionId) {
+    return;
+  }
 
-return Number(
-result.meta && result.meta.changes
-? result.meta.changes
-: 0
-) > 0;
-}
-
-async function allowNextDashboardLoad(db, sessionId) {
-await db
-.prepare(
-"UPDATE auth_sessions SET dashboard_ticket = 1 WHERE id = ?"
-)
-.bind(sessionId)
-.run();
-}
-
-async function deleteSession(db, sessionId) {
-if (!sessionId) return;
-
-await db
-.prepare("DELETE FROM auth_sessions WHERE id = ?")
-.bind(sessionId)
-.run();
+  await db
+    .prepare(
+      "DELETE FROM auth_sessions WHERE id = ?"
+    )
+    .bind(sessionId)
+    .run();
 }
 
 function clearAuthCookie() {
-return "mp_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax";
+  return (
+    "mp_session=; Path=/; Max-Age=0; " +
+    "HttpOnly; Secure; SameSite=Lax"
+  );
 }
 
 function handleLogout() {
-return new Response(null, {
-status: 302,
-headers: {
-Location: "/login",
-"Set-Cookie": clearAuthCookie(),
-"Cache-Control": "no-store"
-}
-});
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: "/login",
+      "Set-Cookie": clearAuthCookie(),
+      "Cache-Control": "no-store"
+    }
+  });
 }
 
 function parseCookies(header) {
-const cookies = {};
+  const cookies = {};
 
-for (const part of header.split(";")) {
-const index = part.indexOf("=");
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
 
-```
-if (index === -1) {
-  continue;
-}
+    if (index === -1) {
+      continue;
+    }
 
-const name = part.slice(0, index).trim();
-const value = part.slice(index + 1).trim();
+    const name = part
+      .slice(0, index)
+      .trim();
 
-if (name) {
-  cookies[name] = decodeURIComponent(value);
-}
-```
+    const value = part
+      .slice(index + 1)
+      .trim();
 
-}
+    if (name) {
+      cookies[name] =
+        decodeURIComponent(value);
+    }
+  }
 
-return cookies;
+  return cookies;
 }
 
 // =============================================================
@@ -307,113 +409,157 @@ return cookies;
 // =============================================================
 
 function showLoginPage(errorMessage) {
-const errorHtml = errorMessage
-? `       <div class="login-error">         <span class="login-error-icon">!</span>         <span>${escapeHtml(errorMessage)}</span>       </div>
+  const errorHtml = errorMessage
+    ? `
+      <div class="login-error">
+        <span class="login-error-icon">!</span>
+        <span>${escapeHtml(
+          errorMessage
+        )}</span>
+      </div>
     `
-: "";
+    : "";
 
-return page(
-"Password Required",
-` <div class="login-page"> <div class="login-background-orb orb-one"></div> <div class="login-background-orb orb-two"></div>
+  return page(
+    "Password Required",
+    `
+    <div class="login-page">
+      <div class="login-background-orb orb-one"></div>
+      <div class="login-background-orb orb-two"></div>
 
-```
-  <div class="login-card">
-    <div class="login-brand">
-      <div class="brand-mark">
-        <span>f</span>
-      </div>
-      <div>
-        <div class="brand-name">NAQI SHAH</div>
-        <div class="brand-mini">COMMAND CENTER</div>
-      </div>
-    </div>
+      <div class="login-card">
 
-    <div class="login-icon">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M17 10V8a5 5 0 0 0-10 0v2"/>
-        <rect x="4" y="10" width="16" height="11" rx="2"/>
-        <path d="M12 14v3"/>
-      </svg>
-    </div>
+        <div class="login-brand">
+          <div class="brand-mark">
+            <span>f</span>
+          </div>
 
-    <div class="eyebrow">SECURE ACCESS</div>
+          <div>
+            <div class="brand-name">
+              NAQI SHAH
+            </div>
 
-    <h1>Password Required</h1>
+            <div class="brand-mini">
+              COMMAND CENTER
+            </div>
+          </div>
+        </div>
 
-    <p class="login-description">
-      Enter your dashboard password to access your
-      Facebook publishing command center.
-    </p>
-
-    ${errorHtml}
-
-    <form method="POST" action="/login" class="login-form">
-      <label for="password">Dashboard Password</label>
-
-      <div class="password-wrap">
-        <input
-          id="password"
-          type="password"
-          name="password"
-          placeholder="Enter your password"
-          autocomplete="current-password"
-          required
-          autofocus
-        />
-
-        <button
-          type="button"
-          class="show-password"
-          onclick="togglePassword()"
-          aria-label="Show password"
-        >
-          <svg id="eyeIcon" viewBox="0 0 24 24">
-            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>
-            <circle cx="12" cy="12" r="2.5"/>
+        <div class="login-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M17 10V8a5 5 0 0 0-10 0v2"/>
+            <rect
+              x="4"
+              y="10"
+              width="16"
+              height="11"
+              rx="2"
+            />
+            <path d="M12 14v3"/>
           </svg>
-        </button>
+        </div>
+
+        <div class="eyebrow">
+          SECURE ACCESS
+        </div>
+
+        <h1>Password Required</h1>
+
+        <p class="login-description">
+          Enter your dashboard password to access your
+          Facebook publishing command center.
+        </p>
+
+        ${errorHtml}
+
+        <form
+          method="POST"
+          action="/login"
+          class="login-form"
+        >
+          <label for="password">
+            Dashboard Password
+          </label>
+
+          <div class="password-wrap">
+            <input
+              id="password"
+              type="password"
+              name="password"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+              required
+              autofocus
+            />
+
+            <button
+              type="button"
+              class="show-password"
+              onclick="togglePassword()"
+              aria-label="Show password"
+            >
+              <svg
+                id="eyeIcon"
+                viewBox="0 0 24 24"
+              >
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="2.5"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            class="login-submit"
+          >
+            <span>Enter Dashboard</span>
+
+            <svg viewBox="0 0 24 24">
+              <path d="M5 12h14"/>
+              <path d="m13 6 6 6-6 6"/>
+            </svg>
+          </button>
+        </form>
+
+        <div class="login-security">
+          <span class="security-dot"></span>
+          Protected dashboard session
+        </div>
+
       </div>
-
-      <button type="submit" class="login-submit">
-        <span>Enter Dashboard</span>
-        <svg viewBox="0 0 24 24">
-          <path d="M5 12h14"/>
-          <path d="m13 6 6 6-6 6"/>
-        </svg>
-      </button>
-    </form>
-
-    <div class="login-security">
-      <span class="security-dot"></span>
-      Protected dashboard session
     </div>
-  </div>
-</div>
 
-<script>
-  function togglePassword() {
-    const input = document.getElementById("password");
-    const icon = document.getElementById("eyeIcon");
+    <script>
+      function togglePassword() {
+        const input =
+          document.getElementById("password");
 
-    if (input.type === "password") {
-      input.type = "text";
-      icon.innerHTML =
-        '<path d="M3 3l18 18"/>' +
-        '<path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>' +
-        '<path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 3.8"/>' +
-        '<path d="M6.6 6.6C3.6 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 3.1-.5"/>';
-    } else {
-      input.type = "password";
-      icon.innerHTML =
-        '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>' +
-        '<circle cx="12" cy="12" r="2.5"/>';
-    }
-  }
-</script>
-`
-```
+        const icon =
+          document.getElementById("eyeIcon");
 
-);
+        if (input.type === "password") {
+          input.type = "text";
+
+          icon.innerHTML =
+            '<path d="M3 3l18 18"/>' +
+            '<path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>' +
+            '<path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 3.8"/>' +
+            '<path d="M6.6 6.6C3.6 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 3.1-.5"/>';
+        } else {
+          input.type = "password";
+
+          icon.innerHTML =
+            '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>' +
+            '<circle cx="12" cy="12" r="2.5"/>';
+        }
+      }
+    </script>
+    `
+  );
 }
 
 // =============================================================
@@ -421,124 +567,125 @@ return page(
 // =============================================================
 
 async function ensureDatabaseSchema(db) {
-if (!db) {
-throw new Error(
-"D1 database binding DB is missing. Check your Cloudflare Worker D1 binding name."
-);
-}
+  if (!db) {
+    throw new Error(
+      "D1 database binding DB is missing. Check your Cloudflare Worker D1 binding name."
+    );
+  }
 
-await db
-.prepare(
-"CREATE TABLE IF NOT EXISTS accounts (" +
-"id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-"facebook_user_id TEXT NOT NULL UNIQUE, " +
-"account_name TEXT, " +
-"access_token TEXT NOT NULL, " +
-"created_at TEXT DEFAULT (datetime('now'))" +
-")"
-)
-.run();
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS accounts (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "facebook_user_id TEXT NOT NULL UNIQUE, " +
+        "account_name TEXT, " +
+        "access_token TEXT NOT NULL, " +
+        "created_at TEXT DEFAULT (datetime('now'))" +
+        ")"
+    )
+    .run();
 
-await db
-.prepare(
-"CREATE TABLE IF NOT EXISTS pages (" +
-"id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-"facebook_page_id TEXT NOT NULL UNIQUE, " +
-"page_name TEXT, " +
-"access_token TEXT NOT NULL, " +
-"account_id INTEGER NOT NULL, " +
-"created_at TEXT DEFAULT (datetime('now'))" +
-")"
-)
-.run();
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS pages (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "facebook_page_id TEXT NOT NULL UNIQUE, " +
+        "page_name TEXT, " +
+        "access_token TEXT NOT NULL, " +
+        "account_id INTEGER NOT NULL, " +
+        "created_at TEXT DEFAULT (datetime('now'))" +
+        ")"
+    )
+    .run();
 
-await db
-.prepare(
-"CREATE INDEX IF NOT EXISTS idx_pages_account_id ON pages(account_id)"
-)
-.run();
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_pages_account_id " +
+        "ON pages(account_id)"
+    )
+    .run();
 
-await db
-.prepare(
-"CREATE TABLE IF NOT EXISTS auth_sessions (" +
-"id TEXT PRIMARY KEY, " +
-"created_at TEXT NOT NULL, " +
-"dashboard_ticket INTEGER NOT NULL DEFAULT 0" +
-")"
-)
-.run();
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS auth_sessions (" +
+        "id TEXT PRIMARY KEY, " +
+        "created_at TEXT NOT NULL, " +
+        "dashboard_ticket INTEGER NOT NULL DEFAULT 0" +
+        ")"
+    )
+    .run();
 
-// -----------------------------------------------------------
-// PUBLISH RUNS
-// -----------------------------------------------------------
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS publish_runs (" +
+        "id TEXT PRIMARY KEY, " +
+        "session_id TEXT NOT NULL, " +
+        "message TEXT, " +
+        "media_type TEXT, " +
+        "media_name TEXT, " +
+        "created_at TEXT NOT NULL, " +
+        "completed_at TEXT, " +
+        "status TEXT NOT NULL DEFAULT 'processing'" +
+        ")"
+    )
+    .run();
 
-await db
-.prepare(
-"CREATE TABLE IF NOT EXISTS publish_runs (" +
-"id TEXT PRIMARY KEY, " +
-"session_id TEXT NOT NULL, " +
-"message TEXT, " +
-"media_type TEXT, " +
-"media_name TEXT, " +
-"created_at TEXT NOT NULL, " +
-"completed_at TEXT, " +
-"status TEXT NOT NULL DEFAULT 'processing'" +
-")"
-)
-.run();
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS publish_run_pages (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "run_id TEXT NOT NULL, " +
+        "page_db_id INTEGER NOT NULL, " +
+        "facebook_page_id TEXT NOT NULL, " +
+        "page_name TEXT, " +
+        "status TEXT NOT NULL DEFAULT 'pending', " +
+        "post_id TEXT, " +
+        "error TEXT, " +
+        "created_at TEXT NOT NULL, " +
+        "completed_at TEXT, " +
+        "UNIQUE(run_id, page_db_id)" +
+        ")"
+    )
+    .run();
 
-await db
-.prepare(
-"CREATE TABLE IF NOT EXISTS publish_run_pages (" +
-"id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-"run_id TEXT NOT NULL, " +
-"page_db_id INTEGER NOT NULL, " +
-"facebook_page_id TEXT NOT NULL, " +
-"page_name TEXT, " +
-"status TEXT NOT NULL DEFAULT 'pending', " +
-"post_id TEXT, " +
-"error TEXT, " +
-"created_at TEXT NOT NULL, " +
-"completed_at TEXT, " +
-"UNIQUE(run_id, page_db_id)" +
-")"
-)
-.run();
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_publish_run_pages_run_id " +
+        "ON publish_run_pages(run_id)"
+    )
+    .run();
 
-await db
-.prepare(
-"CREATE INDEX IF NOT EXISTS idx_publish_run_pages_run_id " +
-"ON publish_run_pages(run_id)"
-)
-.run();
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_publish_run_pages_status " +
+        "ON publish_run_pages(run_id, status)"
+    )
+    .run();
 
-await db
-.prepare(
-"CREATE INDEX IF NOT EXISTS idx_publish_run_pages_status " +
-"ON publish_run_pages(run_id, status)"
-)
-.run();
+  await db
+    .prepare(
+      "DELETE FROM auth_sessions " +
+        "WHERE created_at < datetime('now', '-1 day')"
+    )
+    .run();
 
-// Clean old sessions.
-await db
-.prepare(
-"DELETE FROM auth_sessions WHERE created_at < datetime('now', '-1 day')"
-)
-.run();
+  await db
+    .prepare(
+      "DELETE FROM publish_runs " +
+        "WHERE created_at < datetime('now', '-2 day')"
+    )
+    .run();
 
-// Clean publish runs older than 2 days.
-await db
-.prepare(
-"DELETE FROM publish_runs WHERE created_at < datetime('now', '-2 day')"
-)
-.run();
-
-await db
-.prepare(
-"DELETE FROM publish_run_pages " +
-"WHERE run_id NOT IN (SELECT id FROM publish_runs)"
-)
-.run();
+  await db
+    .prepare(
+      "DELETE FROM publish_run_pages " +
+        "WHERE run_id NOT IN " +
+        "(SELECT id FROM publish_runs)"
+    )
+    .run();
 }
 
 // =============================================================
@@ -546,37 +693,49 @@ await db
 // =============================================================
 
 function getMetaConfig(env) {
-const appId = String(env.META_APP_ID || "").trim();
-const appSecret = String(env.META_APP_SECRET || "").trim();
+  const appId = String(
+    env.META_APP_ID || ""
+  ).trim();
 
-let graphVersion = String(env.META_GRAPH_VERSION || "").trim();
+  const appSecret = String(
+    env.META_APP_SECRET || ""
+  ).trim();
 
-const missing = [];
+  let graphVersion = String(
+    env.META_GRAPH_VERSION || ""
+  ).trim();
 
-if (!appId) missing.push("META_APP_ID");
-if (!appSecret) missing.push("META_APP_SECRET");
+  const missing = [];
 
-if (!graphVersion) {
-graphVersion = "v24.0";
-}
+  if (!appId) {
+    missing.push("META_APP_ID");
+  }
 
-if (missing.length) {
-throw new Error(
-"Meta configuration is missing: " +
-missing.join(", ") +
-". Make sure these exact names exist in Cloudflare Worker > Settings > Variables and Secrets."
-);
-}
+  if (!appSecret) {
+    missing.push("META_APP_SECRET");
+  }
 
-if (!graphVersion.startsWith("v")) {
-graphVersion = "v" + graphVersion;
-}
+  if (!graphVersion) {
+    graphVersion = "v24.0";
+  }
 
-return {
-appId,
-appSecret,
-graphVersion
-};
+  if (missing.length) {
+    throw new Error(
+      "Meta configuration is missing: " +
+        missing.join(", ") +
+        ". Make sure these exact names exist in Cloudflare Worker > Settings > Variables and Secrets."
+    );
+  }
+
+  if (!graphVersion.startsWith("v")) {
+    graphVersion = "v" + graphVersion;
+  }
+
+  return {
+    appId,
+    appSecret,
+    graphVersion
+  };
 }
 
 // =============================================================
@@ -584,365 +743,522 @@ graphVersion
 // =============================================================
 
 async function showDashboard(env) {
-const accountsResult = await env.DB.prepare(
-"SELECT id, facebook_user_id, account_name, created_at FROM accounts ORDER BY id ASC"
-).all();
+  const accountsResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_user_id, account_name, created_at " +
+        "FROM accounts ORDER BY id ASC"
+    ).all();
 
-const accounts = accountsResult.results || [];
+  const accounts =
+    accountsResult.results || [];
 
-const pagesResult = await env.DB.prepare(
-"SELECT id, facebook_page_id, page_name, account_id FROM pages ORDER BY account_id ASC, page_name COLLATE NOCASE ASC"
-).all();
+  const pagesResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_page_id, page_name, account_id " +
+        "FROM pages " +
+        "ORDER BY account_id ASC, " +
+        "page_name COLLATE NOCASE ASC"
+    ).all();
 
-const pages = pagesResult.results || [];
+  const pages =
+    pagesResult.results || [];
 
-const groupedPages = {};
+  const groupedPages = {};
 
-for (const account of accounts) {
-groupedPages[account.id] = [];
-}
+  for (const account of accounts) {
+    groupedPages[account.id] = [];
+  }
 
-for (const p of pages) {
-if (!groupedPages[p.account_id]) {
-groupedPages[p.account_id] = [];
-}
-
-```
-groupedPages[p.account_id].push(p);
-```
-
-}
-
-const totalAccounts = accounts.length;
-const totalPages = pages.length;
-
-let accountHtml = "";
-
-if (!accounts.length) {
-accountHtml = ` <section class="empty-state"> <div class="empty-icon"> <svg viewBox="0 0 24 24"> <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/> <circle cx="9" cy="7" r="4"/> <path d="M19 8v6"/> <path d="M22 11h-6"/> </svg> </div>
-
-```
-    <div class="eyebrow">GET STARTED</div>
-
-    <h3>No Facebook account connected</h3>
-
-    <p>
-      Connect your Facebook account to bring your Pages into the
-      publishing command center.
-    </p>
-
-    <a class="primary-btn" href="/auth/meta">
-      <span class="fb-symbol">f</span>
-      Connect Facebook Account
-    </a>
-  </section>
-`;
-```
-
-} else {
-for (const account of accounts) {
-const accountPages = groupedPages[account.id] || [];
-
-```
-  let pageHtml = "";
-
-  if (accountPages.length) {
-    pageHtml = `
-      <div class="page-toolbar">
-        <div>
-          <div class="toolbar-title">Connected Pages</div>
-          <div class="toolbar-subtitle">
-            Select the Pages you want to publish to
-          </div>
-        </div>
-
-        <div class="toolbar-actions">
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="selectAccountPages(${Number(account.id)}, true)"
-          >
-            Select all
-          </button>
-
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="selectAccountPages(${Number(account.id)}, false)"
-          >
-            Clear
-          </button>
-        </div>
-      </div>
-
-      <div class="page-list">
-    `;
-
-    for (const p of accountPages) {
-      const initial = getInitials(p.page_name || "Page");
-
-      pageHtml += `
-        <label class="page-row">
-          <input
-            class="page-checkbox account-${Number(account.id)}"
-            type="checkbox"
-            name="page_ids"
-            value="${escapeHtml(p.id)}"
-            form="publish-form"
-          />
-
-          <span class="custom-check">
-            <svg viewBox="0 0 24 24">
-              <path d="m5 12 4 4L19 6"/>
-            </svg>
-          </span>
-
-          <span class="page-avatar">${escapeHtml(initial)}</span>
-
-          <span class="page-info">
-            <span class="page-name">
-              ${escapeHtml(p.page_name || "Unnamed Page")}
-            </span>
-
-            <span class="page-id">
-              ID: ${escapeHtml(p.facebook_page_id)}
-            </span>
-          </span>
-
-          <span class="page-ready">
-            <span class="ready-dot"></span>
-            Ready
-          </span>
-        </label>
-      `;
+  for (const p of pages) {
+    if (!groupedPages[p.account_id]) {
+      groupedPages[p.account_id] = [];
     }
 
-    pageHtml += `</div>`;
-  } else {
-    pageHtml = `
-      <div class="no-pages">
-        <div class="no-pages-icon">!</div>
-        <div>
-          <strong>No Pages found</strong>
-          <p>
-            Click <b>Sync Pages</b> to refresh this Facebook account.
-          </p>
+    groupedPages[p.account_id].push(p);
+  }
+
+  const totalAccounts =
+    accounts.length;
+
+  const totalPages =
+    pages.length;
+
+  let accountHtml = "";
+
+  if (!accounts.length) {
+    accountHtml = `
+      <section class="empty-state">
+
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M19 8v6"/>
+            <path d="M22 11h-6"/>
+          </svg>
         </div>
-      </div>
+
+        <div class="eyebrow">
+          GET STARTED
+        </div>
+
+        <h3>
+          No Facebook account connected
+        </h3>
+
+        <p>
+          Connect your Facebook account to bring your Pages
+          into the publishing command center.
+        </p>
+
+        <a class="primary-btn" href="/auth/meta">
+          <span class="fb-symbol">f</span>
+          Connect Facebook Account
+        </a>
+
+      </section>
+    `;
+  } else {
+    for (const account of accounts) {
+      const accountPages =
+        groupedPages[account.id] || [];
+
+      let pageHtml = "";
+
+      if (accountPages.length) {
+        pageHtml = `
+          <div class="page-toolbar">
+
+            <div>
+              <div class="toolbar-title">
+                Connected Pages
+              </div>
+
+              <div class="toolbar-subtitle">
+                Select the Pages you want to publish to
+              </div>
+            </div>
+
+            <div class="toolbar-actions">
+
+              <button
+                type="button"
+                class="toolbar-btn"
+                onclick="selectAccountPages(${Number(
+                  account.id
+                )}, true)"
+              >
+                Select all
+              </button>
+
+              <button
+                type="button"
+                class="toolbar-btn"
+                onclick="selectAccountPages(${Number(
+                  account.id
+                )}, false)"
+              >
+                Clear
+              </button>
+
+            </div>
+          </div>
+
+          <div class="page-list">
+        `;
+
+        for (const p of accountPages) {
+          const initial =
+            getInitials(
+              p.page_name || "Page"
+            );
+
+          pageHtml += `
+            <label class="page-row">
+
+              <input
+                class="page-checkbox account-${Number(
+                  account.id
+                )}"
+                type="checkbox"
+                name="page_ids"
+                value="${escapeHtml(p.id)}"
+                form="publish-form"
+              />
+
+              <span class="custom-check">
+                <svg viewBox="0 0 24 24">
+                  <path d="m5 12 4 4L19 6"/>
+                </svg>
+              </span>
+
+              <span class="page-avatar">
+                ${escapeHtml(initial)}
+              </span>
+
+              <span class="page-info">
+
+                <span class="page-name">
+                  ${escapeHtml(
+                    p.page_name ||
+                      "Unnamed Page"
+                  )}
+                </span>
+
+                <span class="page-id">
+                  ID:
+                  ${escapeHtml(
+                    p.facebook_page_id
+                  )}
+                </span>
+
+              </span>
+
+              <span class="page-ready">
+                <span class="ready-dot"></span>
+                Ready
+              </span>
+
+            </label>
+          `;
+        }
+
+        pageHtml += `</div>`;
+      } else {
+        pageHtml = `
+          <div class="no-pages">
+
+            <div class="no-pages-icon">
+              !
+            </div>
+
+            <div>
+              <strong>
+                No Pages found
+              </strong>
+
+              <p>
+                Click <b>Sync Pages</b> to refresh
+                this Facebook account.
+              </p>
+            </div>
+
+          </div>
+        `;
+      }
+
+      const accountInitials =
+        getInitials(
+          account.account_name ||
+            "Facebook Account"
+        );
+
+      accountHtml += `
+        <section class="account-card">
+
+          <div class="account-top">
+
+            <div class="account-identity">
+
+              <div class="account-avatar">
+                ${escapeHtml(
+                  accountInitials
+                )}
+              </div>
+
+              <div class="account-details">
+
+                <div class="account-name-line">
+
+                  <h2>
+                    ${escapeHtml(
+                      account.account_name ||
+                        "Facebook Account"
+                    )}
+                  </h2>
+
+                  <span class="connected-badge">
+                    <span></span>
+                    Connected
+                  </span>
+
+                </div>
+
+                <div class="facebook-id">
+                  Facebook ID:
+                  <code>
+                    ${escapeHtml(
+                      account.facebook_user_id
+                    )}
+                  </code>
+                </div>
+
+                <div class="account-meta">
+                  <span>
+                    <strong>
+                      ${accountPages.length}
+                    </strong>
+                    Connected Page${
+                      accountPages.length === 1
+                        ? ""
+                        : "s"
+                    }
+                  </span>
+                </div>
+
+              </div>
+            </div>
+
+            <div class="account-actions">
+
+              <form
+                method="POST"
+                action="/sync"
+              >
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${escapeHtml(
+                    account.id
+                  )}"
+                />
+
+                <button
+                  class="action-btn sync-btn"
+                  type="submit"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M20 11a8.1 8.1 0 0 0-14.9-4L3 10"/>
+                    <path d="M3 5v5h5"/>
+                    <path d="M4 13a8.1 8.1 0 0 0 14.9 4L21 14"/>
+                    <path d="M21 19v-5h-5"/>
+                  </svg>
+                  Sync Pages
+                </button>
+              </form>
+
+              <form
+                method="POST"
+                action="/remove-account"
+                onsubmit="return confirm('Remove this Facebook account and all its connected Pages?');"
+              >
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${escapeHtml(
+                    account.id
+                  )}"
+                />
+
+                <button
+                  class="action-btn remove-btn"
+                  type="submit"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M3 6h18"/>
+                    <path d="M8 6V4h8v2"/>
+                    <path d="M19 6l-1 14H6L5 6"/>
+                    <path d="M10 11v5"/>
+                    <path d="M14 11v5"/>
+                  </svg>
+                  Remove
+                </button>
+              </form>
+
+            </div>
+          </div>
+
+          <div class="pages-area">
+            ${pageHtml}
+          </div>
+
+        </section>
+      `;
+    }
+  }
+
+  let publisherHtml = "";
+
+  if (
+    accounts.length > 0 &&
+    pages.length > 0
+  ) {
+    publisherHtml = `
+      <section class="studio-card">
+
+        <div class="studio-heading">
+
+          <div class="studio-title-wrap">
+
+            <div class="studio-icon">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>
+              </svg>
+            </div>
+
+            <div>
+              <div class="eyebrow">
+                PUBLISHING STUDIO
+              </div>
+
+              <h2>
+                Create &amp; Publish
+              </h2>
+
+              <p>
+                Compose once and publish to multiple
+                Facebook Pages.
+              </p>
+            </div>
+
+          </div>
+
+          <div
+            id="selected-count"
+            class="selected-pill"
+          >
+            <span class="selected-dot"></span>
+            0 Pages Selected
+          </div>
+
+        </div>
+
+        <form
+          id="publish-form"
+          method="POST"
+          action="/publish"
+          enctype="multipart/form-data"
+        >
+
+          <div class="composer-box">
+
+            <div class="composer-top">
+              <label for="message">
+                Post Content
+              </label>
+
+              <span id="char-count">
+                0 characters
+              </span>
+            </div>
+
+            <textarea
+              id="message"
+              name="message"
+              rows="7"
+              maxlength="63206"
+              placeholder="What would you like to publish today?"
+            ></textarea>
+
+          </div>
+
+          <div
+            class="upload-box"
+            id="upload-box"
+          >
+
+            <input
+              id="media"
+              type="file"
+              name="media"
+              accept="image/*,video/*"
+            />
+
+            <div class="upload-icon">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 16V4"/>
+                <path d="m7 9 5-5 5 5"/>
+                <path d="M5 20h14"/>
+              </svg>
+            </div>
+
+            <div class="upload-title">
+              Add image or video
+            </div>
+
+            <div class="upload-subtitle">
+              Click here to choose a media file
+            </div>
+
+            <div
+              id="file-name"
+              class="file-name"
+            ></div>
+
+            <div class="upload-hint">
+              Optional &nbsp;•&nbsp; Maximum 100 MB
+            </div>
+
+          </div>
+
+          <div class="publish-footer">
+
+            <div class="publish-info">
+
+              <div class="publish-info-icon">
+                ✓
+              </div>
+
+              <div>
+                <strong>
+                  Ready to publish
+                </strong>
+
+                <span id="publish-target-text">
+                  Select one or more Pages above
+                </span>
+              </div>
+
+            </div>
+
+            <button
+              class="publish-btn"
+              id="publish-btn"
+              type="submit"
+            >
+
+              <span class="publish-btn-text">
+                Publish to Pages
+              </span>
+
+              <svg
+                class="publish-arrow"
+                viewBox="0 0 24 24"
+              >
+                <path d="M5 12h14"/>
+                <path d="m13 6 6 6-6 6"/>
+              </svg>
+
+              <span class="publish-spinner"></span>
+
+            </button>
+
+          </div>
+
+        </form>
+
+      </section>
     `;
   }
 
-  const accountInitials = getInitials(
-    account.account_name || "Facebook Account"
-  );
+  const script = `
+<script>
+  function updateSelectedCount() {
+    const checked =
+      document.querySelectorAll(
+        ".page-checkbox:checked"
+      );
 
-  accountHtml += `
-    <section class="account-card">
-      <div class="account-top">
-        <div class="account-identity">
-          <div class="account-avatar">
-            ${escapeHtml(accountInitials)}
-          </div>
-
-          <div class="account-details">
-            <div class="account-name-line">
-              <h2>
-                ${escapeHtml(
-                  account.account_name || "Facebook Account"
-                )}
-              </h2>
-
-              <span class="connected-badge">
-                <span></span>
-                Connected
-              </span>
-            </div>
-
-            <div class="facebook-id">
-              Facebook ID:
-              <code>${escapeHtml(account.facebook_user_id)}</code>
-            </div>
-
-            <div class="account-meta">
-              <span>
-                <strong>${accountPages.length}</strong>
-                Connected Page${accountPages.length === 1 ? "" : "s"}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div class="account-actions">
-          <form method="POST" action="/sync">
-            <input
-              type="hidden"
-              name="account_id"
-              value="${escapeHtml(account.id)}"
-            />
-
-            <button class="action-btn sync-btn" type="submit">
-              <svg viewBox="0 0 24 24">
-                <path d="M20 11a8.1 8.1 0 0 0-14.9-4L3 10"/>
-                <path d="M3 5v5h5"/>
-                <path d="M4 13a8.1 8.1 0 0 0 14.9 4L21 14"/>
-                <path d="M21 19v-5h-5"/>
-              </svg>
-              Sync Pages
-            </button>
-          </form>
-
-          <form
-            method="POST"
-            action="/remove-account"
-            onsubmit="return confirm('Remove this Facebook account and all its connected Pages?');"
-          >
-            <input
-              type="hidden"
-              name="account_id"
-              value="${escapeHtml(account.id)}"
-            />
-
-            <button class="action-btn remove-btn" type="submit">
-              <svg viewBox="0 0 24 24">
-                <path d="M3 6h18"/>
-                <path d="M8 6V4h8v2"/>
-                <path d="M19 6l-1 14H6L5 6"/>
-                <path d="M10 11v5"/>
-                <path d="M14 11v5"/>
-              </svg>
-              Remove
-            </button>
-          </form>
-        </div>
-      </div>
-
-      <div class="pages-area">
-        ${pageHtml}
-      </div>
-    </section>
-  `;
-}
-```
-
-}
-
-let publisherHtml = "";
-
-if (accounts.length > 0 && pages.length > 0) {
-publisherHtml = ` <section class="studio-card"> <div class="studio-heading"> <div class="studio-title-wrap"> <div class="studio-icon"> <svg viewBox="0 0 24 24"> <path d="M12 20h9"/> <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/> </svg> </div>
-
-```
-        <div>
-          <div class="eyebrow">PUBLISHING STUDIO</div>
-          <h2>Create &amp; Publish</h2>
-          <p>
-            Compose once and publish to multiple Facebook Pages.
-          </p>
-        </div>
-      </div>
-
-      <div id="selected-count" class="selected-pill">
-        <span class="selected-dot"></span>
-        0 Pages Selected
-      </div>
-    </div>
-
-    <form
-      id="publish-form"
-      method="POST"
-      action="/publish"
-      enctype="multipart/form-data"
-    >
-      <div class="composer-box">
-        <div class="composer-top">
-          <label for="message">Post Content</label>
-          <span id="char-count">0 characters</span>
-        </div>
-
-        <textarea
-          id="message"
-          name="message"
-          rows="7"
-          maxlength="63206"
-          placeholder="What would you like to publish today?"
-        ></textarea>
-      </div>
-
-      <div class="upload-box" id="upload-box">
-        <input
-          id="media"
-          type="file"
-          name="media"
-          accept="image/*,video/*"
-        />
-
-        <div class="upload-icon">
-          <svg viewBox="0 0 24 24">
-            <path d="M12 16V4"/>
-            <path d="m7 9 5-5 5 5"/>
-            <path d="M5 20h14"/>
-          </svg>
-        </div>
-
-        <div class="upload-title">
-          Add image or video
-        </div>
-
-        <div class="upload-subtitle">
-          Click here to choose a media file
-        </div>
-
-        <div id="file-name" class="file-name"></div>
-
-        <div class="upload-hint">
-          Optional &nbsp;•&nbsp; Maximum 100 MB
-        </div>
-      </div>
-
-      <div class="publish-footer">
-        <div class="publish-info">
-          <div class="publish-info-icon">✓</div>
-          <div>
-            <strong>Ready to publish</strong>
-            <span id="publish-target-text">
-              Select one or more Pages above
-            </span>
-          </div>
-        </div>
-
-        <button
-          class="publish-btn"
-          id="publish-btn"
-          type="submit"
-        >
-          <span class="publish-btn-text">Publish to Pages</span>
-
-          <svg class="publish-arrow" viewBox="0 0 24 24">
-            <path d="M5 12h14"/>
-            <path d="m13 6 6 6-6 6"/>
-          </svg>
-
-          <span class="publish-spinner"></span>
-        </button>
-      </div>
-    </form>
-  </section>
-`;
-```
-
-}
-
-const script = ` <script>
-function updateSelectedCount() {
-const checked =
-document.querySelectorAll(".page-checkbox:checked");
-
-```
     const counter =
-      document.getElementById("selected-count");
+      document.getElementById(
+        "selected-count"
+      );
 
     const targetText =
-      document.getElementById("publish-target-text");
+      document.getElementById(
+        "publish-target-text"
+      );
 
     if (counter) {
       counter.innerHTML =
@@ -966,20 +1282,37 @@ document.querySelectorAll(".page-checkbox:checked");
       }
     }
 
-    document.querySelectorAll(".page-row").forEach(function(row) {
-      const checkbox = row.querySelector(".page-checkbox");
+    document
+      .querySelectorAll(".page-row")
+      .forEach(function(row) {
+        const checkbox =
+          row.querySelector(
+            ".page-checkbox"
+          );
 
-      if (checkbox && checkbox.checked) {
-        row.classList.add("selected");
-      } else {
-        row.classList.remove("selected");
-      }
-    });
+        if (
+          checkbox &&
+          checkbox.checked
+        ) {
+          row.classList.add(
+            "selected"
+          );
+        } else {
+          row.classList.remove(
+            "selected"
+          );
+        }
+      });
   }
 
-  function selectAccountPages(accountId, select) {
+  function selectAccountPages(
+    accountId,
+    select
+  ) {
     document
-      .querySelectorAll(".account-" + accountId)
+      .querySelectorAll(
+        ".account-" + accountId
+      )
       .forEach(function(c) {
         c.checked = select;
       });
@@ -987,91 +1320,143 @@ document.querySelectorAll(".page-checkbox:checked");
     updateSelectedCount();
   }
 
-  document.addEventListener("change", function(e) {
-    if (
-      e.target &&
-      e.target.classList.contains("page-checkbox")
-    ) {
-      updateSelectedCount();
+  document.addEventListener(
+    "change",
+    function(e) {
+      if (
+        e.target &&
+        e.target.classList.contains(
+          "page-checkbox"
+        )
+      ) {
+        updateSelectedCount();
+      }
     }
-  });
+  );
 
   const message =
-    document.getElementById("message");
+    document.getElementById(
+      "message"
+    );
 
   const charCount =
-    document.getElementById("char-count");
+    document.getElementById(
+      "char-count"
+    );
 
-  if (message && charCount) {
-    message.addEventListener("input", function() {
-      charCount.textContent =
-        message.value.length + " characters";
-    });
+  if (
+    message &&
+    charCount
+  ) {
+    message.addEventListener(
+      "input",
+      function() {
+        charCount.textContent =
+          message.value.length +
+          " characters";
+      }
+    );
   }
 
   const media =
-    document.getElementById("media");
+    document.getElementById(
+      "media"
+    );
 
   const fileName =
-    document.getElementById("file-name");
+    document.getElementById(
+      "file-name"
+    );
 
   const uploadBox =
-    document.getElementById("upload-box");
+    document.getElementById(
+      "upload-box"
+    );
 
   if (media) {
-    media.addEventListener("change", function() {
-      if (media.files && media.files.length) {
-        fileName.textContent =
-          "Selected: " + media.files[0].name;
-        uploadBox.classList.add("has-file");
-      } else {
-        fileName.textContent = "";
-        uploadBox.classList.remove("has-file");
+    media.addEventListener(
+      "change",
+      function() {
+        if (
+          media.files &&
+          media.files.length
+        ) {
+          fileName.textContent =
+            "Selected: " +
+            media.files[0].name;
+
+          uploadBox.classList.add(
+            "has-file"
+          );
+        } else {
+          fileName.textContent = "";
+
+          uploadBox.classList.remove(
+            "has-file"
+          );
+        }
       }
-    });
+    );
   }
 
-  if (uploadBox && media) {
-    uploadBox.addEventListener("click", function(e) {
-      if (e.target !== media) {
-        media.click();
+  if (
+    uploadBox &&
+    media
+  ) {
+    uploadBox.addEventListener(
+      "click",
+      function(e) {
+        if (e.target !== media) {
+          media.click();
+        }
       }
-    });
+    );
   }
 
   // =======================================================
   // BATCH PUBLISHING
-  //
-  // Each request sends only a limited number of Pages.
-  // This prevents a single request from trying to publish
-  // to 100+ Pages at once.
   // =======================================================
 
   const PUBLISH_BATCH_SIZE = 15;
 
   function sleep(ms) {
-    return new Promise(function(resolve) {
-      setTimeout(resolve, ms);
-    });
+    return new Promise(
+      function(resolve) {
+        setTimeout(
+          resolve,
+          ms
+        );
+      }
+    );
   }
 
-  async function publishInBatches(selectedIds) {
+  async function publishInBatches(
+    selectedIds
+  ) {
     const btn =
-      document.getElementById("publish-btn");
+      document.getElementById(
+        "publish-btn"
+      );
 
     const btnText =
       btn
-        ? btn.querySelector(".publish-btn-text")
+        ? btn.querySelector(
+            ".publish-btn-text"
+          )
         : null;
 
     const arrow =
       btn
-        ? btn.querySelector(".publish-arrow")
+        ? btn.querySelector(
+            ".publish-arrow"
+          )
         : null;
 
     const spinner =
       btn
-        ? btn.querySelector(".publish-spinner")
+        ? btn.querySelector(
+            ".publish-spinner"
+          )
         : null;
 
     const originalText =
@@ -1081,14 +1466,20 @@ document.querySelectorAll(".page-checkbox:checked");
 
     if (btn) {
       btn.disabled = true;
-      btn.classList.add("loading");
+      btn.classList.add(
+        "loading"
+      );
     }
 
     const baseForm =
-      document.getElementById("publish-form");
+      document.getElementById(
+        "publish-form"
+      );
 
     if (!baseForm) {
-      throw new Error("Publish form was not found.");
+      throw new Error(
+        "Publish form was not found."
+      );
     }
 
     const messageValue =
@@ -1103,7 +1494,6 @@ document.querySelectorAll(".page-checkbox:checked");
         ? media.files[0]
         : null;
 
-    // First request creates the publishing run.
     const startData =
       new FormData();
 
@@ -1112,12 +1502,14 @@ document.querySelectorAll(".page-checkbox:checked");
       messageValue
     );
 
-    selectedIds.forEach(function(id) {
-      startData.append(
-        "page_ids",
-        id
-      );
-    });
+    selectedIds.forEach(
+      function(id) {
+        startData.append(
+          "page_ids",
+          id
+        );
+      }
+    );
 
     if (mediaFile) {
       startData.append(
@@ -1132,11 +1524,14 @@ document.querySelectorAll(".page-checkbox:checked");
         {
           method: "POST",
           body: startData,
-          credentials: "same-origin"
+          credentials:
+            "same-origin"
         }
       );
 
-    if (!startResponse.ok) {
+    if (
+      !startResponse.ok
+    ) {
       const errorText =
         await startResponse.text();
 
@@ -1161,13 +1556,11 @@ document.querySelectorAll(".page-checkbox:checked");
     const runId =
       startResult.runId;
 
-    let completed =
-      0;
+    let completed = 0;
 
     const total =
       selectedIds.length;
 
-    // Process one batch at a time.
     for (
       let offset = 0;
       offset < selectedIds.length;
@@ -1176,7 +1569,8 @@ document.querySelectorAll(".page-checkbox:checked");
       const batch =
         selectedIds.slice(
           offset,
-          offset + PUBLISH_BATCH_SIZE
+          offset +
+            PUBLISH_BATCH_SIZE
         );
 
       const batchForm =
@@ -1187,12 +1581,14 @@ document.querySelectorAll(".page-checkbox:checked");
         runId
       );
 
-      batch.forEach(function(id) {
-        batchForm.append(
-          "page_ids",
-          id
-        );
-      });
+      batch.forEach(
+        function(id) {
+          batchForm.append(
+            "page_ids",
+            id
+          );
+        }
+      );
 
       if (mediaFile) {
         batchForm.append(
@@ -1207,11 +1603,14 @@ document.querySelectorAll(".page-checkbox:checked");
           {
             method: "POST",
             body: batchForm,
-            credentials: "same-origin"
+            credentials:
+              "same-origin"
           }
         );
 
-      if (!batchResponse.ok) {
+      if (
+        !batchResponse.ok
+      ) {
         const errorText =
           await batchResponse.text();
 
@@ -1233,7 +1632,8 @@ document.querySelectorAll(".page-checkbox:checked");
         );
       }
 
-      completed += batch.length;
+      completed +=
+        batch.length;
 
       if (btnText) {
         btnText.textContent =
@@ -1243,8 +1643,6 @@ document.querySelectorAll(".page-checkbox:checked");
           total;
       }
 
-      // Small pause between batches.
-      // This reduces burst pressure on Meta.
       if (
         completed < total
       ) {
@@ -1258,7 +1656,9 @@ document.querySelectorAll(".page-checkbox:checked");
   }
 
   const publishForm =
-    document.getElementById("publish-form");
+    document.getElementById(
+      "publish-form"
+    );
 
   if (publishForm) {
     publishForm.addEventListener(
@@ -1271,9 +1671,11 @@ document.querySelectorAll(".page-checkbox:checked");
             document.querySelectorAll(
               ".page-checkbox:checked"
             )
-          ).map(function(c) {
-            return c.value;
-          });
+          ).map(
+            function(c) {
+              return c.value;
+            }
+          );
 
         const text =
           message
@@ -1292,7 +1694,10 @@ document.querySelectorAll(".page-checkbox:checked");
           return;
         }
 
-        if (!text && !hasMedia) {
+        if (
+          !text &&
+          !hasMedia
+        ) {
           alert(
             "Please enter post text or select an image/video."
           );
@@ -1327,7 +1732,9 @@ document.querySelectorAll(".page-checkbox:checked");
             );
 
           if (btn) {
-            btn.disabled = false;
+            btn.disabled =
+              false;
+
             btn.classList.remove(
               "loading"
             );
@@ -1348,46 +1755,62 @@ document.querySelectorAll(".page-checkbox:checked");
   }
 
   document
-    .querySelectorAll(".page-row")
-    .forEach(function(row) {
-      row.addEventListener("click", function(e) {
-        if (
-          e.target.closest("button") ||
-          e.target.closest("a")
-        ) {
-          return;
-        }
+    .querySelectorAll(
+      ".page-row"
+    )
+    .forEach(
+      function(row) {
+        row.addEventListener(
+          "click",
+          function(e) {
+            if (
+              e.target.closest(
+                "button"
+              ) ||
+              e.target.closest(
+                "a"
+              )
+            ) {
+              return;
+            }
 
-        const checkbox =
-          row.querySelector(".page-checkbox");
+            const checkbox =
+              row.querySelector(
+                ".page-checkbox"
+              );
 
-        if (
-          e.target !== checkbox &&
-          !e.target.closest(".custom-check")
-        ) {
-          checkbox.checked =
-            !checkbox.checked;
-        }
+            if (
+              e.target !== checkbox &&
+              !e.target.closest(
+                ".custom-check"
+              )
+            ) {
+              checkbox.checked =
+                !checkbox.checked;
+            }
 
-        updateSelectedCount();
-      });
-    });
+            updateSelectedCount();
+          }
+        );
+      }
+    );
 
   updateSelectedCount();
 </script>
-```
-
 `;
 
-const header = ` <header class="dashboard-header"> <div class="header-inner">
+  const header = `
+<header class="dashboard-header">
+  <div class="header-inner">
 
-```
     <div class="brand-area">
+
       <div class="brand-mark header-mark">
         <span>f</span>
       </div>
 
       <div class="brand-copy">
+
         <div class="brand-name">
           NAQI SHAH
         </div>
@@ -1395,17 +1818,28 @@ const header = ` <header class="dashboard-header"> <div class="header-inner">
         <div class="brand-mini">
           PUBLISHING COMMAND CENTER
         </div>
+
       </div>
     </div>
 
     <div class="header-actions">
-      <a class="connect-account-btn" href="/auth/meta">
+
+      <a
+        class="connect-account-btn"
+        href="/auth/meta"
+      >
         <span class="plus-icon">+</span>
         Connect Facebook
       </a>
 
-      <form method="POST" action="/logout">
-        <button class="header-logout" type="submit">
+      <form
+        method="POST"
+        action="/logout"
+      >
+        <button
+          class="header-logout"
+          type="submit"
+        >
           <svg viewBox="0 0 24 24">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
             <path d="M16 17l5-5-5-5"/>
@@ -1414,34 +1848,39 @@ const header = ` <header class="dashboard-header"> <div class="header-inner">
           Logout
         </button>
       </form>
+
     </div>
 
   </div>
 </header>
-```
-
 `;
 
-const hero = ` <section class="hero"> <div class="hero-glow"></div>
+  const hero = `
+<section class="hero">
+  <div class="hero-glow"></div>
 
-```
   <div class="hero-content">
+
     <div class="eyebrow hero-eyebrow">
       META SOCIAL PUBLISHING
     </div>
 
     <h1>
       Your Facebook
-      <span>Publishing Command Center.</span>
+      <span>
+        Publishing Command Center.
+      </span>
     </h1>
 
     <p>
       Manage connected accounts, select Pages and publish
       content across your entire Facebook network from one place.
     </p>
+
   </div>
 
   <div class="hero-decoration">
+
     <div class="floating-card floating-one">
       <span class="mini-status"></span>
       Pages Ready
@@ -1453,16 +1892,16 @@ const hero = ` <section class="hero"> <div class="hero-glow"></div>
       Connected
       <strong>${totalAccounts}</strong>
     </div>
+
   </div>
 </section>
-```
-
 `;
 
-const stats = ` <section class="stats-grid">
+  const stats = `
+<section class="stats-grid">
 
-```
   <div class="stat-card">
+
     <div class="stat-icon accounts-icon">
       <svg viewBox="0 0 24 24">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
@@ -1477,26 +1916,56 @@ const stats = ` <section class="stats-grid">
       <strong>${totalAccounts}</strong>
       <small>Facebook accounts</small>
     </div>
+
   </div>
 
   <div class="stat-card">
+
     <div class="stat-icon pages-icon">
       <svg viewBox="0 0 24 24">
-        <rect x="3" y="3" width="7" height="7" rx="1"/>
-        <rect x="14" y="3" width="7" height="7" rx="1"/>
-        <rect x="3" y="14" width="7" height="7" rx="1"/>
-        <rect x="14" y="14" width="7" height="7" rx="1"/>
+        <rect
+          x="3"
+          y="3"
+          width="7"
+          height="7"
+          rx="1"
+        />
+        <rect
+          x="14"
+          y="3"
+          width="7"
+          height="7"
+          rx="1"
+        />
+        <rect
+          x="3"
+          y="14"
+          width="7"
+          height="7"
+          rx="1"
+        />
+        <rect
+          x="14"
+          y="14"
+          width="7"
+          height="7"
+          rx="1"
+        />
       </svg>
     </div>
 
     <div class="stat-data">
       <span>Total Pages</span>
       <strong>${totalPages}</strong>
-      <small>Available for publishing</small>
+      <small>
+        Available for publishing
+      </small>
     </div>
+
   </div>
 
   <div class="stat-card stat-highlight">
+
     <div class="stat-icon ready-icon">
       <svg viewBox="0 0 24 24">
         <path d="m5 12 4 4L19 6"/>
@@ -1510,365 +1979,462 @@ const stats = ` <section class="stats-grid">
         Publishing command center online
       </small>
     </div>
+
   </div>
 
 </section>
-```
-
 `;
 
-return page(
-APP_NAME,
-header +
-`<main class="dashboard-container">${hero}${stats}${accountHtml}${publisherHtml}</main>` +
-script
-);
+  return page(
+    APP_NAME,
+    header +
+      `<main class="dashboard-container">${hero}${stats}${accountHtml}${publisherHtml}</main>` +
+      script
+  );
 }
 
 // =============================================================
 // META LOGIN
 // =============================================================
 
-function startMetaLogin(request, env, sessionId) {
-const config = getMetaConfig(env);
-
-const requestUrl = new URL(request.url);
-
-const redirectUri =
-requestUrl.origin + "/auth/meta/callback";
-
-const scope =
-"pages_show_list,pages_read_engagement,pages_manage_posts";
-
-const state = crypto.randomUUID();
-
-const loginUrl =
-"https://www.facebook.com/" +
-config.graphVersion +
-"/dialog/oauth" +
-"?client_id=" +
-encodeURIComponent(config.appId) +
-"&redirect_uri=" +
-encodeURIComponent(redirectUri) +
-"&scope=" +
-encodeURIComponent(scope) +
-"&state=" +
-encodeURIComponent(state) +
-"&auth_type=reauthorize";
-
-return new Response(null, {
-status: 302,
-headers: {
-Location: loginUrl,
-"Set-Cookie":
-"meta_oauth_state=" +
-encodeURIComponent(state) +
-"; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
-"Cache-Control": "no-store"
-}
-});
-}
-
-async function metaCallback(request, env, sessionId) {
-const config = getMetaConfig(env);
-
-const url = new URL(request.url);
-
-const code = url.searchParams.get("code");
-const error = url.searchParams.get("error");
-const errorDescription =
-url.searchParams.get("error_description");
-
-if (error) {
-await allowNextDashboardLoad(env.DB, sessionId);
-
-```
-return page(
-  "Facebook Login Error",
-  `
-  <div class="error-screen">
-    <div class="error-box">
-      <div class="error-icon">!</div>
-      <div class="eyebrow">FACEBOOK AUTHENTICATION</div>
-      <h2>Facebook Login Error</h2>
-      <p>${escapeHtml(error)}</p>
-      <p class="error-detail">
-        ${escapeHtml(errorDescription || "")}
-      </p>
-      <a class="back-btn" href="/">
-        Back to Dashboard
-      </a>
-    </div>
-  </div>
-  `
-);
-```
-
-}
-
-if (!code) {
-throw new Error(
-"No authorization code received from Facebook."
-);
-}
-
-const redirectUri =
-url.origin + "/auth/meta/callback";
-
-const tokenUrl =
-"https://graph.facebook.com/" +
-config.graphVersion +
-"/oauth/access_token" +
-"?client_id=" +
-encodeURIComponent(config.appId) +
-"&client_secret=" +
-encodeURIComponent(config.appSecret) +
-"&redirect_uri=" +
-encodeURIComponent(redirectUri) +
-"&code=" +
-encodeURIComponent(code);
-
-const tokenResponse =
-await fetch(tokenUrl);
-
-const tokenData =
-await readGraphResponse(tokenResponse);
-
-if (
-!tokenResponse.ok ||
-!tokenData.access_token
+function startMetaLogin(
+  request,
+  env,
+  sessionId
 ) {
-throw new Error(
-"Facebook token exchange failed: " +
-formatGraphError(tokenData)
-);
+  const config =
+    getMetaConfig(env);
+
+  const requestUrl =
+    new URL(request.url);
+
+  const redirectUri =
+    requestUrl.origin +
+    "/auth/meta/callback";
+
+  const scope =
+    "pages_show_list,pages_read_engagement,pages_manage_posts";
+
+  const state =
+    crypto.randomUUID();
+
+  const loginUrl =
+    "https://www.facebook.com/" +
+    config.graphVersion +
+    "/dialog/oauth" +
+    "?client_id=" +
+    encodeURIComponent(
+      config.appId
+    ) +
+    "&redirect_uri=" +
+    encodeURIComponent(
+      redirectUri
+    ) +
+    "&scope=" +
+    encodeURIComponent(
+      scope
+    ) +
+    "&state=" +
+    encodeURIComponent(
+      state
+    ) +
+    "&auth_type=reauthorize";
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: loginUrl,
+      "Set-Cookie":
+        "meta_oauth_state=" +
+        encodeURIComponent(state) +
+        "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
+      "Cache-Control": "no-store"
+    }
+  });
 }
 
-const userAccessToken =
-tokenData.access_token;
-
-const userUrl =
-"https://graph.facebook.com/" +
-config.graphVersion +
-"/me?fields=id,name&access_token=" +
-encodeURIComponent(userAccessToken);
-
-const userResponse =
-await fetch(userUrl);
-
-const userData =
-await readGraphResponse(userResponse);
-
-if (
-!userResponse.ok ||
-!userData.id
+async function metaCallback(
+  request,
+  env,
+  sessionId
 ) {
-throw new Error(
-"Could not get Facebook account information: " +
-formatGraphError(userData)
-);
-}
+  const config =
+    getMetaConfig(env);
 
-await env.DB.prepare(
-"INSERT INTO accounts (facebook_user_id, account_name, access_token) VALUES (?, ?, ?) " +
-"ON CONFLICT(facebook_user_id) DO UPDATE SET " +
-"account_name=excluded.account_name, " +
-"access_token=excluded.access_token"
-)
-.bind(
-String(userData.id),
-userData.name || "Facebook Account",
-userAccessToken
-)
-.run();
+  const url =
+    new URL(request.url);
 
-const account =
-await env.DB.prepare(
-"SELECT id FROM accounts WHERE facebook_user_id = ?"
-)
-.bind(String(userData.id))
-.first();
+  const code =
+    url.searchParams.get(
+      "code"
+    );
 
-if (!account) {
-throw new Error(
-"Facebook account was saved but could not be found."
-);
-}
+  const error =
+    url.searchParams.get(
+      "error"
+    );
 
-await syncAccountPages(
-env,
-Number(account.id),
-userAccessToken,
-config.graphVersion
-);
+  const errorDescription =
+    url.searchParams.get(
+      "error_description"
+    );
 
-await allowNextDashboardLoad(
-env.DB,
-sessionId
-);
+  if (error) {
+    await allowNextDashboardLoad(
+      env.DB,
+      sessionId
+    );
 
-return new Response(null, {
-status: 302,
-headers: {
-Location: url.origin + "/",
-"Set-Cookie":
-"meta_oauth_state=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
-"Cache-Control": "no-store"
-}
-});
+    return page(
+      "Facebook Login Error",
+      `
+      <div class="error-screen">
+
+        <div class="error-box">
+
+          <div class="error-icon">
+            !
+          </div>
+
+          <div class="eyebrow">
+            FACEBOOK AUTHENTICATION
+          </div>
+
+          <h2>
+            Facebook Login Error
+          </h2>
+
+          <p>
+            ${escapeHtml(error)}
+          </p>
+
+          <p class="error-detail">
+            ${escapeHtml(
+              errorDescription || ""
+            )}
+          </p>
+
+          <a
+            class="back-btn"
+            href="/"
+          >
+            Back to Dashboard
+          </a>
+
+        </div>
+
+      </div>
+      `
+    );
+  }
+
+  if (!code) {
+    throw new Error(
+      "No authorization code received from Facebook."
+    );
+  }
+
+  const redirectUri =
+    url.origin +
+    "/auth/meta/callback";
+
+  const tokenUrl =
+    "https://graph.facebook.com/" +
+    config.graphVersion +
+    "/oauth/access_token" +
+    "?client_id=" +
+    encodeURIComponent(
+      config.appId
+    ) +
+    "&client_secret=" +
+    encodeURIComponent(
+      config.appSecret
+    ) +
+    "&redirect_uri=" +
+    encodeURIComponent(
+      redirectUri
+    ) +
+    "&code=" +
+    encodeURIComponent(
+      code
+    );
+
+  const tokenResponse =
+    await fetch(tokenUrl);
+
+  const tokenData =
+    await readGraphResponse(
+      tokenResponse
+    );
+
+  if (
+    !tokenResponse.ok ||
+    !tokenData.access_token
+  ) {
+    throw new Error(
+      "Facebook token exchange failed: " +
+        formatGraphError(
+          tokenData
+        )
+    );
+  }
+
+  const userAccessToken =
+    tokenData.access_token;
+
+  const userUrl =
+    "https://graph.facebook.com/" +
+    config.graphVersion +
+    "/me?fields=id,name&access_token=" +
+    encodeURIComponent(
+      userAccessToken
+    );
+
+  const userResponse =
+    await fetch(userUrl);
+
+  const userData =
+    await readGraphResponse(
+      userResponse
+    );
+
+  if (
+    !userResponse.ok ||
+    !userData.id
+  ) {
+    throw new Error(
+      "Could not get Facebook account information: " +
+        formatGraphError(
+          userData
+        )
+    );
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO accounts " +
+      "(facebook_user_id, account_name, access_token) " +
+      "VALUES (?, ?, ?) " +
+      "ON CONFLICT(facebook_user_id) DO UPDATE SET " +
+      "account_name=excluded.account_name, " +
+      "access_token=excluded.access_token"
+  )
+    .bind(
+      String(userData.id),
+      userData.name ||
+        "Facebook Account",
+      userAccessToken
+    )
+    .run();
+
+  const account =
+    await env.DB.prepare(
+      "SELECT id FROM accounts " +
+        "WHERE facebook_user_id = ?"
+    )
+      .bind(
+        String(userData.id)
+      )
+      .first();
+
+  if (!account) {
+    throw new Error(
+      "Facebook account was saved but could not be found."
+    );
+  }
+
+  await syncAccountPages(
+    env,
+    Number(account.id),
+    userAccessToken,
+    config.graphVersion
+  );
+
+  await allowNextDashboardLoad(
+    env.DB,
+    sessionId
+  );
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location:
+        url.origin + "/",
+      "Set-Cookie":
+        "meta_oauth_state=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+      "Cache-Control": "no-store"
+    }
+  });
 }
 
 // =============================================================
 // SYNC PAGES
 // =============================================================
 
-async function syncPages(request, env) {
-const form =
-await request.formData();
+async function syncPages(
+  request,
+  env
+) {
+  const form =
+    await request.formData();
 
-const accountId =
-Number(form.get("account_id"));
+  const accountId =
+    Number(
+      form.get("account_id")
+    );
 
-if (!accountId) {
-throw new Error(
-"Invalid account ID."
-);
-}
+  if (!accountId) {
+    throw new Error(
+      "Invalid account ID."
+    );
+  }
 
-const account =
-await env.DB.prepare(
-"SELECT id, access_token FROM accounts WHERE id = ?"
-)
-.bind(accountId)
-.first();
+  const account =
+    await env.DB.prepare(
+      "SELECT id, access_token " +
+        "FROM accounts WHERE id = ?"
+    )
+      .bind(accountId)
+      .first();
 
-if (!account) {
-throw new Error(
-"Facebook account not found."
-);
-}
+  if (!account) {
+    throw new Error(
+      "Facebook account not found."
+    );
+  }
 
-const config =
-getMetaConfig(env);
+  const config =
+    getMetaConfig(env);
 
-await syncAccountPages(
-env,
-Number(account.id),
-account.access_token,
-config.graphVersion
-);
+  await syncAccountPages(
+    env,
+    Number(account.id),
+    account.access_token,
+    config.graphVersion
+  );
 
-return Response.redirect(
-"/",
-303
-);
+  return Response.redirect(
+    "/",
+    303
+  );
 }
 
 async function syncAccountPages(
-env,
-accountId,
-userAccessToken,
-graphVersion
+  env,
+  accountId,
+  userAccessToken,
+  graphVersion
 ) {
-let nextUrl =
-"https://graph.facebook.com/" +
-graphVersion +
-"/me/accounts" +
-"?fields=id,name,access_token" +
-"&limit=100" +
-"&access_token=" +
-encodeURIComponent(userAccessToken);
+  let nextUrl =
+    "https://graph.facebook.com/" +
+    graphVersion +
+    "/me/accounts" +
+    "?fields=id,name,access_token" +
+    "&limit=100" +
+    "&access_token=" +
+    encodeURIComponent(
+      userAccessToken
+    );
 
-const foundPageIds = [];
+  const foundPageIds = [];
 
-while (nextUrl) {
-const response =
-await fetch(nextUrl);
+  // IMPORTANT:
+  // Continue following Meta's paging.next URL.
+  // This allows the application to sync more than
+  // 100 Pages when Meta returns additional pages.
+  while (nextUrl) {
+    const response =
+      await fetch(nextUrl);
 
-```
-const data =
-  await readGraphResponse(
-    response
-  );
+    const data =
+      await readGraphResponse(
+        response
+      );
 
-if (
-  !response.ok ||
-  data.error
-) {
-  throw new Error(
-    "Could not load Facebook Pages: " +
-      formatGraphError(data)
-  );
-}
+    if (
+      !response.ok ||
+      data.error
+    ) {
+      throw new Error(
+        "Could not load Facebook Pages: " +
+          formatGraphError(
+            data
+          )
+      );
+    }
 
-for (const fbPage of data.data || []) {
-  if (
-    !fbPage.id ||
-    !fbPage.access_token
-  ) {
-    continue;
+    for (
+      const fbPage of
+      data.data || []
+    ) {
+      if (
+        !fbPage.id ||
+        !fbPage.access_token
+      ) {
+        continue;
+      }
+
+      foundPageIds.push(
+        String(fbPage.id)
+      );
+
+      await env.DB.prepare(
+        "INSERT INTO pages " +
+          "(facebook_page_id, page_name, access_token, account_id) " +
+          "VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT(facebook_page_id) DO UPDATE SET " +
+          "page_name=excluded.page_name, " +
+          "access_token=excluded.access_token, " +
+          "account_id=excluded.account_id"
+      )
+        .bind(
+          String(
+            fbPage.id
+          ),
+          fbPage.name ||
+            "Unnamed Page",
+          fbPage.access_token,
+          Number(accountId)
+        )
+        .run();
+    }
+
+    nextUrl =
+      data.paging &&
+      data.paging.next
+        ? data.paging.next
+        : null;
   }
 
-  foundPageIds.push(
-    String(fbPage.id)
-  );
+  if (
+    foundPageIds.length
+  ) {
+    const placeholders =
+      foundPageIds
+        .map(() => "?")
+        .join(",");
 
-  await env.DB.prepare(
-    "INSERT INTO pages " +
-      "(facebook_page_id, page_name, access_token, account_id) " +
-      "VALUES (?, ?, ?, ?) " +
-      "ON CONFLICT(facebook_page_id) DO UPDATE SET " +
-      "page_name=excluded.page_name, " +
-      "access_token=excluded.access_token, " +
-      "account_id=excluded.account_id"
-  )
-    .bind(
-      String(fbPage.id),
-      fbPage.name ||
-        "Unnamed Page",
-      fbPage.access_token,
-      Number(accountId)
+    await env.DB.prepare(
+      "DELETE FROM pages " +
+        "WHERE account_id = ? " +
+        "AND facebook_page_id NOT IN (" +
+        placeholders +
+        ")"
     )
-    .run();
-}
-
-nextUrl =
-  data.paging &&
-  data.paging.next
-    ? data.paging.next
-    : null;
-```
-
-}
-
-if (foundPageIds.length) {
-const placeholders =
-foundPageIds
-.map(() => "?")
-.join(",");
-
-```
-await env.DB.prepare(
-  "DELETE FROM pages " +
-    "WHERE account_id = ? " +
-    "AND facebook_page_id NOT IN (" +
-    placeholders +
-    ")"
-)
-  .bind(
-    Number(accountId),
-    ...foundPageIds
-  )
-  .run();
-```
-
-} else {
-await env.DB.prepare(
-"DELETE FROM pages WHERE account_id = ?"
-)
-.bind(Number(accountId))
-.run();
-}
+      .bind(
+        Number(accountId),
+        ...foundPageIds
+      )
+      .run();
+  } else {
+    await env.DB.prepare(
+      "DELETE FROM pages " +
+        "WHERE account_id = ?"
+    )
+      .bind(
+        Number(accountId)
+      )
+      .run();
+  }
 }
 
 // =============================================================
@@ -1876,37 +2442,41 @@ await env.DB.prepare(
 // =============================================================
 
 async function removeAccount(
-request,
-env
+  request,
+  env
 ) {
-const form =
-await request.formData();
+  const form =
+    await request.formData();
 
-const accountId =
-Number(form.get("account_id"));
+  const accountId =
+    Number(
+      form.get("account_id")
+    );
 
-if (!accountId) {
-throw new Error(
-"Invalid account ID."
-);
-}
+  if (!accountId) {
+    throw new Error(
+      "Invalid account ID."
+    );
+  }
 
-await env.DB.prepare(
-"DELETE FROM pages WHERE account_id = ?"
-)
-.bind(accountId)
-.run();
+  await env.DB.prepare(
+    "DELETE FROM pages " +
+      "WHERE account_id = ?"
+  )
+    .bind(accountId)
+    .run();
 
-await env.DB.prepare(
-"DELETE FROM accounts WHERE id = ?"
-)
-.bind(accountId)
-.run();
+  await env.DB.prepare(
+    "DELETE FROM accounts " +
+      "WHERE id = ?"
+  )
+    .bind(accountId)
+    .run();
 
-return Response.redirect(
-"/",
-303
-);
+  return Response.redirect(
+    "/",
+    303
+  );
 }
 
 // =============================================================
@@ -1914,201 +2484,217 @@ return Response.redirect(
 // =============================================================
 
 async function startPublishRun(
-request,
-env,
-sessionId
+  request,
+  env,
+  sessionId
 ) {
-const form =
-await request.formData();
+  const form =
+    await request.formData();
 
-const message =
-String(
-form.get("message") || ""
-).trim();
+  const message =
+    String(
+      form.get("message") || ""
+    ).trim();
 
-const selectedPageIds =
-form.getAll("page_ids");
+  const selectedPageIds =
+    form.getAll(
+      "page_ids"
+    );
 
-const media =
-form.get("media");
+  const media =
+    form.get("media");
 
-if (!selectedPageIds.length) {
-return jsonResponse(
-{
-error:
-"Please select at least one Facebook Page."
-},
-400
-);
-}
+  if (
+    !selectedPageIds.length
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "Please select at least one Facebook Page."
+      },
+      400
+    );
+  }
 
-if (
-!message &&
-(!media || !media.name)
-) {
-return jsonResponse(
-{
-error:
-"Please enter post text or select an image/video."
-},
-400
-);
-}
+  if (
+    !message &&
+    (!media || !media.name)
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "Please enter post text or select an image/video."
+      },
+      400
+    );
+  }
 
-const numericPageIds =
-selectedPageIds
-.map(Number)
-.filter(
-id =>
-Number.isInteger(id) &&
-id > 0
-);
+  const numericPageIds =
+    selectedPageIds
+      .map(Number)
+      .filter(
+        id =>
+          Number.isInteger(id) &&
+          id > 0
+      );
 
-if (!numericPageIds.length) {
-return jsonResponse(
-{
-error:
-"Invalid selected Page IDs."
-},
-400
-);
-}
+  if (
+    !numericPageIds.length
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "Invalid selected Page IDs."
+      },
+      400
+    );
+  }
 
-const placeholders =
-numericPageIds
-.map(() => "?")
-.join(",");
+  // Remove duplicate IDs so the same Page can never
+  // accidentally be inserted twice into one publishing run.
+  const uniquePageIds =
+    [...new Set(
+      numericPageIds
+    )];
 
-const pagesResult =
-await env.DB.prepare(
-"SELECT id, facebook_page_id, page_name " +
-"FROM pages " +
-"WHERE id IN (" +
-placeholders +
-") " +
-"ORDER BY page_name COLLATE NOCASE ASC"
-)
-.bind(...numericPageIds)
-.all();
+  const placeholders =
+    uniquePageIds
+      .map(() => "?")
+      .join(",");
 
-const pages =
-pagesResult.results || [];
+  const pagesResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_page_id, page_name " +
+        "FROM pages " +
+        "WHERE id IN (" +
+        placeholders +
+        ") " +
+        "ORDER BY page_name COLLATE NOCASE ASC"
+    )
+      .bind(
+        ...uniquePageIds
+      )
+      .all();
 
-if (!pages.length) {
-return jsonResponse(
-{
-error:
-"Selected Pages were not found."
-},
-404
-);
-}
+  const pages =
+    pagesResult.results || [];
 
-if (
-pages.length !==
-numericPageIds.length
-) {
-return jsonResponse(
-{
-error:
-"One or more selected Pages were not found. Please sync Pages and try again."
-},
-400
-);
-}
+  if (!pages.length) {
+    return jsonResponse(
+      {
+        error:
+          "Selected Pages were not found."
+      },
+      404
+    );
+  }
 
-let mediaType = null;
-let mediaName = null;
+  if (
+    pages.length !==
+    uniquePageIds.length
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "One or more selected Pages were not found. Please sync Pages and try again."
+      },
+      400
+    );
+  }
 
-if (
-media &&
-typeof media === "object" &&
-media.name
-) {
-mediaName =
-media.name;
+  let mediaType = null;
+  let mediaName = null;
 
-```
-if (
-  (media.type || "").startsWith(
-    "image/"
+  if (
+    media &&
+    typeof media === "object" &&
+    media.name
+  ) {
+    mediaName =
+      media.name;
+
+    if (
+      (media.type || "")
+        .startsWith("image/")
+    ) {
+      mediaType = "image";
+    } else if (
+      (media.type || "")
+        .startsWith("video/")
+    ) {
+      mediaType = "video";
+    } else {
+      return jsonResponse(
+        {
+          error:
+            "Unsupported media type."
+        },
+        400
+      );
+    }
+
+    const size =
+      Number(
+        media.size || 0
+      );
+
+    if (
+      size >
+      100 * 1024 * 1024
+    ) {
+      return jsonResponse(
+        {
+          error:
+            "File is too large. Maximum supported size is 100 MB."
+        },
+        400
+      );
+    }
+  }
+
+  const runId =
+    crypto.randomUUID();
+
+  await env.DB.prepare(
+    "INSERT INTO publish_runs " +
+      "(id, session_id, message, media_type, media_name, created_at, status) " +
+      "VALUES (?, ?, ?, ?, ?, datetime('now'), 'processing')"
   )
-) {
-  mediaType = "image";
-} else if (
-  (media.type || "").startsWith(
-    "video/"
-  )
-) {
-  mediaType = "video";
-} else {
-  return jsonResponse(
-    {
-      error:
-        "Unsupported media type."
-    },
-    400
-  );
-}
+    .bind(
+      runId,
+      sessionId,
+      message,
+      mediaType,
+      mediaName
+    )
+    .run();
 
-const size =
-  Number(media.size || 0);
+  // One database record per Page.
+  // UNIQUE(run_id, page_db_id) prevents duplicates.
+  for (
+    const fbPage of pages
+  ) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO publish_run_pages " +
+        "(run_id, page_db_id, facebook_page_id, page_name, status, created_at) " +
+        "VALUES (?, ?, ?, ?, 'pending', datetime('now'))"
+    )
+      .bind(
+        runId,
+        Number(fbPage.id),
+        String(
+          fbPage.facebook_page_id
+        ),
+        fbPage.page_name ||
+          "Unnamed Page"
+      )
+      .run();
+  }
 
-if (
-  size >
-  100 * 1024 * 1024
-) {
-  return jsonResponse(
-    {
-      error:
-        "File is too large. Maximum supported size is 100 MB."
-    },
-    400
-  );
-}
-```
-
-}
-
-const runId =
-crypto.randomUUID();
-
-await env.DB.prepare(
-"INSERT INTO publish_runs " +
-"(id, session_id, message, media_type, media_name, created_at, status) " +
-"VALUES (?, ?, ?, ?, ?, datetime('now'), 'processing')"
-)
-.bind(
-runId,
-sessionId,
-message,
-mediaType,
-mediaName
-)
-.run();
-
-// Create exactly one DB record per Page.
-// UNIQUE(run_id, page_db_id) prevents duplicate records.
-for (const fbPage of pages) {
-await env.DB.prepare(
-"INSERT OR IGNORE INTO publish_run_pages " +
-"(run_id, page_db_id, facebook_page_id, page_name, status, created_at) " +
-"VALUES (?, ?, ?, ?, 'pending', datetime('now'))"
-)
-.bind(
-runId,
-Number(fbPage.id),
-String(fbPage.facebook_page_id),
-fbPage.page_name ||
-"Unnamed Page"
-)
-.run();
-}
-
-return jsonResponse({
-runId,
-total: pages.length
-});
+  return jsonResponse({
+    runId,
+    total: pages.length
+  });
 }
 
 // =============================================================
@@ -2116,392 +2702,437 @@ total: pages.length
 // =============================================================
 
 async function processPublishBatch(
-request,
-env,
-sessionId
+  request,
+  env,
+  sessionId
 ) {
-const form =
-await request.formData();
+  const form =
+    await request.formData();
 
-const runId =
-String(
-form.get("run_id") || ""
-).trim();
+  const runId =
+    String(
+      form.get("run_id") || ""
+    ).trim();
 
-const selectedPageIds =
-form
-.getAll("page_ids")
-.map(Number)
-.filter(
-id =>
-Number.isInteger(id) &&
-id > 0
-);
-
-const media =
-form.get("media");
-
-if (!runId) {
-return jsonResponse(
-{
-error:
-"Publishing run ID is missing."
-},
-400
-);
-}
-
-const run =
-await env.DB.prepare(
-"SELECT id, session_id, message, media_type, media_name, status " +
-"FROM publish_runs WHERE id = ?"
-)
-.bind(runId)
-.first();
-
-if (!run) {
-return jsonResponse(
-{
-error:
-"Publishing run was not found."
-},
-404
-);
-}
-
-if (
-String(run.session_id) !==
-String(sessionId)
-) {
-return jsonResponse(
-{
-error:
-"This publishing run does not belong to the current session."
-},
-403
-);
-}
-
-if (!selectedPageIds.length) {
-return jsonResponse(
-{
-error:
-"No Pages were supplied for this batch."
-},
-400
-);
-}
-
-// Hard server-side batch guard.
-// Even if someone modifies the browser JS, one request
-// cannot exceed this amount.
-const SERVER_BATCH_LIMIT = 15;
-
-if (
-selectedPageIds.length >
-SERVER_BATCH_LIMIT
-) {
-return jsonResponse(
-{
-error:
-"Batch too large. Maximum " +
-SERVER_BATCH_LIMIT +
-" Pages per request."
-},
-400
-);
-}
-
-const config =
-getMetaConfig(env);
-
-let mediaBuffer = null;
-let mediaType =
-run.media_type || null;
-let mediaName =
-run.media_name || null;
-
-if (
-media &&
-typeof media === "object" &&
-media.name
-) {
-mediaName =
-media.name;
-
-```
-if (
-  (media.type || "").startsWith(
-    "image/"
-  )
-) {
-  mediaType = "image";
-} else if (
-  (media.type || "").startsWith(
-    "video/"
-  )
-) {
-  mediaType = "video";
-} else {
-  return jsonResponse(
-    {
-      error:
-        "Unsupported media type."
-    },
-    400
-  );
-}
-
-const size =
-  Number(media.size || 0);
-
-if (
-  size >
-  100 * 1024 * 1024
-) {
-  return jsonResponse(
-    {
-      error:
-        "File is too large. Maximum supported size is 100 MB."
-    },
-    400
-  );
-}
-
-mediaBuffer =
-  await media.arrayBuffer();
-```
-
-} else if (
-mediaType
-) {
-// If the run requires media but the batch did not
-// include it, fail instead of accidentally creating
-// a text-only post.
-return jsonResponse(
-{
-error:
-"Media is missing from this publishing batch. Please retry the publishing run."
-},
-400
-);
-}
-
-const placeholders =
-selectedPageIds
-.map(() => "?")
-.join(",");
-
-const pagesResult =
-await env.DB.prepare(
-"SELECT id, facebook_page_id, page_name, access_token " +
-"FROM pages " +
-"WHERE id IN (" +
-placeholders +
-")"
-)
-.bind(...selectedPageIds)
-.all();
-
-const pages =
-pagesResult.results || [];
-
-if (!pages.length) {
-return jsonResponse(
-{
-error:
-"The selected Pages could not be found."
-},
-404
-);
-}
-
-const batchResults = [];
-
-for (const fbPage of pages) {
-// ---------------------------------------------------------
-// DUPLICATE PROTECTION
-// ---------------------------------------------------------
-
-```
-const runPage =
-  await env.DB.prepare(
-    "SELECT id, status, post_id, error " +
-      "FROM publish_run_pages " +
-      "WHERE run_id = ? AND page_db_id = ?"
-  )
-    .bind(
-      runId,
-      Number(fbPage.id)
-    )
-    .first();
-
-if (!runPage) {
-  batchResults.push({
-    page: fbPage.page_name,
-    pageId: fbPage.facebook_page_id,
-    success: false,
-    error:
-      "Page was not registered in this publishing run."
-  });
-
-  continue;
-}
-
-// If this Page was already successfully published,
-// NEVER publish it again.
-if (
-  String(runPage.status) ===
-  "success"
-) {
-  batchResults.push({
-    page: fbPage.page_name,
-    pageId: fbPage.facebook_page_id,
-    success: true,
-    postId:
-      runPage.post_id || "",
-    alreadyProcessed: true
-  });
-
-  continue;
-}
-
-// Mark as processing before calling Meta.
-await env.DB.prepare(
-  "UPDATE publish_run_pages " +
-    "SET status = 'processing' " +
-    "WHERE id = ? AND status IN ('pending', 'failed')"
-)
-  .bind(Number(runPage.id))
-  .run();
-
-try {
-  let result;
-
-  if (!mediaBuffer) {
-    result =
-      await publishTextPost(
-        fbPage,
-        String(run.message || ""),
-        config.graphVersion
+  const selectedPageIds =
+    form
+      .getAll("page_ids")
+      .map(Number)
+      .filter(
+        id =>
+          Number.isInteger(id) &&
+          id > 0
       );
-  } else if (
-    mediaType === "image"
-  ) {
-    result =
-      await publishImagePost(
-        fbPage,
-        String(run.message || ""),
-        mediaBuffer,
-        mediaName,
-        config.graphVersion
-      );
-  } else {
-    result =
-      await publishVideoPost(
-        fbPage,
-        String(run.message || ""),
-        mediaBuffer,
-        mediaName,
-        config.graphVersion
-      );
+
+  const media =
+    form.get("media");
+
+  if (!runId) {
+    return jsonResponse(
+      {
+        error:
+          "Publishing run ID is missing."
+      },
+      400
+    );
   }
 
-  const postId =
-    result &&
-    result.id
-      ? String(result.id)
-      : "";
-
-  await env.DB.prepare(
-    "UPDATE publish_run_pages " +
-      "SET status = 'success', post_id = ?, error = NULL, completed_at = datetime('now') " +
-      "WHERE id = ?"
-  )
-    .bind(
-      postId,
-      Number(runPage.id)
+  const run =
+    await env.DB.prepare(
+      "SELECT id, session_id, message, media_type, media_name, status " +
+        "FROM publish_runs WHERE id = ?"
     )
-    .run();
+      .bind(runId)
+      .first();
 
-  batchResults.push({
-    page: fbPage.page_name,
-    pageId: fbPage.facebook_page_id,
-    success: true,
-    postId
-  });
-} catch (error) {
-  const errorMessage =
-    error &&
-    error.message
-      ? error.message
-      : String(error);
+  if (!run) {
+    return jsonResponse(
+      {
+        error:
+          "Publishing run was not found."
+      },
+      404
+    );
+  }
 
-  await env.DB.prepare(
-    "UPDATE publish_run_pages " +
-      "SET status = 'failed', error = ?, completed_at = datetime('now') " +
-      "WHERE id = ?"
-  )
-    .bind(
-      errorMessage,
-      Number(runPage.id)
+  if (
+    String(run.session_id) !==
+    String(sessionId)
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "This publishing run does not belong to the current session."
+      },
+      403
+    );
+  }
+
+  if (
+    !selectedPageIds.length
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "No Pages were supplied for this batch."
+      },
+      400
+    );
+  }
+
+  // ---------------------------------------------------------
+  // HARD SERVER-SIDE BATCH LIMIT
+  // ---------------------------------------------------------
+  // Browser sends 15 Pages at a time.
+  // This prevents a modified browser request from attempting
+  // to publish hundreds of Pages in one Worker invocation.
+  // ---------------------------------------------------------
+  const SERVER_BATCH_LIMIT = 15;
+
+  if (
+    selectedPageIds.length >
+    SERVER_BATCH_LIMIT
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "Batch too large. Maximum " +
+          SERVER_BATCH_LIMIT +
+          " Pages per request."
+      },
+      400
+    );
+  }
+
+  // Remove duplicates inside the batch.
+  const uniqueBatchIds =
+    [...new Set(
+      selectedPageIds
+    )];
+
+  const config =
+    getMetaConfig(env);
+
+  let mediaBuffer = null;
+
+  let mediaType =
+    run.media_type || null;
+
+  let mediaName =
+    run.media_name || null;
+
+  if (
+    media &&
+    typeof media === "object" &&
+    media.name
+  ) {
+    mediaName =
+      media.name;
+
+    if (
+      (media.type || "")
+        .startsWith("image/")
+    ) {
+      mediaType = "image";
+    } else if (
+      (media.type || "")
+        .startsWith("video/")
+    ) {
+      mediaType = "video";
+    } else {
+      return jsonResponse(
+        {
+          error:
+            "Unsupported media type."
+        },
+        400
+      );
+    }
+
+    const size =
+      Number(
+        media.size || 0
+      );
+
+    if (
+      size >
+      100 * 1024 * 1024
+    ) {
+      return jsonResponse(
+        {
+          error:
+            "File is too large. Maximum supported size is 100 MB."
+        },
+        400
+      );
+    }
+
+    mediaBuffer =
+      await media.arrayBuffer();
+  } else if (
+    mediaType
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "Media is missing from this publishing batch. Please retry the publishing run."
+      },
+      400
+    );
+  }
+
+  const placeholders =
+    uniqueBatchIds
+      .map(() => "?")
+      .join(",");
+
+  const pagesResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_page_id, page_name, access_token " +
+        "FROM pages " +
+        "WHERE id IN (" +
+        placeholders +
+        ")"
     )
-    .run();
+      .bind(
+        ...uniqueBatchIds
+      )
+      .all();
 
-  batchResults.push({
-    page: fbPage.page_name,
-    pageId: fbPage.facebook_page_id,
-    success: false,
-    error: errorMessage
+  const pages =
+    pagesResult.results || [];
+
+  if (!pages.length) {
+    return jsonResponse(
+      {
+        error:
+          "The selected Pages could not be found."
+      },
+      404
+    );
+  }
+
+  if (
+    pages.length !==
+    uniqueBatchIds.length
+  ) {
+    return jsonResponse(
+      {
+        error:
+          "One or more Pages could not be found. Please sync Pages and try again."
+      },
+      404
+    );
+  }
+
+  const batchResults = [];
+
+  for (
+    const fbPage of pages
+  ) {
+    const runPage =
+      await env.DB.prepare(
+        "SELECT id, status, post_id, error " +
+          "FROM publish_run_pages " +
+          "WHERE run_id = ? AND page_db_id = ?"
+      )
+        .bind(
+          runId,
+          Number(fbPage.id)
+        )
+        .first();
+
+    if (!runPage) {
+      batchResults.push({
+        page:
+          fbPage.page_name,
+        pageId:
+          fbPage.facebook_page_id,
+        success: false,
+        error:
+          "Page was not registered in this publishing run."
+      });
+
+      continue;
+    }
+
+    // Never publish a successfully completed Page again.
+    if (
+      String(
+        runPage.status
+      ) === "success"
+    ) {
+      batchResults.push({
+        page:
+          fbPage.page_name,
+        pageId:
+          fbPage.facebook_page_id,
+        success: true,
+        postId:
+          runPage.post_id || "",
+        alreadyProcessed: true
+      });
+
+      continue;
+    }
+
+    // Mark processing before calling Meta.
+    await env.DB.prepare(
+      "UPDATE publish_run_pages " +
+        "SET status = 'processing' " +
+        "WHERE id = ? " +
+        "AND status IN ('pending', 'failed')"
+    )
+      .bind(
+        Number(runPage.id)
+      )
+      .run();
+
+    try {
+      let result;
+
+      if (!mediaBuffer) {
+        result =
+          await publishTextPost(
+            fbPage,
+            String(
+              run.message || ""
+            ),
+            config.graphVersion
+          );
+      } else if (
+        mediaType === "image"
+      ) {
+        result =
+          await publishImagePost(
+            fbPage,
+            String(
+              run.message || ""
+            ),
+            mediaBuffer,
+            mediaName,
+            config.graphVersion
+          );
+      } else {
+        result =
+          await publishVideoPost(
+            fbPage,
+            String(
+              run.message || ""
+            ),
+            mediaBuffer,
+            mediaName,
+            config.graphVersion
+          );
+      }
+
+      const postId =
+        result &&
+        result.id
+          ? String(result.id)
+          : "";
+
+      await env.DB.prepare(
+        "UPDATE publish_run_pages " +
+          "SET status = 'success', " +
+          "post_id = ?, " +
+          "error = NULL, " +
+          "completed_at = datetime('now') " +
+          "WHERE id = ?"
+      )
+        .bind(
+          postId,
+          Number(runPage.id)
+        )
+        .run();
+
+      batchResults.push({
+        page:
+          fbPage.page_name,
+        pageId:
+          fbPage.facebook_page_id,
+        success: true,
+        postId
+      });
+    } catch (error) {
+      const errorMessage =
+        error &&
+        error.message
+          ? error.message
+          : String(error);
+
+      await env.DB.prepare(
+        "UPDATE publish_run_pages " +
+          "SET status = 'failed', " +
+          "error = ?, " +
+          "completed_at = datetime('now') " +
+          "WHERE id = ?"
+      )
+        .bind(
+          errorMessage,
+          Number(runPage.id)
+        )
+        .run();
+
+      batchResults.push({
+        page:
+          fbPage.page_name,
+        pageId:
+          fbPage.facebook_page_id,
+        success: false,
+        error:
+          errorMessage
+      });
+    }
+  }
+
+  const pending =
+    await env.DB.prepare(
+      "SELECT COUNT(*) AS count " +
+        "FROM publish_run_pages " +
+        "WHERE run_id = ? " +
+        "AND status IN ('pending', 'processing')"
+    )
+      .bind(runId)
+      .first();
+
+  const pendingCount =
+    Number(
+      pending &&
+      pending.count
+        ? pending.count
+        : 0
+    );
+
+  if (
+    pendingCount === 0
+  ) {
+    await env.DB.prepare(
+      "UPDATE publish_runs " +
+        "SET status = 'completed', " +
+        "completed_at = datetime('now') " +
+        "WHERE id = ?"
+    )
+      .bind(runId)
+      .run();
+
+    await allowNextDashboardLoad(
+      env.DB,
+      sessionId
+    );
+  }
+
+  return jsonResponse({
+    runId,
+    processed:
+      batchResults.length,
+    pending:
+      pendingCount,
+    complete:
+      pendingCount === 0,
+    results:
+      batchResults
   });
-}
-```
-
-}
-
-// Determine whether the whole run is complete.
-const pending =
-await env.DB.prepare(
-"SELECT COUNT(*) AS count " +
-"FROM publish_run_pages " +
-"WHERE run_id = ? AND status IN ('pending', 'processing')"
-)
-.bind(runId)
-.first();
-
-const pendingCount =
-Number(
-pending &&
-pending.count
-? pending.count
-: 0
-);
-
-if (pendingCount === 0) {
-await env.DB.prepare(
-"UPDATE publish_runs " +
-"SET status = 'completed', completed_at = datetime('now') " +
-"WHERE id = ?"
-)
-.bind(runId)
-.run();
-
-```
-await allowNextDashboardLoad(
-  env.DB,
-  sessionId
-);
-```
-
-}
-
-return jsonResponse({
-runId,
-processed: batchResults.length,
-pending: pendingCount,
-complete: pendingCount === 0,
-results: batchResults
-});
 }
 
 // =============================================================
@@ -2509,307 +3140,345 @@ results: batchResults
 // =============================================================
 
 async function showPublishResults(
-request,
-env,
-sessionId
+  request,
+  env,
+  sessionId
 ) {
-const url =
-new URL(request.url);
+  const url =
+    new URL(request.url);
 
-const runId =
-String(
-url.searchParams.get(
-"run_id"
-) || ""
-).trim();
+  const runId =
+    String(
+      url.searchParams.get(
+        "run_id"
+      ) || ""
+    ).trim();
 
-if (!runId) {
-throw new Error(
-"Publishing run ID is missing."
-);
-}
+  if (!runId) {
+    throw new Error(
+      "Publishing run ID is missing."
+    );
+  }
 
-const run =
-await env.DB.prepare(
-"SELECT id, session_id, status, created_at, completed_at " +
-"FROM publish_runs WHERE id = ?"
-)
-.bind(runId)
-.first();
+  const run =
+    await env.DB.prepare(
+      "SELECT id, session_id, status, created_at, completed_at " +
+        "FROM publish_runs WHERE id = ?"
+    )
+      .bind(runId)
+      .first();
 
-if (!run) {
-throw new Error(
-"Publishing run was not found."
-);
-}
+  if (!run) {
+    throw new Error(
+      "Publishing run was not found."
+    );
+  }
 
-if (
-String(run.session_id) !==
-String(sessionId)
-) {
-throw new Error(
-"This publishing run does not belong to the current session."
-);
-}
+  if (
+    String(run.session_id) !==
+    String(sessionId)
+  ) {
+    throw new Error(
+      "This publishing run does not belong to the current session."
+    );
+  }
 
-const resultsResult =
-await env.DB.prepare(
-"SELECT page_name, facebook_page_id, status, post_id, error " +
-"FROM publish_run_pages " +
-"WHERE run_id = ? " +
-"ORDER BY id ASC"
-)
-.bind(runId)
-.all();
+  const resultsResult =
+    await env.DB.prepare(
+      "SELECT page_name, facebook_page_id, status, post_id, error " +
+        "FROM publish_run_pages " +
+        "WHERE run_id = ? " +
+        "ORDER BY id ASC"
+    )
+      .bind(runId)
+      .all();
 
-const results =
-resultsResult.results || [];
+  const results =
+    resultsResult.results || [];
 
-const successCount =
-results.filter(
-r =>
-String(r.status) ===
-"success"
-).length;
+  const successCount =
+    results.filter(
+      r =>
+        String(r.status) ===
+        "success"
+    ).length;
 
-const failedCount =
-results.filter(
-r =>
-String(r.status) ===
-"failed"
-).length;
+  const failedCount =
+    results.filter(
+      r =>
+        String(r.status) ===
+        "failed"
+    ).length;
 
-const processingCount =
-results.filter(
-r =>
-String(r.status) !==
-"success" &&
-String(r.status) !==
-"failed"
-).length;
+  const processingCount =
+    results.filter(
+      r =>
+        String(r.status) !==
+          "success" &&
+        String(r.status) !==
+          "failed"
+    ).length;
 
-let resultsHtml = "";
+  let resultsHtml = "";
 
-for (const r of results) {
-const success =
-String(r.status) ===
-"success";
+  for (
+    const r of results
+  ) {
+    const success =
+      String(r.status) ===
+      "success";
 
-```
-const failed =
-  String(r.status) ===
-  "failed";
+    const failed =
+      String(r.status) ===
+      "failed";
 
-resultsHtml += `
-  <div class="result-row ${
-    success
-      ? "result-success"
-      : failed
-      ? "result-failed"
-      : ""
-  }">
-
-    <div class="result-main">
-      <div class="result-avatar">
-        ${escapeHtml(
-          getInitials(
-            r.page_name ||
-              "Page"
-          )
-        )}
-      </div>
-
-      <div>
-        <strong>
-          ${escapeHtml(
-            r.page_name ||
-              "Unnamed Page"
-          )}
-        </strong>
-
-        <div class="result-page-id">
-          Page ID:
-          ${escapeHtml(
-            r.facebook_page_id
-          )}
-        </div>
-      </div>
-    </div>
-
-    <div class="result-status ${
-      success
-        ? "status-success"
-        : failed
-        ? "status-failed"
-        : ""
-    }">
-      <span>
-        ${
-          success
-            ? "✓"
-            : failed
-            ? "×"
-            : "•"
-        }
-      </span>
-
-      ${
+    resultsHtml += `
+      <div class="result-row ${
         success
-          ? "Published"
+          ? "result-success"
           : failed
-          ? "Failed"
-          : "Processing"
-      }
-    </div>
-
-    ${
-      success
-        ? r.post_id
-          ? `
-            <div class="result-extra success-extra">
-              Post ID:
-              ${escapeHtml(
-                r.post_id
-              )}
-            </div>
-          `
+          ? "result-failed"
           : ""
-        : failed
-        ? `
-          <div class="result-extra">
+      }">
+
+        <div class="result-main">
+
+          <div class="result-avatar">
             ${escapeHtml(
-              r.error || ""
+              getInitials(
+                r.page_name ||
+                  "Page"
+              )
             )}
           </div>
-        `
-        : ""
-    }
 
-  </div>
-`;
-```
+          <div>
 
-}
+            <strong>
+              ${escapeHtml(
+                r.page_name ||
+                  "Unnamed Page"
+              )}
+            </strong>
 
-return page(
-"Publish Results",
-` <div class="results-page">
+            <div class="result-page-id">
+              Page ID:
+              ${escapeHtml(
+                r.facebook_page_id
+              )}
+            </div>
 
-```
-  <div class="results-topbar">
-    <a href="/" class="results-brand">
-      <div class="brand-mark small-mark">
-        <span>f</span>
-      </div>
-
-      <div>
-        <div class="brand-name">
-          META PUBLISHER
-        </div>
-
-        <div class="brand-mini">
-          COMMAND CENTER
-        </div>
-      </div>
-    </a>
-
-    <form method="POST" action="/logout">
-      <button class="header-logout" type="submit">
-        Logout
-      </button>
-    </form>
-  </div>
-
-  <div class="results-container">
-
-    <div class="results-hero">
-      <div class="success-big-icon">
-        ${
-          successCount > 0
-            ? "✓"
-            : "!"
-        }
-      </div>
-
-      <div class="eyebrow">
-        ${
-          processingCount
-            ? "PUBLISHING IN PROGRESS"
-            : "PUBLISHING COMPLETE"
-        }
-      </div>
-
-      <h1>
-        ${
-          processingCount
-            ? "Your publishing run is still processing."
-            : "Your publishing run is finished."
-        }
-      </h1>
-
-      <p>
-        The system attempted to publish your content
-        across ${results.length} selected Page${
-  results.length === 1 ? "" : "s"
-}.
-      </p>
-    </div>
-
-    <div class="results-stats">
-
-      <div class="result-stat success-stat">
-        <span>Successful</span>
-        <strong>${successCount}</strong>
-      </div>
-
-      <div class="result-stat failed-stat">
-        <span>Failed</span>
-        <strong>${failedCount}</strong>
-      </div>
-
-      <div class="result-stat total-stat">
-        <span>Total</span>
-        <strong>${results.length}</strong>
-      </div>
-
-    </div>
-
-    <section class="results-card">
-      <div class="results-card-header">
-        <div>
-          <div class="eyebrow">
-            PAGE RESULTS
           </div>
-          <h2>Publishing Report</h2>
+
         </div>
 
-        <div class="report-pill">
-          ${successCount}/${results.length}
-          successful
+        <div class="result-status ${
+          success
+            ? "status-success"
+            : failed
+            ? "status-failed"
+            : ""
+        }">
+
+          <span>
+            ${
+              success
+                ? "✓"
+                : failed
+                ? "×"
+                : "•"
+            }
+          </span>
+
+          ${
+            success
+              ? "Published"
+              : failed
+              ? "Failed"
+              : "Processing"
+          }
+
         </div>
+
+        ${
+          success
+            ? r.post_id
+              ? `
+                <div class="result-extra success-extra">
+                  Post ID:
+                  ${escapeHtml(
+                    r.post_id
+                  )}
+                </div>
+              `
+              : ""
+            : failed
+            ? `
+              <div class="result-extra">
+                ${escapeHtml(
+                  r.error || ""
+                )}
+              </div>
+            `
+            : ""
+        }
+
+      </div>
+    `;
+  }
+
+  return page(
+    "Publish Results",
+    `
+    <div class="results-page">
+
+      <div class="results-topbar">
+
+        <a
+          href="/"
+          class="results-brand"
+        >
+
+          <div class="brand-mark small-mark">
+            <span>f</span>
+          </div>
+
+          <div>
+            <div class="brand-name">
+              META PUBLISHER
+            </div>
+
+            <div class="brand-mini">
+              COMMAND CENTER
+            </div>
+          </div>
+
+        </a>
+
+        <form
+          method="POST"
+          action="/logout"
+        >
+          <button
+            class="header-logout"
+            type="submit"
+          >
+            Logout
+          </button>
+        </form>
+
       </div>
 
-      <div class="results-list">
-        ${resultsHtml}
-      </div>
-    </section>
+      <div class="results-container">
 
-    <div class="results-actions">
-      <a class="back-btn" href="/">
-        <svg viewBox="0 0 24 24">
-          <path d="M19 12H5"/>
-          <path d="m11 18-6-6 6-6"/>
-        </svg>
-        Back to Dashboard
-      </a>
+        <div class="results-hero">
+
+          <div class="success-big-icon">
+            ${
+              successCount > 0
+                ? "✓"
+                : "!"
+            }
+          </div>
+
+          <div class="eyebrow">
+            ${
+              processingCount
+                ? "PUBLISHING IN PROGRESS"
+                : "PUBLISHING COMPLETE"
+            }
+          </div>
+
+          <h1>
+            ${
+              processingCount
+                ? "Your publishing run is still processing."
+                : "Your publishing run is finished."
+            }
+          </h1>
+
+          <p>
+            The system attempted to publish your content
+            across ${results.length} selected Page${
+              results.length === 1
+                ? ""
+                : "s"
+            }.
+          </p>
+
+        </div>
+
+        <div class="results-stats">
+
+          <div class="result-stat success-stat">
+            <span>Successful</span>
+            <strong>
+              ${successCount}
+            </strong>
+          </div>
+
+          <div class="result-stat failed-stat">
+            <span>Failed</span>
+            <strong>
+              ${failedCount}
+            </strong>
+          </div>
+
+          <div class="result-stat total-stat">
+            <span>Total</span>
+            <strong>
+              ${results.length}
+            </strong>
+          </div>
+
+        </div>
+
+        <section class="results-card">
+
+          <div class="results-card-header">
+
+            <div>
+              <div class="eyebrow">
+                PAGE RESULTS
+              </div>
+
+              <h2>
+                Publishing Report
+              </h2>
+            </div>
+
+            <div class="report-pill">
+              ${successCount}/${results.length}
+              successful
+            </div>
+
+          </div>
+
+          <div class="results-list">
+            ${resultsHtml}
+          </div>
+
+        </section>
+
+        <div class="results-actions">
+
+          <a
+            class="back-btn"
+            href="/"
+          >
+            <svg viewBox="0 0 24 24">
+              <path d="M19 12H5"/>
+              <path d="m11 18-6-6 6-6"/>
+            </svg>
+            Back to Dashboard
+          </a>
+
+        </div>
+
+      </div>
     </div>
-
-  </div>
-</div>
-`
-```
-
-);
+    `
+  );
 }
 
 // =============================================================
@@ -2817,22 +3486,22 @@ return page(
 // =============================================================
 
 function jsonResponse(
-data,
-status = 200
+  data,
+  status = 200
 ) {
-return new Response(
-JSON.stringify(data),
-{
-status,
-headers: {
-"Content-Type":
-"application/json; charset=UTF-8",
-"Cache-Control":
-"no-store, no-cache, must-revalidate, max-age=0",
-Pragma: "no-cache"
-}
-}
-);
+  return new Response(
+    JSON.stringify(data),
+    {
+      status,
+      headers: {
+        "Content-Type":
+          "application/json; charset=UTF-8",
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate, max-age=0",
+        Pragma: "no-cache"
+      }
+    }
+  );
 }
 
 // =============================================================
@@ -2840,186 +3509,186 @@ Pragma: "no-cache"
 // =============================================================
 
 async function publishTextPost(
-fbPage,
-message,
-graphVersion
+  fbPage,
+  message,
+  graphVersion
 ) {
-const url =
-"https://graph.facebook.com/" +
-graphVersion +
-"/" +
-fbPage.facebook_page_id +
-"/feed";
+  const url =
+    "https://graph.facebook.com/" +
+    graphVersion +
+    "/" +
+    fbPage.facebook_page_id +
+    "/feed";
 
-const body =
-new URLSearchParams();
+  const body =
+    new URLSearchParams();
 
-body.set(
-"message",
-message
-);
+  body.set(
+    "message",
+    message
+  );
 
-body.set(
-"access_token",
-fbPage.access_token
-);
+  body.set(
+    "access_token",
+    fbPage.access_token
+  );
 
-return graphPost(
-url,
-body
-);
+  return graphPost(
+    url,
+    body
+  );
 }
 
 async function publishImagePost(
-fbPage,
-message,
-mediaBuffer,
-mediaName,
-graphVersion
+  fbPage,
+  message,
+  mediaBuffer,
+  mediaName,
+  graphVersion
 ) {
-const url =
-"https://graph.facebook.com/" +
-graphVersion +
-"/" +
-fbPage.facebook_page_id +
-"/photos";
+  const url =
+    "https://graph.facebook.com/" +
+    graphVersion +
+    "/" +
+    fbPage.facebook_page_id +
+    "/photos";
 
-const form =
-new FormData();
+  const form =
+    new FormData();
 
-form.append(
-"access_token",
-fbPage.access_token
-);
+  form.append(
+    "access_token",
+    fbPage.access_token
+  );
 
-if (message) {
-form.append(
-"caption",
-message
-);
-}
+  if (message) {
+    form.append(
+      "caption",
+      message
+    );
+  }
 
-form.append(
-"source",
-new File(
-[mediaBuffer],
-mediaName ||
-"image.jpg"
-)
-);
+  form.append(
+    "source",
+    new File(
+      [mediaBuffer],
+      mediaName ||
+        "image.jpg"
+    )
+  );
 
-return graphPostFormData(
-url,
-form
-);
+  return graphPostFormData(
+    url,
+    form
+  );
 }
 
 async function publishVideoPost(
-fbPage,
-message,
-mediaBuffer,
-mediaName,
-graphVersion
+  fbPage,
+  message,
+  mediaBuffer,
+  mediaName,
+  graphVersion
 ) {
-const url =
-"https://graph.facebook.com/" +
-graphVersion +
-"/" +
-fbPage.facebook_page_id +
-"/videos";
+  const url =
+    "https://graph.facebook.com/" +
+    graphVersion +
+    "/" +
+    fbPage.facebook_page_id +
+    "/videos";
 
-const form =
-new FormData();
+  const form =
+    new FormData();
 
-form.append(
-"access_token",
-fbPage.access_token
-);
+  form.append(
+    "access_token",
+    fbPage.access_token
+  );
 
-if (message) {
-form.append(
-"description",
-message
-);
-}
+  if (message) {
+    form.append(
+      "description",
+      message
+    );
+  }
 
-form.append(
-"source",
-new File(
-[mediaBuffer],
-mediaName ||
-"video.mp4"
-)
-);
+  form.append(
+    "source",
+    new File(
+      [mediaBuffer],
+      mediaName ||
+        "video.mp4"
+    )
+  );
 
-return graphPostFormData(
-url,
-form
-);
+  return graphPostFormData(
+    url,
+    form
+  );
 }
 
 async function graphPost(
-url,
-body
+  url,
+  body
 ) {
-const response =
-await fetch(
-url,
-{
-method: "POST",
-headers: {
-"Content-Type":
-"application/x-www-form-urlencoded"
-},
-body
-}
-);
+  const response =
+    await fetch(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded"
+        },
+        body
+      }
+    );
 
-const data =
-await readGraphResponse(
-response
-);
+  const data =
+    await readGraphResponse(
+      response
+    );
 
-if (
-!response.ok ||
-data.error
-) {
-throw new Error(
-formatGraphError(data)
-);
-}
+  if (
+    !response.ok ||
+    data.error
+  ) {
+    throw new Error(
+      formatGraphError(data)
+    );
+  }
 
-return data;
+  return data;
 }
 
 async function graphPostFormData(
-url,
-form
+  url,
+  form
 ) {
-const response =
-await fetch(
-url,
-{
-method: "POST",
-body: form
-}
-);
+  const response =
+    await fetch(
+      url,
+      {
+        method: "POST",
+        body: form
+      }
+    );
 
-const data =
-await readGraphResponse(
-response
-);
+  const data =
+    await readGraphResponse(
+      response
+    );
 
-if (
-!response.ok ||
-data.error
-) {
-throw new Error(
-formatGraphError(data)
-);
-}
+  if (
+    !response.ok ||
+    data.error
+  ) {
+    throw new Error(
+      formatGraphError(data)
+    );
+  }
 
-return data;
+  return data;
 }
 
 // =============================================================
@@ -3027,93 +3696,103 @@ return data;
 // =============================================================
 
 async function readGraphResponse(
-response
+  response
 ) {
-const text =
-await response.text();
+  const text =
+    await response.text();
 
-try {
-return JSON.parse(text);
-} catch {
-return {
-error: {
-message:
-text ||
-"Facebook returned HTTP " +
-response.status,
-type:
-"NonJSONResponse",
-code:
-response.status
-}
-};
-}
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      error: {
+        message:
+          text ||
+          "Facebook returned HTTP " +
+            response.status,
+        type:
+          "NonJSONResponse",
+        code:
+          response.status
+      }
+    };
+  }
 }
 
-function formatGraphError(data) {
-if (
-data &&
-data.error
+function formatGraphError(
+  data
 ) {
-const e =
-data.error;
+  if (
+    data &&
+    data.error
+  ) {
+    const e =
+      data.error;
 
-```
-return [
-  e.message ||
-    "Facebook Graph API error",
-  e.type
-    ? "Type: " +
+    return [
+      e.message ||
+        "Facebook Graph API error",
+
       e.type
-    : "",
-  e.code !== undefined
-    ? "Code: " +
-      e.code
-    : "",
-  e.error_subcode !== undefined
-    ? "Subcode: " +
-      e.error_subcode
-    : ""
-]
-  .filter(Boolean)
-  .join(" | ");
-```
+        ? "Type: " +
+          e.type
+        : "",
 
-}
+      e.code !== undefined
+        ? "Code: " +
+          e.code
+        : "",
 
-return JSON.stringify(
-data
-);
+      e.error_subcode !==
+      undefined
+        ? "Subcode: " +
+          e.error_subcode
+        : ""
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  return JSON.stringify(
+    data
+  );
 }
 
 // =============================================================
 // UI HELPERS
 // =============================================================
 
-function getInitials(value) {
-const text =
-String(value || "")
-.trim();
+function getInitials(
+  value
+) {
+  const text =
+    String(
+      value || ""
+    ).trim();
 
-if (!text) {
-return "?";
-}
+  if (!text) {
+    return "?";
+  }
 
-const parts =
-text
-.split(/\s+/)
-.filter(Boolean);
+  const parts =
+    text
+      .split(/\s+/)
+      .filter(Boolean);
 
-if (parts.length === 1) {
-return parts[0]
-.slice(0, 2)
-.toUpperCase();
-}
+  if (
+    parts.length === 1
+  ) {
+    return parts[0]
+      .slice(0, 2)
+      .toUpperCase();
+  }
 
-return (
-parts[0][0] +
-parts[parts.length - 1][0]
-).toUpperCase();
+  return (
+    parts[0][0] +
+    parts[
+      parts.length - 1
+    ][0]
+  ).toUpperCase();
 }
 
 // =============================================================
@@ -3121,15 +3800,14 @@ parts[parts.length - 1][0]
 // =============================================================
 
 function page(
-title,
-content
+  title,
+  content
 ) {
-const css = `
+  const css = `
 * {
-box-sizing: border-box;
+  box-sizing: border-box;
 }
 
-```
 html {
   background: #07111f;
 }
@@ -3422,7 +4100,9 @@ svg {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  transition: transform .18s, box-shadow .18s;
+  transition:
+    transform .18s,
+    box-shadow .18s;
 }
 
 .login-submit:hover {
@@ -3474,7 +4154,8 @@ svg {
   height: 6px;
   border-radius: 50%;
   background: #36d399;
-  box-shadow: 0 0 10px rgba(54,211,153,.6);
+  box-shadow:
+    0 0 10px rgba(54,211,153,.6);
 }
 
 .dashboard-header {
@@ -3489,7 +4170,8 @@ svg {
       #0a1c34 60%,
       #09203c
     );
-  border-bottom: 1px solid rgba(255,255,255,.08);
+  border-bottom:
+    1px solid rgba(255,255,255,.08);
   box-shadow:
     0 10px 30px rgba(5,15,30,.12);
 }
@@ -3562,8 +4244,10 @@ svg {
   align-items: center;
   gap: 7px;
   border-radius: 11px;
-  border: 1px solid rgba(255,255,255,.11);
-  background: rgba(255,255,255,.055);
+  border:
+    1px solid rgba(255,255,255,.11);
+  background:
+    rgba(255,255,255,.055);
   color: #b7c7d9;
   font-size: 12px;
   font-weight: 800;
@@ -3572,7 +4256,8 @@ svg {
 
 .header-logout:hover {
   color: #fff;
-  background: rgba(255,255,255,.09);
+  background:
+    rgba(255,255,255,.09);
 }
 
 .header-logout svg {
@@ -3639,7 +4324,8 @@ svg {
 .hero h1 {
   margin: 0;
   max-width: 720px;
-  font-size: clamp(32px, 4vw, 51px);
+  font-size:
+    clamp(32px, 4vw, 51px);
   line-height: 1.02;
   letter-spacing: -.055em;
 }
@@ -3670,8 +4356,10 @@ svg {
   min-width: 145px;
   padding: 13px 15px;
   border-radius: 14px;
-  background: rgba(255,255,255,.07);
-  border: 1px solid rgba(255,255,255,.10);
+  background:
+    rgba(255,255,255,.07);
+  border:
+    1px solid rgba(255,255,255,.10);
   backdrop-filter: blur(10px);
   color: #a9bad0;
   font-size: 10px;
@@ -3733,7 +4421,8 @@ svg {
   padding: 21px;
   border-radius: 18px;
   background: #fff;
-  border: 1px solid #e6ebf2;
+  border:
+    1px solid #e6ebf2;
   box-shadow:
     0 9px 28px rgba(18,34,55,.055);
   display: flex;
@@ -3807,7 +4496,8 @@ svg {
   margin-bottom: 18px;
   border-radius: 20px;
   background: #fff;
-  border: 1px solid #e4eaf2;
+  border:
+    1px solid #e4eaf2;
   box-shadow:
     0 10px 32px rgba(18,34,55,.055);
   overflow: hidden;
@@ -3819,7 +4509,8 @@ svg {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  border-bottom: 1px solid #edf1f5;
+  border-bottom:
+    1px solid #edf1f5;
 }
 
 .account-identity {
@@ -3945,7 +4636,8 @@ code {
   cursor: pointer;
   font-size: 10px;
   font-weight: 900;
-  border: 1px solid #e1e7ef;
+  border:
+    1px solid #e1e7ef;
   background: #fff;
 }
 
@@ -4005,7 +4697,8 @@ code {
   height: 31px;
   padding: 0 10px;
   border-radius: 8px;
-  border: 1px solid #e0e6ee;
+  border:
+    1px solid #e0e6ee;
   background: #f9fafc;
   color: #647188;
   font-size: 9px;
@@ -4033,7 +4726,8 @@ code {
   align-items: center;
   gap: 11px;
   border-radius: 12px;
-  border: 1px solid #e8edf3;
+  border:
+    1px solid #e8edf3;
   background: #fafbfd;
   cursor: pointer;
   transition:
@@ -4071,7 +4765,8 @@ code {
   width: 19px;
   height: 19px;
   border-radius: 6px;
-  border: 1.5px solid #cdd6e2;
+  border:
+    1.5px solid #cdd6e2;
   background: #fff;
   display: flex;
   align-items: center;
@@ -4090,13 +4785,13 @@ code {
 }
 
 .page-checkbox:checked
-  + .custom-check {
++ .custom-check {
   background: #1877f2;
   border-color: #1877f2;
 }
 
 .page-checkbox:checked
-  + .custom-check svg {
++ .custom-check svg {
   opacity: 1;
   transform: scale(1);
 }
@@ -4158,7 +4853,8 @@ code {
   padding: 15px;
   border-radius: 12px;
   background: #fafbfd;
-  border: 1px dashed #dce3ec;
+  border:
+    1px dashed #dce3ec;
   color: #778499;
 }
 
@@ -4189,7 +4885,8 @@ code {
   padding: 26px;
   border-radius: 22px;
   background: #fff;
-  border: 1px solid #e4eaf2;
+  border:
+    1px solid #e4eaf2;
   box-shadow:
     0 13px 38px rgba(18,34,55,.065);
 }
@@ -4259,7 +4956,8 @@ code {
 }
 
 .composer-box {
-  border: 1px solid #e3e8ef;
+  border:
+    1px solid #e3e8ef;
   border-radius: 14px;
   overflow: hidden;
   background: #fbfcfe;
@@ -4271,7 +4969,8 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e8edf3;
+  border-bottom:
+    1px solid #e8edf3;
   background: #fff;
 }
 
@@ -4308,7 +5007,8 @@ code {
   min-height: 150px;
   margin-top: 14px;
   border-radius: 15px;
-  border: 1.5px dashed #cfd9e6;
+  border:
+    1.5px dashed #cfd9e6;
   background: #fafcff;
   display: flex;
   flex-direction: column;
@@ -4468,23 +5168,25 @@ code {
   width: 15px;
   height: 15px;
   border-radius: 50%;
-  border: 2px solid rgba(255,255,255,.35);
+  border:
+    2px solid rgba(255,255,255,.35);
   border-top-color: #fff;
-  animation: spin .7s linear infinite;
+  animation:
+    spin .7s linear infinite;
 }
 
 .publish-btn.loading
-  .publish-btn-text {
+.publish-btn-text {
   display: none;
 }
 
 .publish-btn.loading
-  .publish-arrow {
+.publish-arrow {
   display: none;
 }
 
 .publish-btn.loading
-  .publish-spinner {
+.publish-spinner {
   display: block;
 }
 
@@ -4500,7 +5202,8 @@ code {
   text-align: center;
   border-radius: 22px;
   background: #fff;
-  border: 1px solid #e4eaf2;
+  border:
+    1px solid #e4eaf2;
   box-shadow:
     0 12px 34px rgba(18,34,55,.055);
 }
@@ -4578,7 +5281,8 @@ code {
   padding: 32px;
   border-radius: 20px;
   background: #fff;
-  border: 1px solid #e3e8ef;
+  border:
+    1px solid #e3e8ef;
   box-shadow:
     0 16px 50px rgba(18,34,55,.08);
 }
@@ -4725,7 +5429,8 @@ code {
   padding: 19px;
   border-radius: 15px;
   background: #fff;
-  border: 1px solid #e4eaf2;
+  border:
+    1px solid #e4eaf2;
   text-align: center;
 }
 
@@ -4760,7 +5465,8 @@ code {
   padding: 22px;
   border-radius: 20px;
   background: #fff;
-  border: 1px solid #e4eaf2;
+  border:
+    1px solid #e4eaf2;
   box-shadow:
     0 12px 35px rgba(18,34,55,.055);
 }
@@ -4771,7 +5477,8 @@ code {
   justify-content: space-between;
   gap: 15px;
   padding-bottom: 17px;
-  border-bottom: 1px solid #edf1f5;
+  border-bottom:
+    1px solid #edf1f5;
   margin-bottom: 14px;
 }
 
@@ -4798,7 +5505,8 @@ code {
 .result-row {
   padding: 12px;
   border-radius: 12px;
-  border: 1px solid #e5eaf0;
+  border:
+    1px solid #e5eaf0;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px 15px;
@@ -5083,41 +5791,39 @@ code {
     justify-self: start;
   }
 }
-```
-
 `;
 
-return new Response(
-"<!DOCTYPE html>" +
-'<html lang="en">' +
-"<head>" +
-'<meta charset="UTF-8">' +
-'<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-'<meta name="robots" content="noindex,nofollow">' +
-"<title>" +
-escapeHtml(title) +
-" - " +
-escapeHtml(APP_NAME) +
-"</title>" +
-"<style>" +
-css +
-"</style>" +
-"</head>" +
-"<body>" +
-content +
-"</body>" +
-"</html>",
-{
-headers: {
-"Content-Type":
-"text/html; charset=UTF-8",
-"Cache-Control":
-"no-store, no-cache, must-revalidate, max-age=0",
-Pragma: "no-cache",
-Expires: "0"
-}
-}
-);
+  return new Response(
+    "<!DOCTYPE html>" +
+      '<html lang="en">' +
+      "<head>" +
+      '<meta charset="UTF-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+      '<meta name="robots" content="noindex,nofollow">' +
+      "<title>" +
+      escapeHtml(title) +
+      " - " +
+      escapeHtml(APP_NAME) +
+      "</title>" +
+      "<style>" +
+      css +
+      "</style>" +
+      "</head>" +
+      "<body>" +
+      content +
+      "</body>" +
+      "</html>",
+    {
+      headers: {
+        "Content-Type":
+          "text/html; charset=UTF-8",
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate, max-age=0",
+        Pragma: "no-cache",
+        Expires: "0"
+      }
+    }
+  );
 }
 
 // =============================================================
@@ -5125,29 +5831,29 @@ Expires: "0"
 // =============================================================
 
 function escapeHtml(value) {
-return String(
-value == null
-? ""
-: value
-)
-.replaceAll(
-"&",
-"&"
-)
-.replaceAll(
-"<",
-"<"
-)
-.replaceAll(
-">",
-">"
-)
-.replaceAll(
-'"',
-"""
-)
-.replaceAll(
-"'",
-"'"
-);
+  return String(
+    value == null
+      ? ""
+      : value
+  )
+    .replaceAll(
+      "&",
+      "&amp;"
+    )
+    .replaceAll(
+      "<",
+      "&lt;"
+    )
+    .replaceAll(
+      ">",
+      "&gt;"
+    )
+    .replaceAll(
+      '"',
+      "&quot;"
+    )
+    .replaceAll(
+      "'",
+      "&#39;"
+    );
 }
