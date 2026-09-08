@@ -5186,15 +5186,139 @@ function page(
     }
 
     .section-heading {
-      margin-bottom: 20px;
+      position: relative;
+      min-height: 104px;
+      margin-bottom: 22px;
+      padding: 20px 22px 20px 26px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      overflow: hidden;
+      border: 1px solid rgba(93,158,255,.16);
+      border-radius: 24px;
+      background:
+        linear-gradient(135deg, rgba(20,31,48,.92), rgba(10,16,26,.88));
+      box-shadow:
+        0 18px 42px rgba(0,0,0,.16),
+        inset 0 1px 0 rgba(255,255,255,.045),
+        inset 0 -1px 0 rgba(65,126,215,.08);
+      isolation: isolate;
+    }
+
+    .section-heading::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: linear-gradient(180deg, #4aa3ff, #1877f2, #56d6b2);
+      box-shadow: 0 0 22px rgba(52,143,255,.45);
+      z-index: -1;
+    }
+
+    .section-heading::after {
+      content: "";
+      position: absolute;
+      width: 330px;
+      height: 330px;
+      right: -145px;
+      top: 50%;
+      transform: translateY(-50%);
+      border: 1px solid rgba(82,157,255,.09);
+      border-radius: 50%;
+      box-shadow:
+        0 0 0 28px rgba(82,157,255,.025),
+        0 0 0 56px rgba(82,157,255,.018);
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .section-heading > div:first-child {
+      position: relative;
+      min-width: 0;
+      padding-left: 2px;
+    }
+
+    .section-heading > div:first-child::before {
+      content: "";
+      display: block;
+      width: 7px;
+      height: 7px;
+      margin-bottom: 9px;
+      border-radius: 50%;
+      background: #57d7b0;
+      box-shadow: 0 0 0 4px rgba(87,215,176,.08), 0 0 15px rgba(87,215,176,.65);
+    }
+
+    .section-heading .eyebrow {
+      margin: 0;
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      padding: 5px 10px;
+      border: 1px solid rgba(89,157,255,.16);
+      border-radius: 999px;
+      background: rgba(62,126,210,.07);
+      color: #78b7ff;
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: .16em;
+      line-height: 1;
+    }
+
+    .section-heading h2 {
+      position: relative;
+      margin: 8px 0 0;
+      font-size: 29px;
+      line-height: 1.05;
+      letter-spacing: -.045em;
+      font-weight: 850;
+      color: #f5f9ff;
+      text-shadow: 0 5px 24px rgba(0,0,0,.25);
+    }
+
+    .section-heading h2::after {
+      content: "";
+      display: block;
+      width: 46px;
+      height: 2px;
+      margin-top: 10px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #4aa3ff, transparent);
+    }
+
+    .section-heading .primary-btn.small {
+      position: relative;
+      flex-shrink: 0;
+      min-height: 44px;
+      padding: 0 17px;
+      border-radius: 13px;
+      border-color: rgba(100,174,255,.34);
+      background: linear-gradient(135deg, #2184f5, #1768d8);
+      box-shadow:
+        0 12px 28px rgba(24,119,242,.22),
+        inset 0 1px 0 rgba(255,255,255,.16);
+      z-index: 2;
+    }
+
+    .section-heading .primary-btn.small:hover {
+      transform: translateY(-2px);
+      box-shadow:
+        0 16px 34px rgba(24,119,242,.3),
+        inset 0 1px 0 rgba(255,255,255,.18);
+    }
+
+    .section-heading .fb-symbol {
+      width: 19px;
+      height: 19px;
+      border-radius: 6px;
     }
 
     .section-heading h2,
     .publisher-heading h2,
     .results-card-header h2 {
-      margin:
-        7px 0 0;
-      font-size: 24px;
       letter-spacing: -.035em;
     }
 
