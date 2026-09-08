@@ -1,4 +1,4 @@
-javascript
+
 const APP_NAME = "Meta Multi Page Publisher";
 const BATCH = 15;
 const MAX = 100 * 1024 * 1024;
