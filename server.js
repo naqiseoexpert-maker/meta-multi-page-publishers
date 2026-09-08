@@ -4771,25 +4771,63 @@ function page(
     }
 
     .hero-copy .eyebrow {
+      position: relative;
       align-self: flex-start;
-      min-height: 34px;
-      padding: 0 14px;
-      border: 1px solid rgba(106,176,255,.26);
-      background: linear-gradient(135deg, rgba(50,137,255,.14), rgba(50,137,255,.035));
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
+      padding: 0 18px 0 13px;
+      border: 1px solid rgba(121,187,255,.34);
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(86,163,255,.16), rgba(18,51,94,.18)),
+        rgba(5,16,31,.56);
       box-shadow:
-        inset 0 1px 0 rgba(255,255,255,.07),
-        0 10px 30px rgba(26,103,205,.10);
-      color: #a1ccff;
+        inset 0 1px 0 rgba(255,255,255,.11),
+        inset 0 -1px 0 rgba(0,0,0,.18),
+        0 12px 34px rgba(19,89,176,.16),
+        0 0 0 1px rgba(87,159,255,.035);
+      color: #c5e2ff;
       font-size: 8px;
-      letter-spacing: .24em;
+      font-weight: 900;
+      letter-spacing: .28em;
+      line-height: 1;
+      overflow: hidden;
+      isolation: isolate;
     }
 
     .hero-copy .eyebrow::before {
-      width: 7px;
-      height: 7px;
-      background: #70b6ff;
-      box-shadow: 0 0 0 5px rgba(112,182,255,.08), 0 0 22px rgba(112,182,255,.9);
+      content: "";
+      flex: 0 0 auto;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #ffffff 0 12%, #9bd2ff 18%, #4c9dff 55%, #2474e8 100%);
+      box-shadow:
+        0 0 0 4px rgba(93,171,255,.09),
+        0 0 18px rgba(93,171,255,.95),
+        0 0 34px rgba(45,126,245,.42);
       animation: heroPulse 1.9s ease-in-out infinite;
+    }
+
+    .hero-copy .eyebrow::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: -35%;
+      width: 28%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.30), transparent);
+      transform: skewX(-22deg);
+      animation: eyebrowSweep 3.8s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes eyebrowSweep {
+      0%, 42% { transform: translateX(0) skewX(-22deg); opacity: 0; }
+      50% { opacity: 1; }
+      72%, 100% { transform: translateX(520%) skewX(-22deg); opacity: 0; }
     }
 
     .hero-copy h1 {
