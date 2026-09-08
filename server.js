@@ -2506,6 +2506,7 @@ html {
 }
 
 body {
+ 
   margin: 0;
   min-height: 100vh;
   position: relative;
@@ -2513,25 +2514,37 @@ body {
 
   background:
     radial-gradient(
-      circle at 8% 8%,
-      rgba(24,119,242,.20),
+      circle at 8% 12%,
+      rgba(37, 99, 235, 0.24),
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at 88% 8%,
+      rgba(79, 70, 229, 0.22),
       transparent 25%
     ),
     radial-gradient(
-      circle at 92% 12%,
-      rgba(99,102,241,.16),
+      circle at 50% 48%,
+      rgba(14, 165, 233, 0.10),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 15% 88%,
+      rgba(99, 102, 241, 0.14),
       transparent 28%
     ),
     radial-gradient(
-      circle at 50% 100%,
-      rgba(14,165,233,.13),
-      transparent 34%
+      circle at 92% 92%,
+      rgba(24, 119, 242, 0.16),
+      transparent 27%
     ),
     linear-gradient(
       135deg,
       #f8fbff 0%,
-      #eef4fb 45%,
-      #f7faff 100%
+      #edf4fc 28%,
+      #f5f8ff 55%,
+      #eef4fc 78%,
+      #f9fbff 100%
     );
 
   background-attachment: fixed;
