@@ -2021,42 +2021,42 @@ async function showDashboard(env) {
       }
     });
 }  catch (error) {
-    return page(
-      "Meta Login Error",
-      
-      <div class="error-screen">
-        <div class="error-box">
+   return page(
+  "Meta Login Error",
+  `
+  <div class="error-screen">
+    <div class="error-box">
 
-          <div class="error-icon">!</div>
+      <div class="error-icon">!</div>
 
-          <div class="eyebrow">
-            FACEBOOK CONNECTION
-          </div>
-
-          <h2>
-            Unable to start Facebook login
-          </h2>
-
-          <p class="error-intro">
-            ${escapeHtml(
-              error &&
-              error.message
-                ? error.message
-                : String(error)
-            )}
-          </p>
-
-          <a
-            class="back-btn"
-            href="/"
-          >
-            Back to Dashboard
-          </a>
-
-        </div>
+      <div class="eyebrow">
+        FACEBOOK CONNECTION
       </div>
-      `
-    );
+
+      <h2>
+        Unable to start Facebook login
+      </h2>
+
+      <p class="error-intro">
+        ${escapeHtml(
+          error &&
+          error.message
+            ? error.message
+            : String(error)
+        )}
+      </p>
+
+      <a
+        class="back-btn"
+        href="/"
+      >
+        Back to Dashboard
+      </a>
+
+    </div>
+  </div>
+  `
+);
   }
 }
 
