@@ -4540,55 +4540,102 @@ function page(
     }
 
     .topbar {
+      position: relative;
+      overflow: hidden;
       width: min(1440px, calc(100% - 48px));
-      margin: 14px auto 0;
-      min-height: 74px;
-      padding: 0 18px;
+      margin: 16px auto 0;
+      min-height: 82px;
+      padding: 0 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 24px;
-      border: 1px solid rgba(255,255,255,.075);
-      border-radius: 18px;
-      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.018));
-      box-shadow: 0 16px 45px rgba(0,0,0,.16), inset 0 1px 0 rgba(255,255,255,.035);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(116,170,255,.16);
+      border-radius: 22px;
+      background:
+        linear-gradient(120deg, rgba(20,42,78,.72), rgba(8,16,32,.82) 48%, rgba(17,30,55,.72));
+      box-shadow:
+        0 20px 55px rgba(0,0,0,.28),
+        0 0 0 1px rgba(255,255,255,.018) inset,
+        0 1px 0 rgba(255,255,255,.07) inset;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .topbar::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, rgba(71,139,255,.13), transparent 28%, transparent 72%, rgba(53,212,154,.07)),
+        linear-gradient(110deg, transparent 35%, rgba(255,255,255,.045) 50%, transparent 65%);
+      opacity: .9;
+    }
+
+    .topbar::after {
+      content: "";
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(82,151,255,.65), rgba(53,212,154,.42), transparent);
+      opacity: .75;
     }
 
     .brand-area {
+      position: relative;
+      z-index: 2;
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 15px;
       min-width: 0;
     }
 
     .brand-icon {
-      width: 44px;
-      height: 44px;
-      flex: 0 0 44px;
-      border-radius: 14px;
+      position: relative;
+      width: 50px;
+      height: 50px;
+      flex: 0 0 50px;
+      border-radius: 16px;
       display: grid;
       place-items: center;
-      background: linear-gradient(135deg, #1877f2 0%, #4b96ff 55%, #75b0ff 100%);
-      color: white;
-      font-size: 20px;
-      font-weight: 900;
-      box-shadow: 0 10px 28px rgba(24,119,242,.28), inset 0 1px 0 rgba(255,255,255,.28);
-      border: 1px solid rgba(255,255,255,.12);
+      background: linear-gradient(145deg, #237df2, #135dcc 55%, #0d3e8c);
+      color: #fff;
+      font-size: 21px;
+      font-weight: 950;
+      letter-spacing: -.04em;
+      box-shadow:
+        0 12px 30px rgba(24,119,242,.34),
+        0 0 0 5px rgba(55,133,255,.055),
+        inset 0 1px 0 rgba(255,255,255,.34),
+        inset 0 -8px 18px rgba(0,0,0,.14);
+      border: 1px solid rgba(255,255,255,.17);
+    }
+
+    .brand-icon::before {
+      content: "";
+      position: absolute;
+      inset: 5px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 12px;
     }
 
     .brand-copy {
+      position: relative;
+      z-index: 2;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 5px;
       min-width: 0;
     }
 
     .brand-name {
       font-size: 14px;
-      font-weight: 850;
-      letter-spacing: .015em;
+      font-weight: 900;
+      letter-spacing: .02em;
+      text-shadow: 0 2px 16px rgba(0,0,0,.35);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -4608,6 +4655,8 @@ function page(
     }
 
     .topbar-actions {
+      position: relative;
+      z-index: 2;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -4642,6 +4691,7 @@ function page(
     }
 
     .logout-btn {
+      position: relative;
       display: inline-flex;
       align-items: center;
       gap: 7px;
@@ -6820,7 +6870,15 @@ function page(
         min-height: 68px;
         margin-top: 10px;
         padding: 0 12px;
-        border-radius: 15px;
+        border-radius: 16px;
+      }
+
+      .brand-icon {
+        width: 42px;
+        height: 42px;
+        flex-basis: 42px;
+        border-radius: 13px;
+        font-size: 18px;
       }
 
       .live-status {
