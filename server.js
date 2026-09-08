@@ -2020,7 +2020,7 @@ async function showDashboard(env) {
         "Cache-Control": "no-store"
       }
     });
-   catch (error) {
+}  catch (error) {
     return page(
       "Meta Login Error",
       `
