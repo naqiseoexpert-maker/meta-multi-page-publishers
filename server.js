@@ -2020,9 +2020,36 @@ async function showDashboard(env) {
         "Cache-Control": "no-store"
       }
     });
-}  catch (error) {
-   return page(
-  "Meta Login Error",
+return new Response(null, {
+  status: 302,
+  headers: {
+    Location: loginUrl,
+    "Cache-Control": "no-store"
+  }
+});
+}
+
+// =============================================================
+// META CALLBACK
+// =============================================================
+
+async function metaCallback(
+  request,
+  env,
+  sessionId
+) {
+  const url =
+    new URL(request.url);
+
+  const code =
+    url.searchParams.get(
+      "code"
+    );
+
+  const state =
+    url.searchParams.get(
+      "state"
+    );
   `
   <div class="error-screen">
     <div class="error-box">
