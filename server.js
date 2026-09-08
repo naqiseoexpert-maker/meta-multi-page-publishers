@@ -5407,13 +5407,59 @@ function page(
     }
 
     .account-top {
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 25px;
-      padding: 22px 24px;
+      gap: 24px;
+      min-height: 92px;
+      padding: 18px 22px;
+      overflow: hidden;
       border-bottom:
-        1px solid var(--line);
+        1px solid rgba(105,160,255,.13);
+      background:
+        linear-gradient(
+          120deg,
+          rgba(22,34,54,.72),
+          rgba(13,19,30,.82)
+        );
+    }
+
+    .account-top::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(
+          circle at 8% 50%,
+          rgba(39,126,255,.14),
+          transparent 28%
+        ),
+        linear-gradient(
+          90deg,
+          rgba(255,255,255,.035),
+          transparent 38%,
+          rgba(44,211,153,.025)
+        );
+    }
+
+    .account-top::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 3px;
+      height: 100%;
+      background:
+        linear-gradient(
+          180deg,
+          #4f9cff,
+          #1877f2 55%,
+          #35d39a
+        );
+      box-shadow:
+        0 0 18px rgba(79,156,255,.42);
     }
 
     .account-identity {
@@ -5444,8 +5490,33 @@ function page(
     }
 
     .account-avatar {
-      width: 48px;
-      height: 48px;
+      position: relative;
+      width: 52px;
+      height: 52px;
+      border:
+        1px solid rgba(255,255,255,.18);
+      border-radius: 16px;
+      background:
+        linear-gradient(
+          145deg,
+          #2187ff,
+          #315eea 62%,
+          #2144b7
+        );
+      box-shadow:
+        0 12px 28px rgba(24,119,242,.25),
+        inset 0 1px 0 rgba(255,255,255,.22);
+      font-size: 16px;
+    }
+
+    .account-avatar::after {
+      content: "";
+      position: absolute;
+      inset: 5px;
+      border:
+        1px solid rgba(255,255,255,.13);
+      border-radius: 12px;
+      pointer-events: none;
     }
 
     .account-details {
@@ -7083,6 +7154,15 @@ function page(
       .account-top {
         align-items: flex-start;
         flex-direction: column;
+        gap: 16px;
+        min-height: auto;
+        padding: 18px;
+      }
+
+      .account-avatar {
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
       }
 
       .account-actions {
