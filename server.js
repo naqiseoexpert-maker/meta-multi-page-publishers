@@ -4531,83 +4531,91 @@ function page(
     }
 
     .topbar {
-      width: min(
-        1440px,
-        calc(100% - 48px)
-      );
-      margin: 0 auto;
-      min-height: 82px;
+      width: min(1440px, calc(100% - 48px));
+      margin: 14px auto 0;
+      min-height: 74px;
+      padding: 0 18px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 24px;
-      border-bottom: 1px solid var(--line);
+      border: 1px solid rgba(255,255,255,.075);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.018));
+      box-shadow: 0 16px 45px rgba(0,0,0,.16), inset 0 1px 0 rgba(255,255,255,.035);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
     }
 
     .brand-area {
       display: flex;
       align-items: center;
-      gap: 13px;
+      gap: 14px;
+      min-width: 0;
     }
 
     .brand-icon {
-      width: 42px;
-      height: 42px;
-      border-radius: 13px;
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
+      border-radius: 14px;
       display: grid;
       place-items: center;
-      background:
-        linear-gradient(
-          135deg,
-          #1877f2,
-          #5a9fff
-        );
+      background: linear-gradient(135deg, #1877f2 0%, #4b96ff 55%, #75b0ff 100%);
       color: white;
       font-size: 20px;
       font-weight: 900;
-      box-shadow:
-        0 10px 28px
-        rgba(24,119,242,.25);
+      box-shadow: 0 10px 28px rgba(24,119,242,.28), inset 0 1px 0 rgba(255,255,255,.28);
+      border: 1px solid rgba(255,255,255,.12);
     }
 
     .brand-copy {
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      gap: 4px;
+      min-width: 0;
     }
 
     .brand-name {
       font-size: 14px;
-      font-weight: 800;
-      letter-spacing: .02em;
+      font-weight: 850;
+      letter-spacing: .015em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .brand-byline {
       color: var(--muted-2);
       font-size: 8px;
       font-weight: 700;
-      letter-spacing: .17em;
+      letter-spacing: .18em;
     }
 
     .brand-byline strong {
-      color: var(--muted);
-      font-weight: 800;
+      color: #8fbaff;
+      font-weight: 850;
+      letter-spacing: .14em;
     }
 
     .topbar-actions {
       display: flex;
       align-items: center;
-      gap: 13px;
+      gap: 10px;
     }
 
     .live-status {
       display: flex;
       align-items: center;
-      gap: 7px;
-      color: var(--muted-2);
-      font-size: 9px;
-      font-weight: 800;
-      letter-spacing: .13em;
+      gap: 8px;
+      padding: 8px 11px;
+      border: 1px solid rgba(53,212,154,.12);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(53,212,154,.035);
+      font-size: 8px;
+      font-weight: 850;
+      letter-spacing: .14em;
     }
 
     .live-dot,
@@ -4629,14 +4637,14 @@ function page(
       align-items: center;
       gap: 7px;
       padding: 9px 13px;
-      border: 1px solid var(--line);
-      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 11px;
       color: var(--muted);
-      background: rgba(255,255,255,.025);
+      background: rgba(255,255,255,.035);
       font-size: 11px;
-      font-weight: 700;
-      transition:
-        .2s ease;
+      font-weight: 750;
+      transition: .2s ease;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
     }
 
     .logout-btn:hover {
@@ -6351,7 +6359,10 @@ function page(
       }
 
       .topbar {
-        min-height: 70px;
+        min-height: 68px;
+        margin-top: 10px;
+        padding: 0 12px;
+        border-radius: 15px;
       }
 
       .live-status {
