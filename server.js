@@ -2075,7 +2075,7 @@ async function showDashboard(
                 '</button>' +
               '</form>' +
 
-              '<form method="POST" action="/remove-account" onsubmit="return confirm(\\'Remove this Facebook account and all its connected Pages?\\');">' +
+             '<form method="POST" action="/remove-account" onsubmit="return confirm(&quot;Remove this Facebook account and all its connected Pages?&quot;);">' +
                 '<input type="hidden" name="account_id" value="' +
                   escapeHtml(
                     account.id
