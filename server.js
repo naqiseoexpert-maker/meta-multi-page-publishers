@@ -1,4 +1,3 @@
-
 const APP_NAME = "Meta Multi Page Publisher";
 const BATCH = 15;
 const MAX = 100 * 1024 * 1024;
@@ -2502,11 +2501,10 @@ function page(
 }
 
 html {
-  background: #07111f;
+  background: #06101d;
 }
 
 body {
- 
   margin: 0;
   min-height: 100vh;
   position: relative;
@@ -2514,36 +2512,41 @@ body {
 
   background:
     radial-gradient(
-      circle at 8% 12%,
-      rgba(37, 99, 235, 0.24),
-      transparent 24%
+      circle at 5% 5%,
+      rgba(37,99,235,.30),
+      transparent 21%
     ),
     radial-gradient(
-      circle at 88% 8%,
-      rgba(79, 70, 229, 0.22),
+      circle at 95% 7%,
+      rgba(79,70,229,.28),
+      transparent 23%
+    ),
+    radial-gradient(
+      circle at 48% 32%,
+      rgba(14,165,233,.13),
+      transparent 27%
+    ),
+    radial-gradient(
+      circle at 4% 62%,
+      rgba(59,130,246,.18),
       transparent 25%
     ),
     radial-gradient(
-      circle at 50% 48%,
-      rgba(14, 165, 233, 0.10),
-      transparent 32%
-    ),
-    radial-gradient(
-      circle at 15% 88%,
-      rgba(99, 102, 241, 0.14),
-      transparent 28%
-    ),
-    radial-gradient(
-      circle at 92% 92%,
-      rgba(24, 119, 242, 0.16),
+      circle at 96% 58%,
+      rgba(99,102,241,.17),
       transparent 27%
+    ),
+    radial-gradient(
+      circle at 50% 105%,
+      rgba(14,165,233,.18),
+      transparent 31%
     ),
     linear-gradient(
       135deg,
       #f8fbff 0%,
-      #edf4fc 28%,
-      #f5f8ff 55%,
-      #eef4fc 78%,
+      #edf4fc 22%,
+      #f7f9ff 45%,
+      #edf4fc 70%,
       #f9fbff 100%
     );
 
@@ -2560,16 +2563,6 @@ body {
     "Segoe UI",
     sans-serif;
 }
-
-button,
-input,
-textarea {
-  font: inherit;
-}
-
-/* =========================================================
-   PREMIUM DASHBOARD ATMOSPHERE
-   ========================================================= */
 
 body::before {
   content: "";
@@ -4593,4 +4586,3 @@ function getInitials(
     ][0]
   ).toUpperCase();
 }
-
