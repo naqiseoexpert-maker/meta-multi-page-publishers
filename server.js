@@ -1192,6 +1192,15 @@ async function showDashboard(env) {
 
           <div class="hero-stats">
 
+            <div class="ns-hero-mark" aria-label="NS">
+              <div class="ns-mark-ring ns-mark-ring-outer"></div>
+              <div class="ns-mark-ring ns-mark-ring-inner"></div>
+              <div class="ns-mark-core">
+                <span>N</span><span>S</span>
+              </div>
+              <div class="ns-mark-label">NAQI SHAH</div>
+            </div>
+
             <div class="stat-card">
 
               <div class="stat-icon">
@@ -4829,11 +4838,12 @@ function page(
       z-index: 5;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      align-content: center;
+      align-content: end;
+      align-items: end;
       gap: 16px;
       width: auto;
       min-height: 100%;
-      padding: 74px 48px 72px 20px;
+      padding: 132px 48px 54px 20px;
       border: 0;
       border-left: 1px solid rgba(137,181,239,.11);
       border-radius: 0;
@@ -4849,18 +4859,102 @@ function page(
       content: "NETWORK OVERVIEW";
       position: absolute;
       left: 20px;
-      top: 31px;
+      top: 25px;
       color: #6882a2;
       font-size: 7px;
       font-weight: 900;
       letter-spacing: .25em;
     }
 
+    .ns-hero-mark {
+      position: absolute;
+      top: 50px;
+      left: 50%;
+      width: 132px;
+      height: 132px;
+      transform: translateX(-50%);
+      display: grid;
+      place-items: center;
+      z-index: 2;
+      filter: drop-shadow(0 18px 38px rgba(28,118,255,.22));
+    }
+
+    .ns-mark-ring {
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .ns-mark-ring-outer {
+      inset: 2px;
+      border: 1px solid rgba(104,181,255,.22);
+      border-top-color: rgba(104,181,255,.92);
+      border-right-color: rgba(104,181,255,.48);
+      box-shadow: 0 0 28px rgba(48,139,255,.16), inset 0 0 22px rgba(48,139,255,.07);
+      animation: nsSpin 10s linear infinite;
+    }
+
+    .ns-mark-ring-inner {
+      inset: 13px;
+      border: 1px dashed rgba(113,193,255,.28);
+      animation: nsSpinReverse 7s linear infinite;
+    }
+
+    .ns-mark-core {
+      position: relative;
+      width: 91px;
+      height: 91px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      border: 1px solid rgba(149,207,255,.34);
+      border-radius: 28px;
+      background:
+        radial-gradient(circle at 30% 20%, rgba(118,195,255,.22), transparent 42%),
+        linear-gradient(145deg, rgba(22,72,129,.92), rgba(4,18,36,.96));
+      box-shadow:
+        0 16px 34px rgba(0,0,0,.34),
+        0 0 34px rgba(48,139,255,.16),
+        inset 0 1px 0 rgba(255,255,255,.12);
+      color: #eef8ff;
+      font-size: 28px;
+      font-weight: 950;
+      letter-spacing: -.12em;
+      text-shadow: 0 0 22px rgba(105,190,255,.42);
+    }
+
+    .ns-mark-core span:last-child {
+      color: #67b7ff;
+      transform: translateY(2px);
+    }
+
+    .ns-mark-label {
+      position: absolute;
+      bottom: -17px;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      color: #6e8daa;
+      font-size: 7px;
+      font-weight: 900;
+      letter-spacing: .34em;
+      text-indent: .34em;
+    }
+
+    @keyframes nsSpin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes nsSpinReverse {
+      to { transform: rotate(-360deg); }
+    }
+
     .hero-stats::after {
       content: "LIVE SYSTEM";
       position: absolute;
       right: 48px;
-      top: 27px;
+      top: 21px;
       display: flex;
       align-items: center;
       gap: 7px;
@@ -6553,7 +6647,7 @@ function page(
       .hero-section > .hero-stats {
         width: auto;
         min-height: 0;
-        padding: 62px 46px 54px;
+        padding: 150px 46px 48px;
         border-top: 1px solid rgba(126,172,235,.10);
         border-left: 0;
       }
@@ -6640,7 +6734,7 @@ function page(
 
       .hero-section > .hero-stats {
         grid-template-columns: 1fr;
-        padding: 58px 28px 30px;
+        padding: 158px 28px 30px;
       }
 
       .hero-stats::before {
@@ -6649,6 +6743,19 @@ function page(
 
       .hero-stats::after {
         right: 28px;
+      }
+
+      .ns-hero-mark {
+        top: 58px;
+        width: 112px;
+        height: 112px;
+      }
+
+      .ns-mark-core {
+        width: 77px;
+        height: 77px;
+        border-radius: 23px;
+        font-size: 24px;
       }
 
       .stat-card,
