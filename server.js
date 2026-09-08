@@ -7497,6 +7497,299 @@ div.account-top select:focus {
   }
 
 }
+css
+/* =========================================================
+   PREMIUM PAGE TOOLBAR
+   ========================================================= */
+
+div.page-toolbar {
+  position: relative;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+
+  padding: 14px 18px;
+  margin-bottom: 20px;
+
+  background:
+    radial-gradient(
+      circle at 0% 50%,
+      rgba(59, 130, 246, 0.14),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 100% 50%,
+      rgba(139, 92, 246, 0.11),
+      transparent 32%
+    ),
+    rgba(15, 23, 42, 0.78);
+
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 16px;
+
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+
+  overflow: hidden;
+
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.25s ease;
+}
+
+
+/* Premium top highlight */
+div.page-toolbar::before {
+  content: "";
+
+  position: absolute;
+
+  top: 0;
+  left: 20px;
+  right: 20px;
+
+  height: 2px;
+
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(59, 130, 246, 0.85),
+    rgba(139, 92, 246, 0.85),
+    transparent
+  );
+
+  box-shadow:
+    0 0 12px rgba(59, 130, 246, 0.35);
+
+  opacity: 0.8;
+}
+
+
+/* Decorative glow */
+div.page-toolbar::after {
+  content: "";
+
+  position: absolute;
+
+  width: 140px;
+  height: 140px;
+
+  right: -70px;
+  bottom: -70px;
+
+  border-radius: 50%;
+
+  background: rgba(99, 102, 241, 0.10);
+
+  filter: blur(30px);
+
+  pointer-events: none;
+}
+
+
+/* Keep toolbar content above effects */
+div.page-toolbar > * {
+  position: relative;
+  z-index: 2;
+}
+
+
+/* Hover */
+div.page-toolbar:hover {
+  transform: translateY(-1px);
+
+  border-color: rgba(96, 165, 250, 0.24);
+
+  box-shadow:
+    0 15px 36px rgba(0, 0, 0, 0.20),
+    0 0 24px rgba(59, 130, 246, 0.055),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+
+/* =========================================================
+   TEXT / LABELS
+   ========================================================= */
+
+div.page-toolbar h1,
+div.page-toolbar h2,
+div.page-toolbar h3,
+div.page-toolbar h4,
+div.page-toolbar strong {
+  color: #f8fafc;
+  letter-spacing: -0.2px;
+}
+
+
+div.page-toolbar p,
+div.page-toolbar span {
+  color: #94a3b8;
+}
+
+
+/* =========================================================
+   TOOLBAR BUTTONS
+   ========================================================= */
+
+div.page-toolbar button {
+  position: relative;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+
+  padding: 8px 13px;
+
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 10px;
+
+  background: rgba(255, 255, 255, 0.045);
+
+  color: #e2e8f0;
+
+  font-weight: 650;
+
+  cursor: pointer;
+
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+
+div.page-toolbar button:hover {
+  transform: translateY(-1px);
+
+  background: rgba(59, 130, 246, 0.12);
+
+  border-color: rgba(96, 165, 250, 0.30);
+
+  color: #ffffff;
+
+  box-shadow:
+    0 7px 18px rgba(37, 99, 235, 0.12);
+}
+
+
+div.page-toolbar button:active {
+  transform: translateY(0);
+}
+
+
+/* =========================================================
+   INPUTS / SELECTS
+   ========================================================= */
+
+div.page-toolbar input,
+div.page-toolbar select {
+  min-height: 38px;
+
+  padding: 8px 11px;
+
+  background: rgba(15, 23, 42, 0.60);
+
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 10px;
+
+  color: #e2e8f0;
+
+  outline: none;
+
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+
+div.page-toolbar input::placeholder {
+  color: #64748b;
+}
+
+
+div.page-toolbar input:focus,
+div.page-toolbar select:focus {
+  background: rgba(15, 23, 42, 0.78);
+
+  border-color: rgba(96, 165, 250, 0.42);
+
+  box-shadow:
+    0 0 0 3px rgba(59, 130, 246, 0.09);
+}
+
+
+/* =========================================================
+   LINKS
+   ========================================================= */
+
+div.page-toolbar a {
+  color: #93c5fd;
+
+  text-decoration: none;
+
+  transition:
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+
+div.page-toolbar a:hover {
+  color: #bfdbfe;
+}
+
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 700px) {
+
+  div.page-toolbar {
+    flex-wrap: wrap;
+
+    padding: 13px 14px;
+
+    border-radius: 14px;
+  }
+
+  div.page-toolbar::before {
+    left: 15px;
+    right: 15px;
+  }
+
+}
+
+
+@media (max-width: 460px) {
+
+  div.page-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  div.page-toolbar button {
+    width: 100%;
+  }
+
+  div.page-toolbar input,
+  div.page-toolbar select {
+    width: 100%;
+  }
+
+}
+
+
 
 
   </style>
