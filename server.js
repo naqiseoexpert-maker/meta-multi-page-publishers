@@ -1,6 +1,4 @@
 const APP_NAME = "Meta Multi Page Publisher";
-const BATCH = 15;
-const MAX = 100 * 1024 * 1024;
 
 export default {
   async fetch(request, env) {
@@ -13,7 +11,6 @@ export default {
       // ---------------------------------------------------------
       // PUBLIC LOGIN
       // ---------------------------------------------------------
-
       if (request.method === "GET" && path === "/login") {
         return showLoginPage("");
       }
@@ -25,20 +22,29 @@ export default {
       // ---------------------------------------------------------
       // AUTHENTICATION
       // ---------------------------------------------------------
-
       const auth = await getAuthenticatedSession(request, env);
 
       if (!auth) {
-        return Response.redirect(
-          url.origin + "/login",
-          302
-        );
+        if (
+          request.method === "POST" &&
+          (path === "/publish" || path === "/publish-batch")
+        ) {
+          return jsonResponse(
+            {
+              ok: false,
+              error:
+                "Your dashboard session has expired. Please log in again."
+            },
+            401
+          );
+        }
+
+        return Response.redirect(url.origin + "/login", 302);
       }
 
       // ---------------------------------------------------------
       // DASHBOARD
       // ---------------------------------------------------------
-
       if (request.method === "GET" && path === "/") {
         const allowed = await consumeDashboardTicket(
           env.DB,
@@ -46,10 +52,7 @@ export default {
         );
 
         if (!allowed) {
-          await deleteSession(
-            env.DB,
-            auth.sessionId
-          );
+          await deleteSession(env.DB, auth.sessionId);
 
           return new Response(null, {
             status: 302,
@@ -67,41 +70,22 @@ export default {
       // ---------------------------------------------------------
       // META OAUTH
       // ---------------------------------------------------------
-
-      if (
-        request.method === "GET" &&
-        path === "/auth/meta"
-      ) {
-        return startMetaLogin(
-          request,
-          env,
-          auth.sessionId
-        );
+      if (request.method === "GET" && path === "/auth/meta") {
+        return startMetaLogin(request, env, auth.sessionId);
       }
 
       if (
         request.method === "GET" &&
         path === "/auth/meta/callback"
       ) {
-        return metaCallback(
-          request,
-          env,
-          auth.sessionId
-        );
+        return metaCallback(request, env, auth.sessionId);
       }
 
       // ---------------------------------------------------------
       // SYNC
       // ---------------------------------------------------------
-
-      if (
-        request.method === "POST" &&
-        path === "/sync"
-      ) {
-        const response = await syncPages(
-          request,
-          env
-        );
+      if (request.method === "POST" && path === "/sync") {
+        const response = await syncPages(request, env);
 
         await allowNextDashboardLoad(
           env.DB,
@@ -114,7 +98,6 @@ export default {
       // ---------------------------------------------------------
       // REMOVE ACCOUNT
       // ---------------------------------------------------------
-
       if (
         request.method === "POST" &&
         path === "/remove-account"
@@ -133,9 +116,8 @@ export default {
       }
 
       // ---------------------------------------------------------
-      // PUBLISH
+      // PUBLISH - START NEW RUN
       // ---------------------------------------------------------
-
       if (
         request.method === "POST" &&
         path === "/publish"
@@ -148,9 +130,8 @@ export default {
       }
 
       // ---------------------------------------------------------
-      // PUBLISH BATCH
+      // PUBLISH - PROCESS BATCH
       // ---------------------------------------------------------
-
       if (
         request.method === "POST" &&
         path === "/publish-batch"
@@ -163,9 +144,8 @@ export default {
       }
 
       // ---------------------------------------------------------
-      // RESULTS
+      // PUBLISH - RESULTS
       // ---------------------------------------------------------
-
       if (
         request.method === "GET" &&
         path === "/publish-results"
@@ -180,12 +160,9 @@ export default {
       // ---------------------------------------------------------
       // LOGOUT
       // ---------------------------------------------------------
-
       if (
-        (
-          request.method === "GET" ||
-          request.method === "POST"
-        ) &&
+        (request.method === "POST" ||
+          request.method === "GET") &&
         path === "/logout"
       ) {
         await deleteSession(
@@ -196,290 +173,104 @@ export default {
         return handleLogout();
       }
 
-      return new Response(
-        "Not Found",
-        { status: 404 }
-      );
-
+      return new Response("Not Found", {
+        status: 404
+      });
     } catch (error) {
       console.error(error);
 
-      return new Response(
-        JSON.stringify({
-          error:
-            error?.message ||
-            String(error)
-        }),
-        {
-          status: 500,
-          headers: {
-            "Content-Type":
-              "application/json; charset=UTF-8",
-            "Cache-Control":
-              "no-store"
-          }
-        }
+      if (
+        request.method === "POST" &&
+        (path === "/publish" || path === "/publish-batch")
+      ) {
+        return jsonResponse(
+          {
+            ok: false,
+            error:
+              error && error.message
+                ? error.message
+                : String(error)
+          },
+          500
+        );
+      }
+
+      return page(
+        "Error",
+        `
+        <div class="error-screen">
+          <div class="error-box">
+            <div class="error-icon">!</div>
+            <div class="eyebrow">SYSTEM ERROR</div>
+
+            <h2>Something went wrong</h2>
+
+            <p class="error-intro">
+              The dashboard could not complete this request.
+            </p>
+
+            <pre>${escapeHtml(
+              error &&
+              (error.stack || error.message)
+                ? error.stack || error.message
+                : String(error)
+            )}</pre>
+
+            <a class="back-btn" href="/login">
+              Return to Login
+            </a>
+          </div>
+        </div>
+        `
       );
     }
   }
 };
 
-
-// =============================================================
-// DATABASE
-// =============================================================
-
-async function ensureDatabaseSchema(DB) {
-
-  await DB.prepare(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      facebook_user_id TEXT UNIQUE NOT NULL,
-      account_name TEXT NOT NULL,
-      access_token TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `).run();
-
-  await DB.prepare(`
-    CREATE TABLE IF NOT EXISTS pages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      account_id INTEGER NOT NULL,
-      facebook_page_id TEXT NOT NULL,
-      page_name TEXT NOT NULL,
-      access_token TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(account_id, facebook_page_id)
-    )
-  `).run();
-
-  await DB.prepare(`
-    CREATE INDEX IF NOT EXISTS idx_pages_account
-    ON pages(account_id)
-  `).run();
-
-  await DB.prepare(`
-    CREATE TABLE IF NOT EXISTS auth_sessions (
-      id TEXT PRIMARY KEY,
-      created_at INTEGER NOT NULL,
-      expires_at INTEGER NOT NULL,
-      dashboard_ticket INTEGER NOT NULL DEFAULT 1
-    )
-  `).run();
-
-  /*
-   * Safe migration for older auth_sessions tables.
-   *
-   * This prevents:
-   * D1_ERROR: no such column: expires_at
-   *
-   * if the table was created by an older version.
-   */
-  const authColumnsResult =
-    await DB.prepare(`
-      PRAGMA table_info(auth_sessions)
-    `).all();
-
-  const authColumns =
-    authColumnsResult.results || [];
-
-  const hasExpiresAt =
-    authColumns.some(
-      column =>
-        column.name === "expires_at"
-    );
-
-  const hasDashboardTicket =
-    authColumns.some(
-      column =>
-        column.name === "dashboard_ticket"
-    );
-
-  if (!hasExpiresAt) {
-    await DB.prepare(`
-      ALTER TABLE auth_sessions
-      ADD COLUMN expires_at INTEGER
-    `).run();
-
-    await DB.prepare(`
-      UPDATE auth_sessions
-      SET expires_at = ?
-      WHERE expires_at IS NULL
-    `)
-      .bind(
-        Date.now() +
-        24 * 60 * 60 * 1000
-      )
-      .run();
-  }
-
-  if (!hasDashboardTicket) {
-    await DB.prepare(`
-      ALTER TABLE auth_sessions
-      ADD COLUMN dashboard_ticket INTEGER NOT NULL DEFAULT 1
-    `).run();
-  }
-
-  await DB.prepare(`
-    CREATE TABLE IF NOT EXISTS publish_runs (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      message TEXT,
-      media_type TEXT,
-      media_name TEXT,
-      created_at INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'running'
-    )
-  `).run();
-
-  await DB.prepare(`
-    CREATE TABLE IF NOT EXISTS publish_run_pages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT NOT NULL,
-      page_id INTEGER NOT NULL,
-      page_name TEXT NOT NULL,
-      facebook_page_id TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      post_id TEXT,
-      error TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `).run();
-
-  await DB.prepare(`
-    CREATE INDEX IF NOT EXISTS idx_run_pages_run
-    ON publish_run_pages(run_id)
-  `).run();
-
-  const now =
-    Date.now();
-
-  await DB.prepare(`
-    DELETE FROM auth_sessions
-    WHERE expires_at IS NOT NULL
-    AND expires_at < ?
-  `)
-    .bind(now)
-    .run();
-
-  await DB.prepare(`
-    DELETE FROM publish_runs
-    WHERE created_at < ?
-  `)
-    .bind(
-      now - 2 * 24 * 60 * 60 * 1000
-    )
-    .run();
-
-  await DB.prepare(`
-    DELETE FROM publish_run_pages
-    WHERE run_id NOT IN (
-      SELECT id FROM publish_runs
-    )
-  `).run();
-}
-
-
 // =============================================================
 // AUTHENTICATION
 // =============================================================
 
-async function handleLogin(
-  request,
-  env
-) {
-  const form =
-    await request.formData();
+async function getAuthenticatedSession(request, env) {
+  const password = String(
+    env.PUBLISHER_PASSWORD || ""
+  ).trim();
 
-  const password =
-    String(
-      form.get("password") || ""
-    );
-
-  const configured =
-    String(
-      env.PUBLISHER_PASSWORD || ""
-    ).trim();
-
-  if (!configured) {
-    return showLoginPage(
-      "PUBLISHER_PASSWORD secret is missing."
+  if (!password) {
+    throw new Error(
+      "PUBLISHER_PASSWORD secret is missing. Add it in Cloudflare Worker > Settings > Variables and Secrets."
     );
   }
 
-  if (password !== configured) {
-    return showLoginPage(
-      "Incorrect password. Please try again."
-    );
-  }
+  const cookies = parseCookies(
+    request.headers.get("Cookie") || ""
+  );
 
-  const sessionId =
-    crypto.randomUUID();
-
-  const now =
-    Date.now();
-
-  await env.DB.prepare(`
-    INSERT INTO auth_sessions
-    (id, created_at, expires_at, dashboard_ticket)
-    VALUES (?, ?, ?, 1)
-  `)
-    .bind(
-      sessionId,
-      now,
-      now + 24 * 60 * 60 * 1000
-    )
-    .run();
-
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: "/",
-      "Set-Cookie":
-        setAuthCookie(sessionId),
-      "Cache-Control":
-        "no-store"
-    }
-  });
-}
-
-
-async function getAuthenticatedSession(
-  request,
-  env
-) {
-  const cookies =
-    parseCookies(
-      request.headers.get("Cookie") || ""
-    );
-
-  const sessionId =
-    cookies.mp_session;
+  const sessionId = cookies.mp_session;
 
   if (!sessionId) {
     return null;
   }
 
-  const row =
-    await env.DB.prepare(`
-      SELECT *
-      FROM auth_sessions
-      WHERE id = ?
-      LIMIT 1
-    `)
-      .bind(sessionId)
-      .first();
+  const session = await env.DB.prepare(
+    "SELECT id, created_at, dashboard_ticket " +
+      "FROM auth_sessions WHERE id = ?"
+  )
+    .bind(sessionId)
+    .first();
 
-  if (!row) {
+  if (!session) {
     return null;
   }
 
+  const created = Date.parse(
+    String(session.created_at || "")
+  );
+
   if (
-    Number(row.expires_at || 0) <
-    Date.now()
+    Number.isFinite(created) &&
+    Date.now() - created >
+      24 * 60 * 60 * 1000
   ) {
     await deleteSession(
       env.DB,
@@ -490,237 +281,1784 @@ async function getAuthenticatedSession(
   }
 
   return {
-    sessionId
+    sessionId,
+    dashboardTicket: Number(
+      session.dashboard_ticket || 0
+    )
   };
 }
 
+async function handleLogin(request, env) {
+  const configuredPassword = String(
+    env.PUBLISHER_PASSWORD || ""
+  ).trim();
 
-async function consumeDashboardTicket(
-  DB,
-  sessionId
-) {
-  const result =
-    await DB.prepare(`
-      UPDATE auth_sessions
-      SET dashboard_ticket = 0
-      WHERE id = ?
-      AND dashboard_ticket = 1
-    `)
-      .bind(sessionId)
-      .run();
-
-  return (
-    Number(result.meta?.changes || 0) >
-    0
-  );
-}
-
-
-async function allowNextDashboardLoad(
-  DB,
-  sessionId
-) {
-  await DB.prepare(`
-    UPDATE auth_sessions
-    SET dashboard_ticket = 1
-    WHERE id = ?
-  `)
-    .bind(sessionId)
-    .run();
-}
-
-
-async function deleteSession(
-  DB,
-  sessionId
-) {
-  await DB.prepare(`
-    DELETE FROM auth_sessions
-    WHERE id = ?
-  `)
-    .bind(sessionId)
-    .run();
-}
-
-
-function setAuthCookie(
-  sessionId
-) {
-  return [
-    "mp_session=" +
-      encodeURIComponent(sessionId),
-    "Path=/",
-    "HttpOnly",
-    "Secure",
-    "SameSite=Lax",
-    "Max-Age=86400"
-  ].join("; ");
-}
-
-
-function clearAuthCookie() {
-  return [
-    "mp_session=",
-    "Path=/",
-    "HttpOnly",
-    "Secure",
-    "SameSite=Lax",
-    "Max-Age=0"
-  ].join("; ");
-}
-
-
-function parseCookies(
-  header
-) {
-  const result = {};
-
-  for (
-    const part of header.split(";")
-  ) {
-    const index =
-      part.indexOf("=");
-
-    if (index === -1) {
-      continue;
-    }
-
-    const key =
-      part
-        .slice(0, index)
-        .trim();
-
-    const value =
-      part
-        .slice(index + 1)
-        .trim();
-
-    result[key] =
-      decodeURIComponent(value);
+  if (!configuredPassword) {
+    return showLoginPage(
+      "PUBLISHER_PASSWORD secret is not configured."
+    );
   }
 
-  return result;
+  const form = await request.formData();
+
+  const password = String(
+    form.get("password") || ""
+  );
+
+  if (
+    !password ||
+    password !== configuredPassword
+  ) {
+    return showLoginPage(
+      "Incorrect password. Please try again."
+    );
+  }
+
+  const sessionId =
+    crypto.randomUUID();
+
+  await env.DB.prepare(
+    "INSERT INTO auth_sessions " +
+      "(id, created_at, dashboard_ticket) " +
+      "VALUES (?, datetime('now'), 1)"
+  )
+    .bind(sessionId)
+    .run();
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: "/",
+      "Set-Cookie":
+        "mp_session=" +
+        encodeURIComponent(sessionId) +
+        "; Path=/; HttpOnly; Secure; SameSite=Lax",
+      "Cache-Control": "no-store"
+    }
+  });
 }
 
+async function consumeDashboardTicket(
+  db,
+  sessionId
+) {
+  const result = await db
+    .prepare(
+      "UPDATE auth_sessions " +
+        "SET dashboard_ticket = 0 " +
+        "WHERE id = ? AND dashboard_ticket = 1"
+    )
+    .bind(sessionId)
+    .run();
+
+  return Number(
+    result.meta &&
+      result.meta.changes
+      ? result.meta.changes
+      : 0
+  ) > 0;
+}
+
+async function allowNextDashboardLoad(
+  db,
+  sessionId
+) {
+  await db
+    .prepare(
+      "UPDATE auth_sessions " +
+        "SET dashboard_ticket = 1 " +
+        "WHERE id = ?"
+    )
+    .bind(sessionId)
+    .run();
+}
+
+async function deleteSession(
+  db,
+  sessionId
+) {
+  if (!sessionId) {
+    return;
+  }
+
+  await db
+    .prepare(
+      "DELETE FROM auth_sessions WHERE id = ?"
+    )
+    .bind(sessionId)
+    .run();
+}
+
+function clearAuthCookie() {
+  return (
+    "mp_session=; Path=/; Max-Age=0; " +
+    "HttpOnly; Secure; SameSite=Lax"
+  );
+}
 
 function handleLogout() {
   return new Response(null, {
     status: 302,
     headers: {
       Location: "/login",
-      "Set-Cookie":
-        clearAuthCookie(),
-      "Cache-Control":
-        "no-store"
+      "Set-Cookie": clearAuthCookie(),
+      "Cache-Control": "no-store"
     }
   });
 }
 
+function parseCookies(header) {
+  const cookies = {};
+
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
+
+    if (index === -1) {
+      continue;
+    }
+
+    const name = part
+      .slice(0, index)
+      .trim();
+
+    const value = part
+      .slice(index + 1)
+      .trim();
+
+    if (name) {
+      cookies[name] =
+        decodeURIComponent(value);
+    }
+  }
+
+  return cookies;
+}
+
+// =============================================================
+// LOGIN PAGE
+// =============================================================
+
+function showLoginPage(errorMessage) {
+  const errorHtml = errorMessage
+    ? `
+      <div class="login-error">
+        <span class="login-error-icon">!</span>
+        <span>${escapeHtml(
+          errorMessage
+        )}</span>
+      </div>
+    `
+    : "";
+
+  return page(
+    "Login",
+    `
+    <div class="login-shell">
+
+      <div class="login-glow login-glow-one"></div>
+      <div class="login-glow login-glow-two"></div>
+
+      <div class="login-card">
+
+        <div class="brand-mark">
+          <div class="brand-mark-inner">
+            N
+          </div>
+        </div>
+
+        <div class="eyebrow">
+          SECURE ACCESS
+        </div>
+
+        <h1>
+          ${escapeHtml(APP_NAME)}
+        </h1>
+
+        <p class="login-subtitle">
+          Enter your dashboard password to continue.
+        </p>
+
+        ${errorHtml}
+
+        <form
+          method="POST"
+          action="/login"
+          class="login-form"
+        >
+
+          <label
+            class="field-label"
+            for="password"
+          >
+            Dashboard Password
+          </label>
+
+          <div class="password-wrap">
+
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="Enter your password"
+              required
+              autofocus
+            />
+
+            <button
+              type="button"
+              class="password-toggle"
+              onclick="togglePassword()"
+              aria-label="Show or hide password"
+            >
+              <svg
+                id="eyeIcon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>
+                <circle cx="12" cy="12" r="2.5"/>
+              </svg>
+            </button>
+
+          </div>
+
+          <button
+            type="submit"
+            class="login-submit"
+          >
+            <span>Unlock Dashboard</span>
+
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 12h14"/>
+              <path d="m13 6 6 6-6 6"/>
+            </svg>
+
+          </button>
+
+        </form>
+
+        <div class="login-footer">
+
+          <span class="status-dot"></span>
+
+          <span>
+            Protected publisher environment
+          </span>
+
+        </div>
+
+        <div class="naqi-signature">
+          NAQI SHAH
+        </div>
+
+      </div>
+
+    </div>
+
+    <script>
+      function togglePassword() {
+        const input =
+          document.getElementById("password");
+
+        const icon =
+          document.getElementById("eyeIcon");
+
+        if (input.type === "password") {
+          input.type = "text";
+
+          icon.innerHTML =
+            '<path d="M3 3l18 18"/>' +
+            '<path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>' +
+            '<path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 3.8"/>' +
+            '<path d="M6.6 6.6C3.6 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 3.1-.5"/>';
+        } else {
+          input.type = "password";
+
+          icon.innerHTML =
+            '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/>' +
+            '<circle cx="12" cy="12" r="2.5"/>';
+        }
+      }
+    </script>
+    `
+  );
+}
+
+// =============================================================
+// DATABASE
+// =============================================================
+
+async function ensureDatabaseSchema(db) {
+  if (!db) {
+    throw new Error(
+      "D1 database binding DB is missing. Check your Cloudflare Worker D1 binding name."
+    );
+  }
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS accounts (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "facebook_user_id TEXT NOT NULL UNIQUE, " +
+        "account_name TEXT, " +
+        "access_token TEXT NOT NULL, " +
+        "created_at TEXT DEFAULT (datetime('now'))" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS pages (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "facebook_page_id TEXT NOT NULL UNIQUE, " +
+        "page_name TEXT, " +
+        "access_token TEXT NOT NULL, " +
+        "account_id INTEGER NOT NULL, " +
+        "created_at TEXT DEFAULT (datetime('now'))" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_pages_account_id " +
+        "ON pages(account_id)"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS auth_sessions (" +
+        "id TEXT PRIMARY KEY, " +
+        "created_at TEXT NOT NULL, " +
+        "dashboard_ticket INTEGER NOT NULL DEFAULT 0" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS publish_runs (" +
+        "id TEXT PRIMARY KEY, " +
+        "session_id TEXT NOT NULL, " +
+        "message TEXT, " +
+        "media_type TEXT, " +
+        "media_name TEXT, " +
+        "created_at TEXT NOT NULL, " +
+        "completed_at TEXT, " +
+        "status TEXT NOT NULL DEFAULT 'processing'" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS publish_run_pages (" +
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+        "run_id TEXT NOT NULL, " +
+        "page_db_id INTEGER NOT NULL, " +
+        "facebook_page_id TEXT NOT NULL, " +
+        "page_name TEXT, " +
+        "status TEXT NOT NULL DEFAULT 'pending', " +
+        "post_id TEXT, " +
+        "error TEXT, " +
+        "created_at TEXT NOT NULL, " +
+        "completed_at TEXT, " +
+        "UNIQUE(run_id, page_db_id)" +
+        ")"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_publish_run_pages_run_id " +
+        "ON publish_run_pages(run_id)"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS " +
+        "idx_publish_run_pages_status " +
+        "ON publish_run_pages(run_id, status)"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "DELETE FROM auth_sessions " +
+        "WHERE created_at < datetime('now', '-1 day')"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "DELETE FROM publish_runs " +
+        "WHERE created_at < datetime('now', '-2 day')"
+    )
+    .run();
+
+  await db
+    .prepare(
+      "DELETE FROM publish_run_pages " +
+        "WHERE run_id NOT IN " +
+        "(SELECT id FROM publish_runs)"
+    )
+    .run();
+}
 
 // =============================================================
 // META CONFIG
 // =============================================================
 
-function metaConfig(env) {
-  return {
-    appId:
-      String(env.META_APP_ID || "")
-        .trim(),
+function getMetaConfig(env) {
+  const appId = String(
+    env.META_APP_ID || ""
+  ).trim();
 
-    appSecret:
-      String(env.META_APP_SECRET || "")
-        .trim(),
+  const appSecret = String(
+    env.META_APP_SECRET || ""
+  ).trim();
 
-    graphVersion:
-      String(
-        env.META_GRAPH_VERSION ||
-        "v24.0"
-      ).trim()
-  };
-}
+  let graphVersion = String(
+    env.META_GRAPH_VERSION || ""
+  ).trim();
 
+  const missing = [];
 
-// =============================================================
-// META LOGIN
-// =============================================================
+  if (!appId) {
+    missing.push("META_APP_ID");
+  }
 
-async function startMetaLogin(
-  request,
-  env,
-  sessionId
-) {
-  const cfg =
-    metaConfig(env);
+  if (!appSecret) {
+    missing.push("META_APP_SECRET");
+  }
 
-  if (
-    !cfg.appId ||
-    !cfg.appSecret
-  ) {
+  if (!graphVersion) {
+    graphVersion = "v24.0";
+  }
+
+  if (missing.length) {
     throw new Error(
-      "META_APP_ID or META_APP_SECRET is missing."
+      "Meta configuration is missing: " +
+        missing.join(", ") +
+        ". Make sure these exact names exist in Cloudflare Worker > Settings > Variables and Secrets."
     );
   }
 
-  const state =
-    crypto.randomUUID();
+  if (!graphVersion.startsWith("v")) {
+    graphVersion = "v" + graphVersion;
+  }
 
-  const url =
-    new URL(request.url);
-
-  const redirectUri =
-    url.origin +
-    "/auth/meta/callback";
-
-  const authUrl =
-    new URL(
-      "https://www.facebook.com/" +
-      cfg.graphVersion +
-      "/dialog/oauth"
-    );
-
-  authUrl.searchParams.set(
-    "client_id",
-    cfg.appId
-  );
-
-  authUrl.searchParams.set(
-    "redirect_uri",
-    redirectUri
-  );
-
-  authUrl.searchParams.set(
-    "state",
-    state
-  );
-
-  authUrl.searchParams.set(
-    "scope",
-    [
-      "pages_show_list",
-      "pages_read_engagement",
-      "pages_manage_posts"
-    ].join(",")
-  );
-
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location:
-        authUrl.toString(),
-
-      "Set-Cookie": [
-        "meta_state=" +
-          encodeURIComponent(state),
-        "Path=/",
-        "HttpOnly",
-        "Secure",
-        "SameSite=Lax",
-        "Max-Age=600"
-      ].join("; ")
-    }
-  });
+  return {
+    appId,
+    appSecret,
+    graphVersion
+  };
 }
 
+// =============================================================
+// DASHBOARD
+// =============================================================
+
+async function showDashboard(env) {
+  const accountsResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_user_id, account_name, created_at " +
+        "FROM accounts ORDER BY id ASC"
+    ).all();
+
+  const accounts =
+    accountsResult.results || [];
+
+  const pagesResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_page_id, page_name, account_id " +
+        "FROM pages " +
+        "ORDER BY account_id ASC, " +
+        "page_name COLLATE NOCASE ASC"
+    ).all();
+
+  const pages =
+    pagesResult.results || [];
+
+  const groupedPages = {};
+
+  for (const account of accounts) {
+    groupedPages[account.id] = [];
+  }
+
+  for (const p of pages) {
+    if (!groupedPages[p.account_id]) {
+      groupedPages[p.account_id] = [];
+    }
+
+    groupedPages[p.account_id].push(p);
+  }
+
+  const totalAccounts =
+    accounts.length;
+
+  const totalPages =
+    pages.length;
+
+  let accountHtml = "";
+
+  if (!accounts.length) {
+    accountHtml = `
+      <section class="empty-state">
+
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M19 8v6"/>
+            <path d="M22 11h-6"/>
+          </svg>
+        </div>
+
+        <div class="eyebrow">
+          GET STARTED
+        </div>
+
+        <h3>
+          No Facebook account connected
+        </h3>
+
+        <p>
+          Connect your Facebook account to bring your Pages
+          into the publishing command center.
+        </p>
+
+        <a class="primary-btn" href="/auth/meta">
+          <span class="fb-symbol">f</span>
+          Connect Facebook Account
+        </a>
+
+      </section>
+    `;
+  } else {
+    for (const account of accounts) {
+      const accountPages =
+        groupedPages[account.id] || [];
+
+      let pageHtml = "";
+
+      if (accountPages.length) {
+        pageHtml = `
+          <div class="page-toolbar">
+
+            <div>
+              <div class="toolbar-title">
+                Connected Pages
+              </div>
+
+              <div class="toolbar-subtitle">
+                Select the Pages you want to publish to
+              </div>
+            </div>
+
+            <div class="toolbar-actions">
+
+              <button
+                type="button"
+                class="toolbar-btn"
+                onclick="selectAccountPages(${Number(
+                  account.id
+                )}, true)"
+              >
+                Select all
+              </button>
+
+              <button
+                type="button"
+                class="toolbar-btn"
+                onclick="selectAccountPages(${Number(
+                  account.id
+                )}, false)"
+              >
+                Clear
+              </button>
+
+            </div>
+          </div>
+
+          <div class="page-list">
+        `;
+
+        for (const p of accountPages) {
+          const initial =
+            getInitials(
+              p.page_name || "Page"
+            );
+
+          pageHtml += `
+            <label class="page-row">
+
+              <input
+                class="page-checkbox account-${Number(
+                  account.id
+                )}"
+                type="checkbox"
+                name="page_ids"
+                value="${escapeHtml(p.id)}"
+                form="publish-form"
+              />
+
+              <span class="custom-check">
+                <svg viewBox="0 0 24 24">
+                  <path d="m5 12 4 4L19 6"/>
+                </svg>
+              </span>
+
+              <span class="page-avatar">
+                ${escapeHtml(initial)}
+              </span>
+
+              <span class="page-info">
+
+                <span class="page-name">
+                  ${escapeHtml(
+                    p.page_name ||
+                      "Unnamed Page"
+                  )}
+                </span>
+
+                <span class="page-id">
+                  ID:
+                  ${escapeHtml(
+                    p.facebook_page_id
+                  )}
+                </span>
+
+              </span>
+
+              <span class="page-ready">
+                <span class="ready-dot"></span>
+                Ready
+              </span>
+
+            </label>
+          `;
+        }
+
+        pageHtml += `</div>`;
+      } else {
+        pageHtml = `
+          <div class="no-pages">
+
+            <div class="no-pages-icon">
+              !
+            </div>
+
+            <div>
+              <strong>
+                No Pages found
+              </strong>
+
+              <p>
+                Click <b>Sync Pages</b> to refresh
+                this Facebook account.
+              </p>
+            </div>
+
+          </div>
+        `;
+      }
+
+      const accountInitials =
+        getInitials(
+          account.account_name ||
+            "Facebook Account"
+        );
+
+      accountHtml += `
+        <section class="account-card">
+
+          <div class="account-top">
+
+            <div class="account-identity">
+
+              <div class="account-avatar">
+                ${escapeHtml(
+                  accountInitials
+                )}
+              </div>
+
+              <div class="account-details">
+
+                <div class="account-label">
+                  FACEBOOK ACCOUNT
+                </div>
+
+                <h3>
+                  ${escapeHtml(
+                    account.account_name ||
+                      "Facebook Account"
+                  )}
+                </h3>
+
+                <div class="account-id">
+                  ID:
+                  ${escapeHtml(
+                    account.facebook_user_id
+                  )}
+                </div>
+
+              </div>
+
+            </div>
+
+            <div class="account-actions">
+
+              <form
+                method="POST"
+                action="/sync"
+              >
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${Number(
+                    account.id
+                  )}"
+                />
+
+                <button
+                  class="secondary-btn"
+                  type="submit"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M20 11a8.1 8.1 0 0 0-14.9-4"/>
+                    <path d="M4 4v4h4"/>
+                    <path d="M4 13a8.1 8.1 0 0 0 14.9 4"/>
+                    <path d="M20 20v-4h-4"/>
+                  </svg>
+
+                  Sync Pages
+                </button>
+              </form>
+
+              <form
+                method="POST"
+                action="/remove-account"
+                onsubmit="return confirm(&quot;Remove this Facebook account and all its connected Pages?&quot;);"
+              >
+                <input
+                  type="hidden"
+                  name="account_id"
+                  value="${Number(
+                    account.id
+                  )}"
+                />
+
+                <button
+                  class="danger-btn"
+                  type="submit"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M3 6h18"/>
+                    <path d="M8 6V4h8v2"/>
+                    <path d="M19 6l-1 15H6L5 6"/>
+                    <path d="M10 11v6"/>
+                    <path d="M14 11v6"/>
+                  </svg>
+
+                  Remove
+                </button>
+              </form>
+
+            </div>
+
+          </div>
+
+          ${pageHtml}
+
+        </section>
+      `;
+    }
+  }
+
+  return page(
+    APP_NAME,
+    `
+    <div class="dashboard-shell">
+
+      <header class="topbar">
+
+        <div class="brand-area">
+
+          <div class="brand-icon">
+            N
+          </div>
+
+          <div class="brand-copy">
+
+            <div class="brand-name">
+              ${escapeHtml(APP_NAME)}
+            </div>
+
+            <div class="brand-byline">
+              POWERED BY
+              <strong>NAQI SHAH</strong>
+            </div>
+
+          </div>
+
+        </div>
+
+        <div class="topbar-actions">
+
+          <div class="live-status">
+            <span class="live-dot"></span>
+            SYSTEM ONLINE
+          </div>
+
+          <a
+            href="/logout"
+            class="logout-btn"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10 17l5-5-5-5"/>
+              <path d="M15 12H3"/>
+              <path d="M21 19V5a2 2 0 0 0-2-2h-6"/>
+            </svg>
+
+            Logout
+          </a>
+
+        </div>
+
+      </header>
+
+      <main class="dashboard-main">
+
+        <section class="hero-section">
+
+          <div class="hero-copy">
+
+            <div class="eyebrow">
+              PUBLISHING COMMAND CENTER
+            </div>
+
+            <h1>
+              Manage your
+              <span>Facebook Pages</span>
+              from one place.
+            </h1>
+
+            <p>
+              Connect multiple Facebook accounts,
+              select your Pages and publish content
+              across your network with ease.
+            </p>
+
+          </div>
+
+          <div class="hero-stats">
+
+            <div class="stat-card">
+
+              <div class="stat-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M19 8v6"/>
+                  <path d="M22 11h-6"/>
+                </svg>
+              </div>
+
+              <div class="stat-value">
+                ${totalAccounts}
+              </div>
+
+              <div class="stat-label">
+                ACCOUNTS
+              </div>
+
+            </div>
+
+            <div class="stat-card">
+
+              <div class="stat-icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect
+                    x="3"
+                    y="4"
+                    width="18"
+                    height="16"
+                    rx="3"
+                  />
+                  <path d="M7 8h10"/>
+                  <path d="M7 12h6"/>
+                  <path d="M7 16h8"/>
+                </svg>
+              </div>
+
+              <div class="stat-value">
+                ${totalPages}
+              </div>
+
+              <div class="stat-label">
+                PAGES
+              </div>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <section class="section-heading">
+
+          <div>
+
+            <div class="eyebrow">
+              CONNECTED ACCOUNTS
+            </div>
+
+            <h2>
+              Your publishing network
+            </h2>
+
+          </div>
+
+          <a
+            href="/auth/meta"
+            class="primary-btn small"
+          >
+            <span class="fb-symbol">f</span>
+            Add Facebook Account
+          </a>
+
+        </section>
+
+        <div class="accounts-container">
+          ${accountHtml}
+        </div>
+
+        <section class="publisher-section">
+
+          <div class="publisher-heading">
+
+            <div>
+
+              <div class="eyebrow">
+                CONTENT PUBLISHER
+              </div>
+
+              <h2>
+                Create a new post
+              </h2>
+
+              <p>
+                Select one or more Pages above,
+                write your content and publish.
+              </p>
+
+            </div>
+
+            <div class="publisher-badge">
+              <span class="ready-dot"></span>
+              READY TO PUBLISH
+            </div>
+
+          </div>
+
+          <form
+            id="publish-form"
+            class="publish-form"
+            enctype="multipart/form-data"
+          >
+
+            <div class="form-grid">
+
+              <div class="message-field">
+
+                <label
+                  for="message"
+                  class="field-label"
+                >
+                  Post Message
+                </label>
+
+                <textarea
+                  id="message"
+                  name="message"
+                  rows="8"
+                  placeholder="Write something to publish across your selected Pages..."
+                ></textarea>
+
+                <div class="field-meta">
+                  <span>
+                    Your message will be sent to each selected Page.
+                  </span>
+
+                  <span id="charCount">
+                    0 characters
+                  </span>
+                </div>
+
+              </div>
+
+              <div class="media-field">
+
+                <label class="field-label">
+                  Media
+                  <span class="optional">
+                    OPTIONAL
+                  </span>
+                </label>
+
+                <label
+                  class="upload-zone"
+                  for="media"
+                >
+
+                  <input
+                    id="media"
+                    name="media"
+                    type="file"
+                    accept="image/*,video/*"
+                  />
+
+                  <div class="upload-icon">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M12 16V4"/>
+                      <path d="m7 9 5-5 5 5"/>
+                      <path d="M5 20h14"/>
+                    </svg>
+                  </div>
+
+                  <strong>
+                    Click to upload media
+                  </strong>
+
+                  <span>
+                    Images and videos supported
+                  </span>
+
+                  <small>
+                    Maximum file size depends on Meta limits.
+                  </small>
+
+                </label>
+
+                <div
+                  id="fileInfo"
+                  class="file-info hidden"
+                ></div>
+
+              </div>
+
+            </div>
+
+            <div class="publish-footer">
+
+              <div class="selection-summary">
+
+                <span class="selection-icon">
+                  ✓
+                </span>
+
+                <span>
+                  <strong id="selectedCount">
+                    0
+                  </strong>
+                  Pages selected
+                </span>
+
+              </div>
+
+              <button
+                type="submit"
+                id="publishButton"
+                class="publish-btn"
+              >
+
+                <span
+                  id="publishButtonText"
+                >
+                  Publish Now
+                </span>
+
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M22 2 11 13"/>
+                  <path d="m22 2-7 20-4-9-9-4Z"/>
+                </svg>
+
+              </button>
+
+            </div>
+
+          </form>
+
+          <div
+            id="publishStatus"
+            class="publish-status hidden"
+          ></div>
+
+        </section>
+
+      </main>
+
+      <footer class="dashboard-footer">
+
+        <div>
+          ${escapeHtml(APP_NAME)}
+        </div>
+
+        <div>
+          Crafted for
+          <strong>NAQI SHAH</strong>
+        </div>
+
+      </footer>
+
+    </div>
+
+    <script>
+      const messageInput =
+        document.getElementById("message");
+
+      const charCount =
+        document.getElementById("charCount");
+
+      const mediaInput =
+        document.getElementById("media");
+
+      const fileInfo =
+        document.getElementById("fileInfo");
+
+      const selectedCount =
+        document.getElementById("selectedCount");
+
+      const publishForm =
+        document.getElementById("publish-form");
+
+      const publishButton =
+        document.getElementById("publishButton");
+
+      const publishButtonText =
+        document.getElementById(
+          "publishButtonText"
+        );
+
+      const publishStatus =
+        document.getElementById(
+          "publishStatus"
+        );
+
+      const PUBLISH_BATCH_SIZE = 15;
+
+      if (messageInput) {
+        messageInput.addEventListener(
+          "input",
+          function () {
+            charCount.textContent =
+              this.value.length +
+              " characters";
+          }
+        );
+      }
+
+      if (mediaInput) {
+        mediaInput.addEventListener(
+          "change",
+          function () {
+            const file =
+              this.files &&
+              this.files.length
+                ? this.files[0]
+                : null;
+
+            if (!file) {
+              fileInfo.classList.add(
+                "hidden"
+              );
+
+              fileInfo.innerHTML = "";
+
+              return;
+            }
+
+            fileInfo.classList.remove(
+              "hidden"
+            );
+
+            fileInfo.innerHTML =
+              '<strong>' +
+              escapeClientHtml(
+                file.name
+              ) +
+              '</strong><span>' +
+              formatClientBytes(
+                file.size
+              ) +
+              '</span>';
+          }
+        );
+      }
+
+      function updateSelectedCount() {
+        const checked =
+          document.querySelectorAll(
+            '.page-checkbox:checked'
+          );
+
+        selectedCount.textContent =
+          checked.length;
+      }
+
+      document.addEventListener(
+        "change",
+        function (event) {
+          if (
+            event.target &&
+            event.target.classList &&
+            event.target.classList.contains(
+              "page-checkbox"
+            )
+          ) {
+            updateSelectedCount();
+          }
+        }
+      );
+
+      function selectAccountPages(
+        accountId,
+        shouldSelect
+      ) {
+        const boxes =
+          document.querySelectorAll(
+            ".account-" +
+              Number(accountId)
+          );
+
+        boxes.forEach(function (box) {
+          box.checked =
+            !!shouldSelect;
+        });
+
+        updateSelectedCount();
+      }
+
+      function escapeClientHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function formatClientBytes(
+        bytes
+      ) {
+        const n =
+          Number(bytes || 0);
+
+        if (n < 1024) {
+          return n + " B";
+        }
+
+        if (n < 1024 * 1024) {
+          return (
+            (n / 1024).toFixed(1) +
+            " KB"
+          );
+        }
+
+        if (
+          n <
+          1024 * 1024 * 1024
+        ) {
+          return (
+            (n /
+              (1024 * 1024)
+            ).toFixed(1) +
+            " MB"
+          );
+        }
+
+        return (
+          (n /
+            (1024 *
+              1024 *
+              1024)
+          ).toFixed(1) +
+          " GB"
+        );
+      }
+
+      async function readJsonResponse(
+        response,
+        fallbackMessage
+      ) {
+        const text =
+          await response.text();
+
+        try {
+          return JSON.parse(text);
+        } catch (error) {
+          if (
+            response.redirected ||
+            response.url.includes(
+              "/login"
+            )
+          ) {
+            throw new Error(
+              "Your dashboard session has expired. Please log in again."
+            );
+          }
+
+          throw new Error(
+            fallbackMessage +
+            " Server returned an unexpected response (HTTP " +
+            response.status +
+            ")."
+          );
+        }
+      }
+
+      publishForm.addEventListener(
+        "submit",
+        async function (event) {
+          event.preventDefault();
+
+          const checked =
+            Array.from(
+              document.querySelectorAll(
+                '.page-checkbox:checked'
+              )
+            );
+
+          if (!checked.length) {
+            showPublishStatus(
+              "error",
+              "Please select at least one Facebook Page."
+            );
+
+            return;
+          }
+
+          const message =
+            String(
+              messageInput.value || ""
+            ).trim();
+
+          const media =
+            mediaInput &&
+            mediaInput.files &&
+            mediaInput.files.length
+              ? mediaInput.files[0]
+              : null;
+
+          if (
+            !message &&
+            !media
+          ) {
+            showPublishStatus(
+              "error",
+              "Please enter a message or select a media file."
+            );
+
+            return;
+          }
+
+          publishButton.disabled =
+            true;
+
+          publishButtonText.textContent =
+            "Preparing...";
+
+          publishStatus.className =
+            "publish-status";
+
+          publishStatus.innerHTML =
+            '<div class="status-spinner"></div>' +
+            '<div><strong>Preparing publish run...</strong>' +
+            '<span>Creating your publishing batch.</span></div>';
+
+          try {
+            const formData =
+              new FormData();
+
+            formData.append(
+              "message",
+              message
+            );
+
+            checked.forEach(
+              function (checkbox) {
+                formData.append(
+                  "page_ids",
+                  checkbox.value
+                );
+              }
+            );
+
+            if (media) {
+              formData.append(
+                "media",
+                media
+              );
+            }
+
+            const startResponse =
+              await fetch(
+                "/publish",
+                {
+                  method: "POST",
+                  body: formData,
+                  credentials: "same-origin"
+                }
+              );
+
+            const startResult =
+              await readJsonResponse(
+                startResponse,
+                "Could not start publishing."
+              );
+
+            if (
+              !startResult ||
+              !startResult.ok
+            ) {
+              throw new Error(
+                startResult &&
+                startResult.error
+                  ? startResult.error
+                  : "Could not start publishing."
+              );
+            }
+
+            const runId =
+              startResult.runId;
+
+            const total =
+              Number(
+                startResult.total || 0
+              );
+
+            let processed = 0;
+            let succeeded = 0;
+            let failed = 0;
+
+            while (
+              processed < total
+            ) {
+              publishButtonText.textContent =
+                "Publishing " +
+                Math.min(
+                  processed +
+                    PUBLISH_BATCH_SIZE,
+                  total
+                ) +
+                " / " +
+                total;
+
+              publishStatus.className =
+                "publish-status";
+
+              publishStatus.innerHTML =
+                '<div class="status-spinner"></div>' +
+                '<div><strong>Publishing...</strong>' +
+                '<span>' +
+                processed +
+                ' of ' +
+                total +
+                ' Pages processed.</span></div>';
+
+              const batchResponse =
+                await fetch(
+                  "/publish-batch",
+                  {
+                    method: "POST",
+                    headers: {
+                      "Content-Type":
+                        "application/json"
+                    },
+                    credentials:
+                      "same-origin",
+                    body: JSON.stringify({
+                      runId
+                    })
+                  }
+                );
+
+              const batchResult =
+                await readJsonResponse(
+                  batchResponse,
+                  "A publishing batch failed."
+                );
+
+              if (
+                !batchResult ||
+                !batchResult.ok
+              ) {
+                throw new Error(
+                  batchResult &&
+                  batchResult.error
+                    ? batchResult.error
+                    : "A publishing batch failed."
+                );
+              }
+
+              processed =
+                Number(
+                  batchResult.processed ||
+                    processed
+                );
+
+              succeeded +=
+                Number(
+                  batchResult.succeeded ||
+                    0
+                );
+
+              failed +=
+                Number(
+                  batchResult.failed ||
+                    0
+                );
+
+              if (
+                batchResult.done
+              ) {
+                break;
+              }
+            }
+
+            publishButtonText.textContent =
+              "Publish Complete";
+
+            publishStatus.className =
+              "publish-status success";
+
+            publishStatus.innerHTML =
+              '<div class="status-success-icon">✓</div>' +
+              '<div><strong>Publishing completed</strong>' +
+              '<span>' +
+              succeeded +
+              ' successful, ' +
+              failed +
+              ' failed.</span></div>';
+
+            setTimeout(
+              function () {
+                window.location.href =
+                  "/publish-results?runId=" +
+                  encodeURIComponent(
+                    runId
+                  );
+              },
+              900
+            );
+          } catch (error) {
+            console.error(
+              error
+            );
+
+            publishButton.disabled =
+              false;
+
+            publishButtonText.textContent =
+              "Publish Now";
+
+            showPublishStatus(
+              "error",
+              error &&
+              error.message
+                ? error.message
+                : String(error)
+            );
+          }
+        }
+      );
+
+      function showPublishStatus(
+        type,
+        message
+      ) {
+        publishStatus.className =
+          "publish-status " +
+          (type === "error"
+            ? "error"
+            : "success");
+
+        publishStatus.innerHTML =
+          '<div class="status-message-icon">' +
+          (type === "error"
+            ? "!"
+            : "✓") +
+          '</div><div>' +
+          '<strong>' +
+          (type === "error"
+            ? "Unable to publish"
+            : "Done") +
+          '</strong>' +
+          '<span>' +
+          escapeClientHtml(
+            message
+          ) +
+          '</span></div>';
+      }
+
+      updateSelectedCount();
+    </script>
+    `
+  );
+}
+
+//PART 2//
+
+
+
+    const state =
+      crypto.randomUUID();
+
+    await env.DB.prepare(
+      "UPDATE auth_sessions " +
+        "SET meta_state = ? " +
+        "WHERE id = ?"
+    )
+      .bind(
+        state,
+        sessionId
+      )
+      .run();
+
+    const loginUrl =
+      "https://www.facebook.com/" +
+      config.graphVersion +
+      "/dialog/oauth" +
+      "?client_id=" +
+      encodeURIComponent(
+        config.appId
+      ) +
+      "&redirect_uri=" +
+      encodeURIComponent(
+        redirectUri
+      ) +
+      "&scope=" +
+      encodeURIComponent(
+        scope
+      ) +
+      "&state=" +
+      encodeURIComponent(
+        state
+      );
+
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: loginUrl,
+        "Cache-Control": "no-store"
+      }
+    });
+  } catch (error) {
+    return page(
+      "Meta Login Error",
+      `
+      <div class="error-screen">
+        <div class="error-box">
+
+          <div class="error-icon">!</div>
+
+          <div class="eyebrow">
+            FACEBOOK CONNECTION
+          </div>
+
+          <h2>
+            Unable to start Facebook login
+          </h2>
+
+          <p class="error-intro">
+            ${escapeHtml(
+              error &&
+              error.message
+                ? error.message
+                : String(error)
+            )}
+          </p>
+
+          <a
+            class="back-btn"
+            href="/"
+          >
+            Back to Dashboard
+          </a>
+
+        </div>
+      </div>
+      `
+    );
+  }
+}
 
 // =============================================================
 // META CALLBACK
@@ -731,177 +2069,521 @@ async function metaCallback(
   env,
   sessionId
 ) {
-  const cfg =
-    metaConfig(env);
-
   const url =
     new URL(request.url);
 
   const code =
-    url.searchParams.get("code");
+    url.searchParams.get(
+      "code"
+    );
 
   const state =
-    url.searchParams.get("state");
-
-  const cookies =
-    parseCookies(
-      request.headers.get("Cookie") || ""
+    url.searchParams.get(
+      "state"
     );
 
-  if (
-    !code ||
-    !state ||
-    state !== cookies.meta_state
-  ) {
-    throw new Error(
-      "Invalid Meta OAuth state."
-    );
-  }
-
-  const redirectUri =
-    url.origin +
-    "/auth/meta/callback";
-
-  const tokenUrl =
-    new URL(
-      "https://graph.facebook.com/" +
-      cfg.graphVersion +
-      "/oauth/access_token"
+  const error =
+    url.searchParams.get(
+      "error"
     );
 
-  tokenUrl.searchParams.set(
-    "client_id",
-    cfg.appId
-  );
-
-  tokenUrl.searchParams.set(
-    "client_secret",
-    cfg.appSecret
-  );
-
-  tokenUrl.searchParams.set(
-    "redirect_uri",
-    redirectUri
-  );
-
-  tokenUrl.searchParams.set(
-    "code",
-    code
-  );
-
-  const tokenResponse =
-    await fetch(
-      tokenUrl.toString()
+  const errorReason =
+    url.searchParams.get(
+      "error_reason"
     );
 
-  const tokenData =
-    await tokenResponse.json();
+  const errorDescription =
+    url.searchParams.get(
+      "error_description"
+    );
 
-  if (
-    !tokenResponse.ok ||
-    !tokenData.access_token
-  ) {
-    throw new Error(
-      tokenData.error?.message ||
-      "Unable to obtain Meta access token."
+  if (error) {
+    return page(
+      "Facebook Login Cancelled",
+      `
+      <div class="error-screen">
+        <div class="error-box">
+
+          <div class="error-icon">
+            !
+          </div>
+
+          <div class="eyebrow">
+            FACEBOOK LOGIN
+          </div>
+
+          <h2>
+            Facebook connection was cancelled
+          </h2>
+
+          <p class="error-intro">
+            ${
+              escapeHtml(
+                errorDescription ||
+                  errorReason ||
+                  error
+              )
+            }
+          </p>
+
+          <a
+            class="back-btn"
+            href="/"
+          >
+            Back to Dashboard
+          </a>
+
+        </div>
+      </div>
+      `
     );
   }
 
-  const userResponse =
-    await fetch(
-      "https://graph.facebook.com/" +
-      cfg.graphVersion +
-      "/me?fields=id,name&access_token=" +
-      encodeURIComponent(
-        tokenData.access_token
-      )
-    );
+  if (!code) {
+    return page(
+      "Facebook Login Error",
+      `
+      <div class="error-screen">
+        <div class="error-box">
 
-  const userData =
-    await userResponse.json();
+          <div class="error-icon">
+            !
+          </div>
 
-  if (
-    !userResponse.ok ||
-    !userData.id
-  ) {
-    throw new Error(
-      userData.error?.message ||
-      "Unable to load Meta account."
+          <div class="eyebrow">
+            FACEBOOK LOGIN
+          </div>
+
+          <h2>
+            Authorization code missing
+          </h2>
+
+          <p class="error-intro">
+            Facebook did not return a valid authorization code.
+          </p>
+
+          <a
+            class="back-btn"
+            href="/"
+          >
+            Back to Dashboard
+          </a>
+
+        </div>
+      </div>
+      `
     );
   }
 
-  const now =
-    Date.now();
-
-  await env.DB.prepare(`
-    INSERT INTO accounts
-    (
-      facebook_user_id,
-      account_name,
-      access_token,
-      created_at,
-      updated_at
+  const session =
+    await env.DB.prepare(
+      "SELECT id, meta_state " +
+        "FROM auth_sessions " +
+        "WHERE id = ?"
     )
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(facebook_user_id)
-    DO UPDATE SET
-      account_name = excluded.account_name,
-      access_token = excluded.access_token,
-      updated_at = excluded.updated_at
-  `)
-    .bind(
-      String(userData.id),
-      String(
-        userData.name ||
-        "Facebook Account"
-      ),
-      String(
-        tokenData.access_token
-      ),
-      now,
-      now
-    )
-    .run();
-
-  const account =
-    await env.DB.prepare(`
-      SELECT *
-      FROM accounts
-      WHERE facebook_user_id = ?
-      LIMIT 1
-    `)
-      .bind(
-        String(userData.id)
-      )
+      .bind(sessionId)
       .first();
 
-  await syncAccount(
-    env.DB,
-    account.id,
-    tokenData.access_token,
-    cfg.graphVersion
-  );
+  if (!session) {
+    return page(
+      "Session Expired",
+      `
+      <div class="error-screen">
+        <div class="error-box">
 
-  await allowNextDashboardLoad(
-    env.DB,
-    sessionId
-  );
+          <div class="error-icon">
+            !
+          </div>
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: "/",
-      "Set-Cookie":
-        "meta_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
-      "Cache-Control":
-        "no-store"
+          <div class="eyebrow">
+            SESSION
+          </div>
+
+          <h2>
+            Your session has expired
+          </h2>
+
+          <p class="error-intro">
+            Please log in again and reconnect Facebook.
+          </p>
+
+          <a
+            class="back-btn"
+            href="/login"
+          >
+            Login Again
+          </a>
+
+        </div>
+      </div>
+      `
+    );
+  }
+
+  if (
+    !state ||
+    !session.meta_state ||
+    state !== session.meta_state
+  ) {
+    return page(
+      "Invalid OAuth State",
+      `
+      <div class="error-screen">
+        <div class="error-box">
+
+          <div class="error-icon">
+            !
+          </div>
+
+          <div class="eyebrow">
+            SECURITY CHECK
+          </div>
+
+          <h2>
+            Invalid authorization state
+          </h2>
+
+          <p class="error-intro">
+            The Facebook authorization could not be verified.
+            Please start the connection again.
+          </p>
+
+          <a
+            class="back-btn"
+            href="/"
+          >
+            Back to Dashboard
+          </a>
+
+        </div>
+      </div>
+      `
+    );
+  }
+
+  await env.DB.prepare(
+    "UPDATE auth_sessions " +
+      "SET meta_state = NULL " +
+      "WHERE id = ?"
+  )
+    .bind(sessionId)
+    .run();
+
+  try {
+    const config =
+      getMetaConfig(env);
+
+    const redirectUri =
+      url.origin +
+      "/auth/meta/callback";
+
+    // ---------------------------------------------------------
+    // EXCHANGE AUTHORIZATION CODE FOR USER ACCESS TOKEN
+    // ---------------------------------------------------------
+
+    const tokenUrl =
+      "https://graph.facebook.com/" +
+      config.graphVersion +
+      "/oauth/access_token" +
+      "?client_id=" +
+      encodeURIComponent(
+        config.appId
+      ) +
+      "&client_secret=" +
+      encodeURIComponent(
+        config.appSecret
+      ) +
+      "&redirect_uri=" +
+      encodeURIComponent(
+        redirectUri
+      ) +
+      "&code=" +
+      encodeURIComponent(
+        code
+      );
+
+    const tokenResponse =
+      await fetch(
+        tokenUrl,
+        {
+          method: "GET"
+        }
+      );
+
+    const tokenData =
+      await tokenResponse.json();
+
+    if (
+      !tokenResponse.ok ||
+      !tokenData.access_token
+    ) {
+      throw new Error(
+        "Facebook token exchange failed: " +
+          (
+            tokenData.error &&
+            tokenData.error.message
+              ? tokenData.error.message
+              : JSON.stringify(
+                  tokenData
+                )
+          )
+      );
     }
-  });
+
+    const shortLivedToken =
+      tokenData.access_token;
+
+    // ---------------------------------------------------------
+    // EXCHANGE FOR LONG-LIVED USER TOKEN
+    // ---------------------------------------------------------
+
+    const longTokenUrl =
+      "https://graph.facebook.com/" +
+      config.graphVersion +
+      "/oauth/access_token" +
+      "?grant_type=fb_exchange_token" +
+      "&client_id=" +
+      encodeURIComponent(
+        config.appId
+      ) +
+      "&client_secret=" +
+      encodeURIComponent(
+        config.appSecret
+      ) +
+      "&fb_exchange_token=" +
+      encodeURIComponent(
+        shortLivedToken
+      );
+
+    const longTokenResponse =
+      await fetch(
+        longTokenUrl,
+        {
+          method: "GET"
+        }
+      );
+
+    const longTokenData =
+      await longTokenResponse.json();
+
+    if (
+      !longTokenResponse.ok ||
+      !longTokenData.access_token
+    ) {
+      throw new Error(
+        "Facebook long-lived token exchange failed: " +
+          (
+            longTokenData.error &&
+            longTokenData.error.message
+              ? longTokenData.error.message
+              : JSON.stringify(
+                  longTokenData
+                )
+          )
+      );
+    }
+
+    const accessToken =
+      longTokenData.access_token;
+
+    // ---------------------------------------------------------
+    // GET FACEBOOK USER INFORMATION
+    // ---------------------------------------------------------
+
+    const meUrl =
+      "https://graph.facebook.com/" +
+      config.graphVersion +
+      "/me" +
+      "?fields=id,name" +
+      "&access_token=" +
+      encodeURIComponent(
+        accessToken
+      );
+
+    const meResponse =
+      await fetch(
+        meUrl
+      );
+
+    const meData =
+      await meResponse.json();
+
+    if (
+      !meResponse.ok ||
+      !meData.id
+    ) {
+      throw new Error(
+        "Could not retrieve Facebook account information: " +
+          (
+            meData.error &&
+            meData.error.message
+              ? meData.error.message
+              : JSON.stringify(
+                  meData
+                )
+          )
+      );
+    }
+
+    // ---------------------------------------------------------
+    // SAVE / UPDATE ACCOUNT
+    // ---------------------------------------------------------
+
+    await env.DB.prepare(
+      "INSERT INTO accounts " +
+        "(facebook_user_id, account_name, access_token) " +
+        "VALUES (?, ?, ?) " +
+        "ON CONFLICT(facebook_user_id) DO UPDATE SET " +
+        "account_name = excluded.account_name, " +
+        "access_token = excluded.access_token"
+    )
+      .bind(
+        meData.id,
+        meData.name ||
+          "Facebook Account",
+        accessToken
+      )
+      .run();
+
+    const account =
+      await env.DB.prepare(
+        "SELECT id, facebook_user_id, account_name, access_token " +
+          "FROM accounts " +
+          "WHERE facebook_user_id = ?"
+      )
+        .bind(meData.id)
+        .first();
+
+    if (!account) {
+      throw new Error(
+        "Facebook account could not be saved."
+      );
+    }
+
+    // ---------------------------------------------------------
+    // SYNC PAGES
+    // ---------------------------------------------------------
+
+    const syncResult =
+      await syncAccount(
+        env,
+        account
+      );
+
+    await allowNextDashboardLoad(
+      env.DB,
+      sessionId
+    );
+
+    return page(
+      "Facebook Connected",
+      `
+      <div class="success-screen">
+
+        <div class="success-box">
+
+          <div class="success-icon">
+            ✓
+          </div>
+
+          <div class="eyebrow">
+            CONNECTION SUCCESSFUL
+          </div>
+
+          <h2>
+            Facebook account connected
+          </h2>
+
+          <p class="success-intro">
+            ${escapeHtml(
+              meData.name ||
+                "Facebook Account"
+            )}
+            is now connected to your publishing dashboard.
+          </p>
+
+          <div class="success-stats">
+
+            <div>
+              <strong>
+                ${Number(
+                  syncResult.count || 0
+                )}
+              </strong>
+
+              <span>
+                Pages synced
+              </span>
+            </div>
+
+          </div>
+
+          <a
+            class="back-btn success-back"
+            href="/"
+          >
+            Open Dashboard
+          </a>
+
+        </div>
+
+      </div>
+      `
+    );
+  } catch (error) {
+    console.error(
+      "Meta callback error:",
+      error
+    );
+
+    await allowNextDashboardLoad(
+      env.DB,
+      sessionId
+    );
+
+    return page(
+      "Facebook Connection Error",
+      `
+      <div class="error-screen">
+        <div class="error-box">
+
+          <div class="error-icon">
+            !
+          </div>
+
+          <div class="eyebrow">
+            FACEBOOK CONNECTION
+          </div>
+
+          <h2>
+            Connection failed
+          </h2>
+
+          <p class="error-intro">
+            ${escapeHtml(
+              error &&
+              error.message
+                ? error.message
+                : String(error)
+            )}
+          </p>
+
+          <a
+            class="back-btn"
+            href="/"
+          >
+            Return to Dashboard
+          </a>
+
+        </div>
+      </div>
+      `
+    );
+  }
 }
 
-
 // =============================================================
-// PAGE SYNC
+// SYNC PAGES
 // =============================================================
 
 async function syncPages(
@@ -916,174 +2598,174 @@ async function syncPages(
       form.get("account_id")
     );
 
-  if (!accountId) {
-    throw new Error(
-      "Invalid account."
+  if (
+    !Number.isFinite(
+      accountId
+    ) ||
+    accountId <= 0
+  ) {
+    return redirectPage(
+      "/",
+      "Invalid Facebook account."
     );
   }
 
   const account =
-    await env.DB.prepare(`
-      SELECT *
-      FROM accounts
-      WHERE id = ?
-      LIMIT 1
-    `)
+    await env.DB.prepare(
+      "SELECT id, facebook_user_id, account_name, access_token " +
+        "FROM accounts WHERE id = ?"
+    )
       .bind(accountId)
       .first();
 
   if (!account) {
-    throw new Error(
+    return redirectPage(
+      "/",
       "Facebook account not found."
     );
   }
 
-  await syncAccount(
-    env.DB,
-    account.id,
-    account.access_token,
-    metaConfig(env).graphVersion
-  );
+  try {
+    const result =
+      await syncAccount(
+        env,
+        account
+      );
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: "/",
-      "Cache-Control":
-        "no-store"
-    }
-  });
-}
-
-
-async function syncAccount(
-  DB,
-  accountId,
-  accessToken,
-  graphVersion
-) {
-  const seen =
-    new Set();
-
-  let nextUrl =
-    "https://graph.facebook.com/" +
-    graphVersion +
-    "/me/accounts?fields=id,name,access_token&limit=100&access_token=" +
-    encodeURIComponent(
-      accessToken
+    return redirectPage(
+      "/",
+      "Successfully synced " +
+        Number(
+          result.count || 0
+        ) +
+        " Facebook Pages."
+    );
+  } catch (error) {
+    console.error(
+      "Sync error:",
+      error
     );
 
-  while (nextUrl) {
+    return redirectPage(
+      "/",
+      "Page sync failed: " +
+        (
+          error &&
+          error.message
+            ? error.message
+            : String(error)
+        )
+    );
+  }
+}
 
+async function syncAccount(
+  env,
+  account
+) {
+  const config =
+    getMetaConfig(env);
+
+  let url =
+    "https://graph.facebook.com/" +
+    config.graphVersion +
+    "/" +
+    encodeURIComponent(
+      account.facebook_user_id
+    ) +
+    "/accounts" +
+    "?fields=id,name,access_token" +
+    "&limit=100" +
+    "&access_token=" +
+    encodeURIComponent(
+      account.access_token
+    );
+
+  const pages = [];
+
+  while (url) {
     const response =
-      await fetch(nextUrl);
+      await fetch(url);
 
     const data =
       await response.json();
 
     if (!response.ok) {
       throw new Error(
-        data.error?.message ||
-        "Unable to sync Facebook Pages."
+        "Facebook Pages request failed: " +
+          (
+            data.error &&
+            data.error.message
+              ? data.error.message
+              : JSON.stringify(
+                  data
+                )
+          )
       );
     }
 
-    const list =
-      Array.isArray(data.data)
-        ? data.data
-        : [];
-
-    for (
-      const fbPage of list
-    ) {
-      if (
-        !fbPage.id ||
-        !fbPage.access_token
-      ) {
-        continue;
-      }
-
-      seen.add(
-        String(fbPage.id)
-      );
-
-      const now =
-        Date.now();
-
-      await DB.prepare(`
-        INSERT INTO pages
-        (
-          account_id,
-          facebook_page_id,
-          page_name,
-          access_token,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(account_id, facebook_page_id)
-        DO UPDATE SET
-          page_name = excluded.page_name,
-          access_token = excluded.access_token,
-          updated_at = excluded.updated_at
-      `)
-        .bind(
-          accountId,
-          String(fbPage.id),
-          String(
-            fbPage.name ||
-            "Facebook Page"
-          ),
-          String(
-            fbPage.access_token
-          ),
-          now,
-          now
-        )
-        .run();
-    }
-
-    nextUrl =
-      data.paging?.next ||
-      null;
-  }
-
-  const rows =
-    await DB.prepare(`
-      SELECT facebook_page_id
-      FROM pages
-      WHERE account_id = ?
-    `)
-      .bind(accountId)
-      .all();
-
-  const existing =
-    rows.results || [];
-
-  for (
-    const row of existing
-  ) {
     if (
-      !seen.has(
-        String(
-          row.facebook_page_id
-        )
+      Array.isArray(
+        data.data
       )
     ) {
-      await DB.prepare(`
-        DELETE FROM pages
-        WHERE account_id = ?
-        AND facebook_page_id = ?
-      `)
-        .bind(
-          accountId,
-          row.facebook_page_id
-        )
-        .run();
+      pages.push(
+        ...data.data
+      );
     }
-  }
-}
 
+    url =
+      data.paging &&
+      data.paging.next
+        ? data.paging.next
+        : null;
+  }
+
+  // ---------------------------------------------------------
+  // REPLACE THE ACCOUNT'S PAGE LIST
+  // ---------------------------------------------------------
+
+  await env.DB.prepare(
+    "DELETE FROM pages WHERE account_id = ?"
+  )
+    .bind(account.id)
+    .run();
+
+  for (const fbPage of pages) {
+    if (
+      !fbPage ||
+      !fbPage.id ||
+      !fbPage.access_token
+    ) {
+      continue;
+    }
+
+    await env.DB.prepare(
+      "INSERT INTO pages " +
+        "(facebook_page_id, page_name, access_token, account_id) " +
+        "VALUES (?, ?, ?, ?)"
+    )
+      .bind(
+        String(
+          fbPage.id
+        ),
+        String(
+          fbPage.name ||
+            "Facebook Page"
+        ),
+        String(
+          fbPage.access_token
+        ),
+        account.id
+      )
+      .run();
+  }
+
+  return {
+    ok: true,
+    count: pages.length
+  };
+}
 
 // =============================================================
 // REMOVE ACCOUNT
@@ -1101,39 +2783,54 @@ async function removeAccount(
       form.get("account_id")
     );
 
-  if (!accountId) {
-    throw new Error(
-      "Invalid account."
+  if (
+    !Number.isFinite(
+      accountId
+    ) ||
+    accountId <= 0
+  ) {
+    return redirectPage(
+      "/",
+      "Invalid Facebook account."
     );
   }
 
-  await env.DB.prepare(`
-    DELETE FROM pages
-    WHERE account_id = ?
-  `)
+  const account =
+    await env.DB.prepare(
+      "SELECT id, account_name " +
+        "FROM accounts " +
+        "WHERE id = ?"
+    )
+      .bind(accountId)
+      .first();
+
+  if (!account) {
+    return redirectPage(
+      "/",
+      "Facebook account not found."
+    );
+  }
+
+  await env.DB.prepare(
+    "DELETE FROM pages WHERE account_id = ?"
+  )
     .bind(accountId)
     .run();
 
-  await env.DB.prepare(`
-    DELETE FROM accounts
-    WHERE id = ?
-  `)
+  await env.DB.prepare(
+    "DELETE FROM accounts WHERE id = ?"
+  )
     .bind(accountId)
     .run();
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: "/",
-      "Cache-Control":
-        "no-store"
-    }
-  });
+  return redirectPage(
+    "/",
+    "Facebook account removed successfully."
+  );
 }
 
-
 // =============================================================
-// PUBLISH RUN
+// START PUBLISH RUN
 // =============================================================
 
 async function startPublishRun(
@@ -1153,171 +2850,155 @@ async function startPublishRun(
     form
       .getAll("page_ids")
       .map(
-        value => Number(value)
+        function(value) {
+          return Number(
+            value
+          );
+        }
       )
       .filter(
-        value => Number.isFinite(value)
+        function(value) {
+          return (
+            Number.isFinite(
+              value
+            ) &&
+            value > 0
+          );
+        }
       );
 
   const media =
     form.get("media");
 
-  let mediaType =
-    "";
-
-  let mediaName =
-    "";
-
-  if (
-    media &&
-    typeof media === "object" &&
-    typeof media.arrayBuffer === "function"
-  ) {
-    if (
-      Number(media.size || 0) >
-      MAX
-    ) {
-      throw new Error(
-        "File is too large. Maximum supported size is 100 MB."
-      );
-    }
-
-    if (
-      media.size > 0
-    ) {
-      mediaName =
-        String(
-          media.name ||
-          "media"
-        );
-
-      const type =
-        String(
-          media.type ||
-          ""
-        ).toLowerCase();
-
-      if (
-        type.startsWith("video/")
-      ) {
-        mediaType =
-          "video";
-      } else {
-        mediaType =
-          "image";
-      }
-    }
+  if (!pageIds.length) {
+    return jsonResponse(
+      {
+        ok: false,
+        error:
+          "Please select at least one Facebook Page."
+      },
+      400
+    );
   }
 
   if (
     !message &&
-    !mediaType
+    !isValidMediaFile(media)
   ) {
-    throw new Error(
-      "Please enter post text or select an image/video."
+    return jsonResponse(
+      {
+        ok: false,
+        error:
+          "Please enter post text or select an image/video."
+      },
+      400
     );
   }
 
-  if (!pageIds.length) {
-    throw new Error(
-      "Please select at least one Facebook Page."
+  if (
+    pageIds.length >
+    1000
+  ) {
+    return jsonResponse(
+      {
+        ok: false,
+        error:
+          "Too many Pages selected. Please select fewer Pages."
+      },
+      400
     );
   }
 
   const placeholders =
     pageIds
-      .map(() => "?")
+      .map(
+        function() {
+          return "?";
+        }
+      )
       .join(",");
 
-  const pages =
-    await env.DB.prepare(`
-      SELECT *
-      FROM pages
-      WHERE id IN (${placeholders})
-      ORDER BY id
-    `)
+  const pagesResult =
+    await env.DB.prepare(
+      "SELECT id, facebook_page_id, page_name, access_token " +
+        "FROM pages " +
+        "WHERE id IN (" +
+        placeholders +
+        ") " +
+        "ORDER BY id ASC"
+    )
       .bind(...pageIds)
       .all();
 
-  const selectedPages =
-    pages.results || [];
+  const pages =
+    pagesResult.results || [];
 
-  if (
-    selectedPages.length !==
-    pageIds.length
-  ) {
-    throw new Error(
-      "One or more selected Pages are no longer available."
+  if (!pages.length) {
+    return jsonResponse(
+      {
+        ok: false,
+        error:
+          "None of the selected Pages could be found."
+      },
+      400
     );
   }
 
   const runId =
     crypto.randomUUID();
 
-  const now =
-    Date.now();
+  let mediaType = null;
+  let mediaName = null;
 
-  await env.DB.prepare(`
-    INSERT INTO publish_runs
-    (
-      id,
-      session_id,
-      message,
-      media_type,
-      media_name,
-      created_at,
-      status
-    )
-    VALUES (?, ?, ?, ?, ?, ?, 'running')
-  `)
+  if (
+    isValidMediaFile(media)
+  ) {
+    mediaType =
+      media.type || null;
+
+    mediaName =
+      media.name || null;
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO publish_runs " +
+      "(id, session_id, message, media_type, media_name, created_at, status) " +
+      "VALUES (?, ?, ?, ?, ?, datetime('now'), 'processing')"
+  )
     .bind(
       runId,
       sessionId,
       message,
       mediaType,
-      mediaName,
-      now
+      mediaName
     )
     .run();
 
-  for (
-    const page of selectedPages
-  ) {
-    await env.DB.prepare(`
-      INSERT INTO publish_run_pages
-      (
-        run_id,
-        page_id,
-        page_name,
-        facebook_page_id,
-        status,
-        created_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, 'pending', ?, ?)
-    `)
+  for (const p of pages) {
+    await env.DB.prepare(
+      "INSERT INTO publish_run_pages " +
+        "(run_id, page_db_id, facebook_page_id, page_name, status, created_at) " +
+        "VALUES (?, ?, ?, ?, 'pending', datetime('now'))"
+    )
       .bind(
         runId,
-        page.id,
-        page.page_name,
-        page.facebook_page_id,
-        now,
-        now
+        p.id,
+        p.facebook_page_id,
+        p.page_name ||
+          "Facebook Page"
       )
       .run();
   }
 
-  return json({
+  return jsonResponse({
     ok: true,
-    run_id: runId,
-    total:
-      selectedPages.length
+    runId,
+    total: pages.length
   });
 }
 
-
 // =============================================================
-// PUBLISH BATCH
+// PROCESS PUBLISH BATCH
 // =============================================================
 
 async function processPublishBatch(
@@ -1325,372 +3006,423 @@ async function processPublishBatch(
   env,
   sessionId
 ) {
-  const form =
-    await request.formData();
+  const contentType =
+    request.headers.get(
+      "Content-Type"
+    ) || "";
 
-  const runId =
-    String(
-      form.get("run_id") || ""
-    );
+  let runId = "";
+  let requestedPageIds = [];
 
-  const pageIds =
-    form
-      .getAll("page_ids")
-      .map(
-        value => Number(value)
+  if (
+    contentType
+      .toLowerCase()
+      .includes(
+        "application/json"
       )
-      .filter(
-        value => Number.isFinite(value)
-      );
+  ) {
+    const body =
+      await request.json();
 
-  if (!runId) {
-    throw new Error(
-      "Missing publishing run."
-    );
+    runId =
+      String(
+        body.runId ||
+          body.run_id ||
+          ""
+      ).trim();
+
+    requestedPageIds =
+      Array.isArray(
+        body.page_ids
+      )
+        ? body.page_ids
+            .map(
+              function(value) {
+                return Number(
+                  value
+                );
+              }
+            )
+            .filter(
+              function(value) {
+                return (
+                  Number.isFinite(
+                    value
+                  ) &&
+                  value > 0
+                );
+              }
+            )
+        : [];
+  } else {
+    const form =
+      await request.formData();
+
+    runId =
+      String(
+        form.get("run_id") ||
+          form.get("runId") ||
+          ""
+      ).trim();
+
+    requestedPageIds =
+      form
+        .getAll("page_ids")
+        .map(
+          function(value) {
+            return Number(
+              value
+            );
+          }
+        )
+        .filter(
+          function(value) {
+            return (
+              Number.isFinite(
+                value
+              ) &&
+              value > 0
+            );
+          }
+        );
   }
 
-  if (!pageIds.length) {
-    throw new Error(
-      "No Pages were supplied."
+  if (!runId) {
+    return jsonResponse(
+      {
+        ok: false,
+        error:
+          "Publishing run ID is missing."
+      },
+      400
     );
   }
 
   const run =
-    await env.DB.prepare(`
-      SELECT *
-      FROM publish_runs
-      WHERE id = ?
-      AND session_id = ?
-      LIMIT 1
-    `)
-      .bind(
-        runId,
-        sessionId
-      )
+    await env.DB.prepare(
+      "SELECT id, session_id, message, media_type, media_name, status " +
+        "FROM publish_runs " +
+        "WHERE id = ?"
+    )
+      .bind(runId)
       .first();
 
   if (!run) {
-    throw new Error(
-      "Publishing run not found."
+    return jsonResponse(
+      {
+        ok: false,
+        error:
+          "Publishing run was not found."
+      },
+      404
     );
   }
 
-  const placeholders =
-    pageIds
-      .map(() => "?")
-      .join(",");
+  if (
+    run.session_id !==
+    sessionId
+  ) {
+    return jsonResponse(
+      {
+        ok: false,
+        error:
+          "You are not authorized to process this publishing run."
+      },
+      403
+    );
+  }
 
-  const pages =
-    await env.DB.prepare(`
-      SELECT
-        prp.*,
-        p.access_token
-      FROM publish_run_pages prp
-      JOIN pages p
-        ON p.id = prp.page_id
-      WHERE prp.run_id = ?
-      AND prp.page_id IN (${placeholders})
-      ORDER BY prp.id
-      LIMIT ${BATCH}
-    `)
-      .bind(
-        runId,
-        ...pageIds
+  if (
+    run.status ===
+    "completed"
+  ) {
+    const counts =
+      await getPublishRunCounts(
+        env.DB,
+        runId
+      );
+
+    return jsonResponse({
+      ok: true,
+      done: true,
+      processed:
+        counts.total,
+      succeeded:
+        counts.succeeded,
+      failed:
+        counts.failed
+    });
+  }
+
+  let batchRows;
+
+  if (
+    requestedPageIds.length
+  ) {
+    const placeholders =
+      requestedPageIds
+        .map(
+          function() {
+            return "?";
+          }
+        )
+        .join(",");
+
+    const result =
+      await env.DB.prepare(
+        "SELECT " +
+          "prp.id, " +
+          "prp.page_db_id, " +
+          "prp.facebook_page_id, " +
+          "prp.page_name, " +
+          "p.access_token " +
+          "FROM publish_run_pages prp " +
+          "INNER JOIN pages p " +
+          "ON p.id = prp.page_db_id " +
+          "WHERE prp.run_id = ? " +
+          "AND prp.status = 'pending' " +
+          "AND prp.page_db_id IN (" +
+          placeholders +
+          ") " +
+          "ORDER BY prp.id ASC " +
+          "LIMIT 15"
       )
-      .all();
+        .bind(
+          runId,
+          ...requestedPageIds
+        )
+        .all();
 
-  const selected =
-    pages.results || [];
+    batchRows =
+      result.results || [];
+  } else {
+    const result =
+      await env.DB.prepare(
+        "SELECT " +
+          "prp.id, " +
+          "prp.page_db_id, " +
+          "prp.facebook_page_id, " +
+          "prp.page_name, " +
+          "p.access_token " +
+          "FROM publish_run_pages prp " +
+          "INNER JOIN pages p " +
+          "ON p.id = prp.page_db_id " +
+          "WHERE prp.run_id = ? " +
+          "AND prp.status = 'pending' " +
+          "ORDER BY prp.id ASC " +
+          "LIMIT 15"
+      )
+        .bind(runId)
+        .all();
+
+    batchRows =
+      result.results || [];
+  }
+
+  if (!batchRows.length) {
+    const counts =
+      await getPublishRunCounts(
+        env.DB,
+        runId
+      );
+
+    const done =
+      counts.pending === 0;
+
+    if (done) {
+      await env.DB.prepare(
+        "UPDATE publish_runs " +
+          "SET status = 'completed', " +
+          "completed_at = datetime('now') " +
+          "WHERE id = ?"
+      )
+        .bind(runId)
+        .run();
+    }
+
+    return jsonResponse({
+      ok: true,
+      done,
+      processed:
+        counts.succeeded +
+        counts.failed,
+      succeeded:
+        counts.succeeded,
+      failed:
+        counts.failed
+    });
+  }
+
+  const bodyMedia =
+    contentType
+      .toLowerCase()
+      .includes(
+        "application/json"
+      )
+      ? null
+      : await getMediaFromFormRequest(
+          request
+        );
 
   const results = [];
 
-  let mediaBlob =
-    null;
-
-  if (
-    run.media_type
-  ) {
-    const supplied =
-      form.get("media");
-
-    if (
-      supplied &&
-      typeof supplied.arrayBuffer ===
-        "function" &&
-      supplied.size > 0
-    ) {
-      mediaBlob =
-        supplied;
-    }
-  }
-
-  for (
-    const page of selected
-  ) {
+  for (const row of batchRows) {
     try {
+      const result =
+        await publishToPage(
+          env,
+          row,
+          run.message || "",
+          bodyMedia
+        );
 
-      await env.DB.prepare(`
-        UPDATE publish_run_pages
-        SET status = 'processing',
-            updated_at = ?
-        WHERE id = ?
-      `)
+      await env.DB.prepare(
+        "UPDATE publish_run_pages " +
+          "SET status = 'success', " +
+          "post_id = ?, " +
+          "error = NULL, " +
+          "completed_at = datetime('now') " +
+          "WHERE id = ?"
+      )
         .bind(
-          Date.now(),
-          page.id
-        )
-        .run();
-
-      let response;
-
-      if (
-        !run.media_type
-      ) {
-        response =
-          await publishTextPost(
-            page,
-            run.message || "",
-            metaConfig(env).graphVersion
-          );
-
-      } else if (
-        run.media_type === "image"
-      ) {
-        response =
-          await publishMedia(
-            page,
-            run.message || "",
-            mediaBlob,
-            "image",
-            metaConfig(env).graphVersion
-          );
-
-      } else {
-        response =
-          await publishMedia(
-            page,
-            run.message || "",
-            mediaBlob,
-            "video",
-            metaConfig(env).graphVersion
-          );
-      }
-
-      const postId =
-        response?.id ||
-        response?.post_id ||
-        "";
-
-      await env.DB.prepare(`
-        UPDATE publish_run_pages
-        SET status = 'success',
-            post_id = ?,
-            updated_at = ?
-        WHERE id = ?
-      `)
-        .bind(
-          String(postId),
-          Date.now(),
-          page.id
+          result.postId ||
+            null,
+          row.id
         )
         .run();
 
       results.push({
-        page:
-          page.page_name,
         pageId:
-          page.facebook_page_id,
-        success:
-          true,
+          row.facebook_page_id,
+        pageName:
+          row.page_name,
+        ok: true,
         postId:
-          String(postId)
+          result.postId ||
+          null
       });
-
     } catch (error) {
+      const message =
+        error &&
+        error.message
+          ? error.message
+          : String(error);
 
-      const errorText =
-        error?.message ||
-        String(error);
-
-      await env.DB.prepare(`
-        UPDATE publish_run_pages
-        SET status = 'failed',
-            error = ?,
-            updated_at = ?
-        WHERE id = ?
-      `)
+      await env.DB.prepare(
+        "UPDATE publish_run_pages " +
+          "SET status = 'failed', " +
+          "error = ?, " +
+          "completed_at = datetime('now') " +
+          "WHERE id = ?"
+      )
         .bind(
-          errorText,
-          Date.now(),
-          page.id
+          message,
+          row.id
         )
         .run();
 
       results.push({
-        page:
-          page.page_name,
         pageId:
-          page.facebook_page_id,
-        success:
-          false,
-        error:
-          errorText
+          row.facebook_page_id,
+        pageName:
+          row.page_name,
+        ok: false,
+        error: message
       });
     }
   }
 
-  const pending =
-    await env.DB.prepare(`
-      SELECT COUNT(*) AS total
-      FROM publish_run_pages
-      WHERE run_id = ?
-      AND status IN ('pending','processing')
-    `)
-      .bind(runId)
-      .first();
+  const counts =
+    await getPublishRunCounts(
+      env.DB,
+      runId
+    );
 
-  if (
-    Number(pending?.total || 0) === 0
-  ) {
-    await env.DB.prepare(`
-      UPDATE publish_runs
-      SET status = 'completed'
-      WHERE id = ?
-    `)
+  const done =
+    counts.pending === 0;
+
+  if (done) {
+    await env.DB.prepare(
+      "UPDATE publish_runs " +
+        "SET status = 'completed', " +
+        "completed_at = datetime('now') " +
+        "WHERE id = ?"
+    )
       .bind(runId)
       .run();
-
-    await allowNextDashboardLoad(
-      env.DB,
-      sessionId
-    );
   }
 
-  return json({
+  return jsonResponse({
     ok: true,
+    done,
+    processed:
+      counts.succeeded +
+      counts.failed,
+    succeeded:
+      counts.succeeded,
+    failed:
+      counts.failed,
     results
   });
 }
 
 
+
+//PART 3
 // =============================================================
-// FACEBOOK POSTING
+// PUBLISH RUN COUNTS
 // =============================================================
 
-async function publishTextPost(
-  page,
-  message,
-  graphVersion
+async function getPublishRunCounts(
+  db,
+  runId
 ) {
-  const body =
-    new URLSearchParams();
+  const result =
+    await db.prepare(
+      "SELECT " +
+        "COUNT(*) AS total, " +
+        "SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending, " +
+        "SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS succeeded, " +
+        "SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed " +
+        "FROM publish_run_pages " +
+        "WHERE run_id = ?"
+    )
+      .bind(runId)
+      .first();
 
-  body.set(
-    "access_token",
-    page.access_token
-  );
+  return {
+    total: Number(
+      result &&
+        result.total
+        ? result.total
+        : 0
+    ),
 
-  body.set(
-    "message",
-    message
-  );
+    pending: Number(
+      result &&
+        result.pending
+        ? result.pending
+        : 0
+    ),
 
-  return formGraph(
-    graphVersion,
-    "/" +
-      page.facebook_page_id +
-      "/feed",
-    body
-  );
+    succeeded: Number(
+      result &&
+        result.succeeded
+        ? result.succeeded
+        : 0
+    ),
+
+    failed: Number(
+      result &&
+        result.failed
+        ? result.failed
+        : 0
+    )
+  };
 }
 
-
-async function publishMedia(
-  page,
-  message,
-  file,
-  type,
-  graphVersion
-) {
-  if (
-    !file ||
-    typeof file.arrayBuffer !==
-      "function"
-  ) {
-    throw new Error(
-      "Media file was not supplied."
-    );
-  }
-
-  const fd =
-    new FormData();
-
-  fd.append(
-    "access_token",
-    page.access_token
-  );
-
-  if (message) {
-    fd.append(
-      "message",
-      message
-    );
-  }
-
-  fd.append(
-    "source",
-    file,
-    file.name ||
-      "media"
-  );
-
-  return formGraph(
-    graphVersion,
-    "/" +
-      page.facebook_page_id +
-      "/" +
-      (
-        type === "video"
-          ? "videos"
-          : "photos"
-      ),
-    fd
-  );
-}
-
-
-async function formGraph(
-  graphVersion,
-  path,
-  body
-) {
-  const response =
-    await fetch(
-      "https://graph.facebook.com/" +
-      graphVersion +
-      path,
-      {
-        method: "POST",
-        body
-      }
-    );
-
-  const data =
-    await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data.error?.message ||
-      "Facebook API request failed."
-    );
-  }
-
-  return data;
-}
-
-
 // =============================================================
-// RESULTS
+// PUBLISH RESULTS
 // =============================================================
 
 async function showPublishResults(
@@ -1704,2899 +3436,3839 @@ async function showPublishResults(
   const runId =
     String(
       url.searchParams.get(
-        "run_id"
-      ) || ""
-    );
+        "runId"
+      ) ||
+        url.searchParams.get(
+          "run_id"
+        ) ||
+        ""
+    ).trim();
 
   if (!runId) {
-    throw new Error(
-      "Missing publishing run."
+    return redirectPage(
+      "/",
+      "Publishing run ID is missing."
     );
   }
 
   const run =
-    await env.DB.prepare(`
-      SELECT *
-      FROM publish_runs
-      WHERE id = ?
-      AND session_id = ?
-      LIMIT 1
-    `)
-      .bind(
-        runId,
-        sessionId
-      )
+    await env.DB.prepare(
+      "SELECT id, session_id, message, media_type, media_name, created_at, completed_at, status " +
+        "FROM publish_runs " +
+        "WHERE id = ?"
+    )
+      .bind(runId)
       .first();
 
   if (!run) {
-    throw new Error(
-      "Publishing run not found."
+    return redirectPage(
+      "/",
+      "Publishing run was not found."
     );
   }
 
-  const rows =
-    await env.DB.prepare(`
-      SELECT *
-      FROM publish_run_pages
-      WHERE run_id = ?
-      ORDER BY id
-    `)
+  if (
+    run.session_id !==
+    sessionId
+  ) {
+    return redirectPage(
+      "/",
+      "You are not authorized to view this publishing run."
+    );
+  }
+
+  const rowsResult =
+    await env.DB.prepare(
+      "SELECT " +
+        "facebook_page_id, " +
+        "page_name, " +
+        "status, " +
+        "post_id, " +
+        "error, " +
+        "completed_at " +
+        "FROM publish_run_pages " +
+        "WHERE run_id = ? " +
+        "ORDER BY id ASC"
+    )
       .bind(runId)
       .all();
 
-  const results =
-    (rows.results || [])
-      .map(row => ({
-        page:
-          row.page_name,
-        pageId:
-          row.facebook_page_id,
-        success:
-          row.status === "success",
-        postId:
-          row.post_id || "",
-        error:
-          row.error || ""
-      }));
+  const rows =
+    rowsResult.results || [];
 
-  return renderPublishResults(
-    results
-  );
-}
+  const counts =
+    await getPublishRunCounts(
+      env.DB,
+      runId
+    );
 
+  let resultRows = "";
 
-function renderPublishResults(
-  results
-) {
-  const successCount =
-    results.filter(
-      item => item.success
-    ).length;
+  for (const row of rows) {
+    const success =
+      row.status ===
+      "success";
 
-  const failedCount =
-    results.length -
-    successCount;
+    const statusClass =
+      success
+        ? "result-success"
+        : row.status ===
+          "failed"
+        ? "result-failed"
+        : "result-pending";
 
-  let rows = "";
+    const statusText =
+      success
+        ? "Published"
+        : row.status ===
+          "failed"
+        ? "Failed"
+        : "Pending";
 
-  for (
-    const result of results
-  ) {
-    rows +=
-      '<div class="result-row">' +
+    const statusIcon =
+      success
+        ? "✓"
+        : row.status ===
+          "failed"
+        ? "!"
+        : "…";
 
-        '<div class="result-page-main">' +
+    resultRows += `
+      <div class="result-row">
 
-          '<div class="result-page-avatar">' +
-            escapeHtml(
+        <div class="result-page">
+
+          <div class="result-avatar">
+            ${escapeHtml(
               getInitials(
-                result.page
+                row.page_name ||
+                  "Page"
               )
-            ) +
-          '</div>' +
+            )}
+          </div>
 
-          '<div>' +
-            '<strong>' +
-              escapeHtml(
-                result.page
-              ) +
-            '</strong>' +
+          <div class="result-page-info">
 
-            '<div class="result-id">' +
-              escapeHtml(
-                result.pageId
-              ) +
-            '</div>' +
+            <strong>
+              ${escapeHtml(
+                row.page_name ||
+                  "Facebook Page"
+              )}
+            </strong>
 
-            (
-              result.postId
-                ? '<div class="result-post-id">Post ID: ' +
-                    escapeHtml(
-                      result.postId
-                    ) +
-                  '</div>'
-                : ""
-            ) +
+            <span>
+              ID:
+              ${escapeHtml(
+                row.facebook_page_id ||
+                  ""
+              )}
+            </span>
 
-          '</div>' +
+          </div>
 
-        '</div>' +
+        </div>
 
-        '<div class="' +
-          (
-            result.success
-              ? "result-status success"
-              : "result-status failed"
-          ) +
-        '">' +
+        <div
+          class="result-status ${statusClass}"
+        >
+          <span>
+            ${statusIcon}
+          </span>
 
-          '<span class="status-icon">' +
-            (
-              result.success
-                ? "✓"
-                : "!"
-            ) +
-          '</span>' +
+          ${statusText}
+        </div>
 
-          (
-            result.success
-              ? "Published"
-              : "Failed"
-          ) +
+        <div class="result-detail">
 
-        '</div>' +
+          ${
+            success
+              ? `
+                ${
+                  row.post_id
+                    ? `
+                      <span class="post-id">
+                        Post ID:
+                        ${escapeHtml(
+                          row.post_id
+                        )}
+                      </span>
+                    `
+                    : `
+                      <span class="post-id">
+                        Published successfully
+                      </span>
+                    `
+                }
+              `
+              : row.error
+              ? `
+                <span class="result-error-text">
+                  ${escapeHtml(
+                    row.error
+                  )}
+                </span>
+              `
+              : `
+                <span>
+                  Waiting...
+                </span>
+              `
+          }
 
-        (
-          result.error
-            ? '<div class="result-error">' +
-                escapeHtml(
-                  result.error
-                ) +
-              '</div>'
-            : ""
-        ) +
+        </div>
 
-      '</div>';
+      </div>
+    `;
   }
 
   return page(
-    "Publish Results",
+    "Publishing Results",
+    `
+    <div class="results-shell">
 
-    '<div class="results-page">' +
+      <header class="topbar">
 
-      '<div class="results-background-orb result-orb-one"></div>' +
-      '<div class="results-background-orb result-orb-two"></div>' +
+        <div class="brand-area">
 
-      '<div class="results-container">' +
+          <a
+            href="/"
+            class="brand-icon"
+          >
+            N
+          </a>
 
-        '<div class="results-topbar">' +
+          <div class="brand-copy">
 
-          '<a class="results-brand" href="/">' +
+            <div class="brand-name">
+              ${escapeHtml(
+                APP_NAME
+              )}
+            </div>
 
-            '<div class="results-logo">' +
-              'N' +
-            '</div>' +
+            <div class="brand-byline">
+              POWERED BY
+              <strong>
+                NAQI SHAH
+              </strong>
+            </div>
 
-            '<div>' +
-              '<div class="results-brand-mini">' +
-                'NAQI SHAH' +
-              '</div>' +
+          </div>
 
-              '<div class="results-brand-name">' +
-                'PUBLISHING COMMAND CENTER' +
-              '</div>' +
-            '</div>' +
+        </div>
 
-          '</a>' +
+        <div class="topbar-actions">
 
-          '<a class="results-back" href="/">' +
-            '<span>←</span>' +
-            'Dashboard' +
-          '</a>' +
+          <div class="live-status">
+            <span class="live-dot"></span>
+            SYSTEM ONLINE
+          </div>
 
-        '</div>' +
+          <a
+            href="/logout"
+            class="logout-btn"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10 17l5-5-5-5"/>
+              <path d="M15 12H3"/>
+              <path d="M21 19V5a2 2 0 0 0-2-2h-6"/>
+            </svg>
 
-        '<section class="results-hero">' +
+            Logout
+          </a>
 
-          '<div class="results-success-ring">' +
-            '<div>✓</div>' +
-          '</div>' +
+        </div>
 
-          '<div>' +
+      </header>
 
-            '<div class="results-kicker">' +
-              'PUBLISHING RUN COMPLETE' +
-            '</div>' +
+      <main class="results-main">
 
-            '<h1>Publishing Results</h1>' +
+        <section class="results-hero">
 
-            '<p>' +
-              'Your multi-page publishing operation has been processed.' +
-            '</p>' +
+          <div class="results-hero-icon">
+            ${
+              run.status ===
+              "completed"
+                ? "✓"
+                : "…"
+            }
+          </div>
 
-          '</div>' +
+          <div class="eyebrow">
+            PUBLISHING REPORT
+          </div>
 
-        '</section>' +
+          <h1>
+            ${
+              run.status ===
+              "completed"
+                ? "Publishing completed"
+                : "Publishing in progress"
+            }
+          </h1>
 
-        '<div class="results-stats">' +
+          <p>
+            Your publishing run has been processed
+            across the selected Facebook Pages.
+          </p>
 
-          '<div class="result-stat result-stat-total">' +
-            '<div class="result-stat-icon">◎</div>' +
-            '<div>' +
-              '<span>Total Pages</span>' +
-              '<strong>' +
-                results.length +
-              '</strong>' +
-            '</div>' +
-          '</div>' +
+        </section>
 
-          '<div class="result-stat result-stat-success">' +
-            '<div class="result-stat-icon">✓</div>' +
-            '<div>' +
-              '<span>Published</span>' +
-              '<strong>' +
-                successCount +
-              '</strong>' +
-            '</div>' +
-          '</div>' +
+        <section class="results-summary">
 
-          '<div class="result-stat result-stat-failed">' +
-            '<div class="result-stat-icon">!</div>' +
-            '<div>' +
-              '<span>Failed</span>' +
-              '<strong>' +
-                failedCount +
-              '</strong>' +
-            '</div>' +
-          '</div>' +
+          <div class="result-stat">
 
-        '</div>' +
+            <div class="result-stat-value">
+              ${counts.total}
+            </div>
 
-        '<div class="results-card">' +
+            <div class="result-stat-label">
+              TOTAL PAGES
+            </div>
 
-          '<div class="results-card-header">' +
+          </div>
 
-            '<div>' +
-              '<div class="results-card-kicker">' +
-                'DELIVERY REPORT' +
-              '</div>' +
+          <div class="result-stat">
 
-              '<h2>Page Results</h2>' +
-            '</div>' +
+            <div class="result-stat-value">
+              ${counts.succeeded}
+            </div>
 
-            '<span class="results-live">' +
-              '<span></span>' +
-              'RUN PROCESSED' +
-            '</span>' +
+            <div class="result-stat-label">
+              SUCCESSFUL
+            </div>
 
-          '</div>' +
+          </div>
 
-          '<div class="results-list">' +
-            rows +
-          '</div>' +
+          <div class="result-stat">
 
-        '</div>' +
+            <div class="result-stat-value">
+              ${counts.failed}
+            </div>
 
-      '</div>' +
+            <div class="result-stat-label">
+              FAILED
+            </div>
 
-    '</div>'
+          </div>
+
+          <div class="result-stat">
+
+            <div class="result-stat-value">
+              ${counts.pending}
+            </div>
+
+            <div class="result-stat-label">
+              PENDING
+            </div>
+
+          </div>
+
+        </section>
+
+        <section class="results-card">
+
+          <div class="results-card-header">
+
+            <div>
+
+              <div class="eyebrow">
+                PAGE RESULTS
+              </div>
+
+              <h2>
+                Publishing activity
+              </h2>
+
+            </div>
+
+            <a
+              href="/"
+              class="secondary-btn"
+            >
+              Back to Dashboard
+            </a>
+
+          </div>
+
+          <div class="result-list">
+
+            ${
+              resultRows ||
+              `
+                <div class="no-results">
+                  No publishing results available.
+                </div>
+              `
+            }
+
+          </div>
+
+        </section>
+
+        <section class="run-info-card">
+
+          <div class="run-info-item">
+
+            <span>
+              Run ID
+            </span>
+
+            <strong>
+              ${escapeHtml(
+                run.id
+              )}
+            </strong>
+
+          </div>
+
+          <div class="run-info-item">
+
+            <span>
+              Created
+            </span>
+
+            <strong>
+              ${escapeHtml(
+                formatDate(
+                  run.created_at
+                )
+              )}
+            </strong>
+
+          </div>
+
+          ${
+            run.completed_at
+              ? `
+                <div class="run-info-item">
+
+                  <span>
+                    Completed
+                  </span>
+
+                  <strong>
+                    ${escapeHtml(
+                      formatDate(
+                        run.completed_at
+                      )
+                    )}
+                  </strong>
+
+                </div>
+              `
+              : ""
+          }
+
+          <div class="run-info-item">
+
+            <span>
+              Media
+            </span>
+
+            <strong>
+              ${
+                run.media_name
+                  ? escapeHtml(
+                      run.media_name
+                    )
+                  : "Text only"
+              }
+            </strong>
+
+          </div>
+
+        </section>
+
+      </main>
+
+      <footer class="dashboard-footer">
+
+        <div>
+          ${escapeHtml(
+            APP_NAME
+          )}
+        </div>
+
+        <div>
+          Crafted for
+          <strong>
+            NAQI SHAH
+          </strong>
+        </div>
+
+      </footer>
+
+    </div>
+    `
   );
 }
 
-
 // =============================================================
-// DASHBOARD
+// FACEBOOK PUBLISHING
 // =============================================================
 
-async function showDashboard(
-  env
+async function publishToPage(
+  env,
+  page,
+  message,
+  media
 ) {
-  const accountsResult =
-    await env.DB.prepare(`
-      SELECT *
-      FROM accounts
-      ORDER BY account_name
-    `).all();
+  const config =
+    getMetaConfig(env);
 
-  const pagesResult =
-    await env.DB.prepare(`
-      SELECT *
-      FROM pages
-      ORDER BY page_name
-    `).all();
+  const pageId =
+    String(
+      page.facebook_page_id
+    );
 
-  const accounts =
-    accountsResult.results || [];
+  const accessToken =
+    String(
+      page.access_token
+    );
 
-  const pages =
-    pagesResult.results || [];
+  if (!pageId) {
+    throw new Error(
+      "Facebook Page ID is missing."
+    );
+  }
 
-  const grouped =
-    new Map();
+  if (!accessToken) {
+    throw new Error(
+      "Facebook Page access token is missing."
+    );
+  }
 
-  for (
-    const page of pages
+  if (
+    isValidMediaFile(media)
   ) {
+    const mediaType =
+      String(
+        media.type || ""
+      ).toLowerCase();
+
     if (
-      !grouped.has(
-        page.account_id
+      mediaType.startsWith(
+        "video/"
       )
     ) {
-      grouped.set(
-        page.account_id,
-        []
+      return publishVideoToPage(
+        env,
+        pageId,
+        accessToken,
+        message,
+        media
       );
     }
 
-    grouped
-      .get(page.account_id)
-      .push(page);
+    return publishPhotoToPage(
+      env,
+      pageId,
+      accessToken,
+      message,
+      media
+    );
   }
 
-  let accountHtml =
-    "";
+  return publishTextToPage(
+    env,
+    pageId,
+    accessToken,
+    message
+  );
+}
 
-  if (!accounts.length) {
+async function publishTextToPage(
+  env,
+  pageId,
+  accessToken,
+  message
+) {
+  const config =
+    getMetaConfig(env);
 
-    accountHtml =
-      '<section class="empty-state">' +
+  const endpoint =
+    "https://graph.facebook.com/" +
+    config.graphVersion +
+    "/" +
+    encodeURIComponent(
+      pageId
+    ) +
+    "/feed";
 
-        '<div class="empty-visual">' +
+  const body =
+    new URLSearchParams();
 
-          '<div class="empty-visual-ring"></div>' +
+  body.set(
+    "message",
+    message || ""
+  );
 
-          '<div class="empty-visual-icon">' +
-            'f' +
-          '</div>' +
+  body.set(
+    "access_token",
+    accessToken
+  );
 
-        '</div>' +
-
-        '<div class="empty-kicker">' +
-          'YOUR COMMAND CENTER IS READY' +
-        '</div>' +
-
-        '<h2>No Facebook Account Connected</h2>' +
-
-        '<p>' +
-          'Connect your Facebook account and bring all of your Pages into this command center.' +
-        '</p>' +
-
-        '<a class="connect-btn empty-connect" href="/auth/meta">' +
-          '<span>+</span>' +
-          ' Connect Facebook Account' +
-        '</a>' +
-
-      '</section>';
-
-  } else {
-
-    for (
-      const account of accounts
-    ) {
-
-      const accountPages =
-        grouped.get(
-          account.id
-        ) || [];
-
-      let pageHtml =
-        "";
-
-      if (!accountPages.length) {
-
-        pageHtml =
-          '<div class="empty-pages">' +
-
-            '<div class="empty-pages-icon">' +
-              '⌁' +
-            '</div>' +
-
-            '<div>' +
-              '<strong>No Pages Found</strong>' +
-              '<span>Click Sync Pages to refresh your Facebook Pages.</span>' +
-            '</div>' +
-
-          '</div>';
-
-      } else {
-
-        pageHtml =
-          '<div class="page-toolbar">' +
-
-            '<div class="toolbar-title-wrap">' +
-
-              '<div class="toolbar-live-dot"></div>' +
-
-              '<div>' +
-                '<div class="toolbar-title">' +
-                  'CONNECTED PAGES' +
-                '</div>' +
-
-                '<div class="toolbar-subtitle">' +
-                  accountPages.length +
-                  ' Page' +
-                  (
-                    accountPages.length === 1
-                      ? ""
-                      : "s"
-                  ) +
-                  ' available for publishing' +
-                '</div>' +
-
-              '</div>' +
-
-            '</div>' +
-
-            '<div class="toolbar-actions">' +
-
-              '<button class="toolbar-btn toolbar-select" type="button" onclick="selectAccountPages(' +
-                account.id +
-                ',true)">' +
-                '<span>✓</span>' +
-                ' Select All' +
-              '</button>' +
-
-              '<button class="toolbar-btn" type="button" onclick="selectAccountPages(' +
-                account.id +
-                ',false)">' +
-                'Clear' +
-              '</button>' +
-
-            '</div>' +
-
-          '</div>' +
-
-          '<div class="pages-list">';
-
-        for (
-          const page of accountPages
-        ) {
-
-          const initials =
-            getInitials(
-              page.page_name
-            );
-
-          pageHtml +=
-            '<label class="page-row">' +
-
-              '<span class="custom-check">' +
-
-                '<input ' +
-                  'class="page-checkbox account-' +
-                  escapeHtml(
-                    account.id
-                  ) +
-                  '" ' +
-                  'type="checkbox" ' +
-                  'value="' +
-                  escapeHtml(
-                    page.id
-                  ) +
-                  '" />' +
-
-                '<span class="checkmark">' +
-                  '<span>✓</span>' +
-                '</span>' +
-
-              '</span>' +
-
-              '<span class="page-avatar">' +
-                escapeHtml(
-                  initials
-                ) +
-              '</span>' +
-
-              '<span class="page-info">' +
-
-                '<strong>' +
-                  escapeHtml(
-                    page.page_name
-                  ) +
-                '</strong>' +
-
-                '<small>' +
-                  'ID · ' +
-                  escapeHtml(
-                    page.facebook_page_id
-                  ) +
-                '</small>' +
-
-              '</span>' +
-
-              '<span class="page-ready">' +
-                '<span class="ready-dot"></span>' +
-                'READY' +
-              '</span>' +
-
-              '<span class="page-arrow">›</span>' +
-
-            '</label>';
-        }
-
-        pageHtml +=
-          '</div>';
+  const response =
+    await fetch(
+      endpoint,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded"
+        },
+        body
       }
+    );
 
-      accountHtml +=
-        '<section class="account-card">' +
+  const data =
+    await parseGraphResponse(
+      response
+    );
 
-          '<div class="account-top">' +
+  if (
+    !response.ok ||
+    data.error
+  ) {
+    throw new Error(
+      getGraphErrorMessage(
+        data,
+        "Facebook text post failed."
+      )
+    );
+  }
 
-            '<div class="account-identity">' +
+  return {
+    postId:
+      data.id ||
+      data.post_id ||
+      null,
+    raw: data
+  };
+}
 
-              '<div class="account-avatar-wrap">' +
+async function publishPhotoToPage(
+  env,
+  pageId,
+  accessToken,
+  message,
+  media
+) {
+  const config =
+    getMetaConfig(env);
 
-                '<div class="account-avatar">' +
-                  escapeHtml(
-                    getInitials(
-                      account.account_name ||
-                      "Facebook Account"
-                    )
-                  ) +
-                '</div>' +
+  const endpoint =
+    "https://graph.facebook.com/" +
+    config.graphVersion +
+    "/" +
+    encodeURIComponent(
+      pageId
+    ) +
+    "/photos";
 
-                '<span class="account-online"></span>' +
+  const form =
+    new FormData();
 
-              '</div>' +
+  form.append(
+    "access_token",
+    accessToken
+  );
 
-              '<div class="account-details">' +
+  if (message) {
+    form.append(
+      "caption",
+      message
+    );
+  }
 
-                '<div class="account-label">' +
-                  'FACEBOOK ACCOUNT' +
-                '</div>' +
+  form.append(
+    "source",
+    media,
+    media.name ||
+      "upload.jpg"
+  );
 
-                '<h2>' +
-                  escapeHtml(
-                    account.account_name ||
-                    "Facebook Account"
-                  ) +
-                '</h2>' +
+  const response =
+    await fetch(
+      endpoint,
+      {
+        method: "POST",
+        body: form
+      }
+    );
 
-                '<div class="facebook-id">' +
-                  '<span>ACCOUNT ID</span>' +
-                  '<code>' +
-                    escapeHtml(
-                      account.facebook_user_id
-                    ) +
-                  '</code>' +
-                '</div>' +
+  const data =
+    await parseGraphResponse(
+      response
+    );
 
-              '</div>' +
+  if (
+    !response.ok ||
+    data.error
+  ) {
+    throw new Error(
+      getGraphErrorMessage(
+        data,
+        "Facebook photo post failed."
+      )
+    );
+  }
 
-            '</div>' +
+  return {
+    postId:
+      data.post_id ||
+      data.id ||
+      null,
+    raw: data
+  };
+}
 
-            '<div class="account-right">' +
+async function publishVideoToPage(
+  env,
+  pageId,
+  accessToken,
+  message,
+  media
+) {
+  const config =
+    getMetaConfig(env);
 
-              '<div class="account-status">' +
-                '<span class="account-status-dot"></span>' +
-                'CONNECTED' +
-              '</div>' +
+  const endpoint =
+    "https://graph-video.facebook.com/" +
+    config.graphVersion +
+    "/" +
+    encodeURIComponent(
+      pageId
+    ) +
+    "/videos";
 
-              '<div class="account-pages-count">' +
-                '<strong>' +
-                  accountPages.length +
-                '</strong>' +
-                '<span>' +
-                  (
-                    accountPages.length === 1
-                      ? "PAGE"
-                      : "PAGES"
-                  ) +
-                '</span>' +
-              '</div>' +
+  const form =
+    new FormData();
 
-              '<div class="account-actions">' +
+  form.append(
+    "access_token",
+    accessToken
+  );
 
-                '<form method="POST" action="/sync">' +
+  if (message) {
+    form.append(
+      "description",
+      message
+    );
+  }
 
-                  '<input type="hidden" name="account_id" value="' +
-                    escapeHtml(
-                      account.id
-                    ) +
-                  '" />' +
+  form.append(
+    "source",
+    media,
+    media.name ||
+      "upload.mp4"
+  );
 
-                  '<button class="btn btn-blue" type="submit">' +
-                    '<span class="btn-icon">↻</span>' +
-                    ' Sync Pages' +
-                  '</button>' +
+  const response =
+    await fetch(
+      endpoint,
+      {
+        method: "POST",
+        body: form
+      }
+    );
 
-                '</form>' +
+  const data =
+    await parseGraphResponse(
+      response
+    );
 
-                '<form method="POST" action="/remove-account" onsubmit="return confirm(&quot;Remove this Facebook account and all its connected Pages?&quot;);">' +
+  if (
+    !response.ok ||
+    data.error
+  ) {
+    throw new Error(
+      getGraphErrorMessage(
+        data,
+        "Facebook video post failed."
+      )
+    );
+  }
 
-                  '<input type="hidden" name="account_id" value="' +
-                    escapeHtml(
-                      account.id
-                    ) +
-                  '" />' +
+  return {
+    postId:
+      data.post_id ||
+      data.id ||
+      null,
+    raw: data
+  };
+}
 
-                  '<button class="btn btn-red" type="submit">' +
-                    'Remove' +
-                  '</button>' +
+// =============================================================
+// GRAPH API RESPONSE HELPERS
+// =============================================================
 
-                '</form>' +
+async function parseGraphResponse(
+  response
+) {
+  const text =
+    await response.text();
 
-              '</div>' +
+  if (!text) {
+    return {};
+  }
 
-            '</div>' +
+  try {
+    return JSON.parse(
+      text
+    );
+  } catch (error) {
+    return {
+      error: {
+        message:
+          "Facebook returned a non-JSON response (HTTP " +
+          response.status +
+          "). " +
+          text.slice(0, 500)
+      }
+    };
+  }
+}
 
-          '</div>' +
+function getGraphErrorMessage(
+  data,
+  fallback
+) {
+  if (
+    data &&
+    data.error
+  ) {
+    const error =
+      data.error;
 
-          '<div class="pages-area">' +
-            pageHtml +
-          '</div>' +
+    const parts = [];
 
-        '</section>';
+    if (error.message) {
+      parts.push(
+        String(
+          error.message
+        )
+      );
+    }
+
+    if (
+      error.error_user_msg
+    ) {
+      parts.push(
+        String(
+          error.error_user_msg
+        )
+      );
+    }
+
+    if (
+      error.error_subcode
+    ) {
+      parts.push(
+        "Subcode: " +
+          String(
+            error.error_subcode
+          )
+      );
+    }
+
+    if (
+      error.code
+    ) {
+      parts.push(
+        "Code: " +
+          String(
+            error.code
+          )
+      );
+    }
+
+    if (parts.length) {
+      return parts.join(
+        " | "
+      );
     }
   }
 
-  let publisherHtml =
-    "";
-
-  if (
-    accounts.length &&
-    pages.length
-  ) {
-
-    publisherHtml =
-      '<section class="studio-card">' +
-
-        '<div class="studio-glow studio-glow-one"></div>' +
-        '<div class="studio-glow studio-glow-two"></div>' +
-
-        '<div class="studio-heading">' +
-
-          '<div class="studio-title-wrap">' +
-
-            '<div class="studio-icon-wrap">' +
-              '<div class="studio-icon">✦</div>' +
-              '<span></span>' +
-            '</div>' +
-
-            '<div>' +
-
-              '<div class="studio-kicker">' +
-                'PUBLISHING STUDIO' +
-              '</div>' +
-
-              '<h2>Create & Publish</h2>' +
-
-              '<p>' +
-                'Craft your content and send it across your selected Facebook Pages.' +
-              '</p>' +
-
-            '</div>' +
-
-          '</div>' +
-
-          '<div class="selected-pill">' +
-
-            '<span class="selected-dot"></span>' +
-
-            '<span id="selected-count">' +
-              '0 Pages Selected' +
-            '</span>' +
-
-          '</div>' +
-
-        '</div>' +
-
-        '<div class="studio-divider"></div>' +
-
-        '<form id="publish-form" enctype="multipart/form-data">' +
-
-          '<div class="field">' +
-
-            '<div class="field-heading">' +
-
-              '<label for="message">' +
-                'Post Text' +
-              '</label>' +
-
-              '<span class="field-badge">' +
-                'TEXT' +
-              '</span>' +
-
-            '</div>' +
-
-            '<div class="textarea-shell">' +
-
-              '<div class="textarea-decoration">' +
-                'Aa' +
-              '</div>' +
-
-              '<textarea id="message" name="message" maxlength="63206" rows="7" placeholder="Write something worth sharing..."></textarea>' +
-
-            '</div>' +
-
-            '<div class="field-meta">' +
-              '<span>Maximum 63,206 characters</span>' +
-              '<span id="char-count">0 / 63,206</span>' +
-            '</div>' +
-
-          '</div>' +
-
-          '<div class="field">' +
-
-            '<div class="field-heading">' +
-
-              '<label for="media">' +
-                'Image / Video' +
-              '</label>' +
-
-              '<span class="field-badge field-badge-soft">' +
-                'OPTIONAL' +
-              '</span>' +
-
-            '</div>' +
-
-            '<div class="upload-box" id="upload-box">' +
-
-              '<div class="upload-pulse"></div>' +
-
-              '<div class="upload-icon">' +
-                '↑' +
-              '</div>' +
-
-              '<strong>Drop your media here</strong>' +
-
-              '<span>' +
-                'or click to browse · JPG, PNG, WEBP, MP4 and more' +
-              '</span>' +
-
-              '<small>Maximum file size · 100 MB</small>' +
-
-              '<input id="media" type="file" name="media" accept="image/*,video/*" />' +
-
-            '</div>' +
-
-          '</div>' +
-
-          '<div class="batch-notice">' +
-
-            '<div class="batch-icon">' +
-              '⚡' +
-            '</div>' +
-
-            '<div class="batch-content">' +
-
-              '<div class="batch-title-line">' +
-
-                '<strong>Smart Batch Engine</strong>' +
-
-                '<span>15 / BATCH</span>' +
-
-              '</div>' +
-
-              '<p>' +
-                'Large publishing runs are automatically split into optimized batches of 15 Pages for reliable delivery.' +
-              '</p>' +
-
-            '</div>' +
-
-            '<div class="batch-engine-status">' +
-              '<span></span>' +
-              'ONLINE' +
-            '</div>' +
-
-          '</div>' +
-
-          '<div class="publish-footer">' +
-
-            '<div class="publish-footer-left">' +
-
-              '<div class="publish-shield">' +
-                '✓' +
-              '</div>' +
-
-              '<div>' +
-                '<strong>Publishing Engine Ready</strong>' +
-                '<span>Select Pages above to begin.</span>' +
-              '</div>' +
-
-            '</div>' +
-
-            '<button class="publish-btn" id="publish-btn" type="submit">' +
-
-              '<span class="publish-btn-icon">➤</span>' +
-
-              '<span class="publish-btn-text">' +
-                'Publish to Selected Pages' +
-              '</span>' +
-
-              '<span class="publish-btn-arrow">→</span>' +
-
-            '</button>' +
-
-          '</div>' +
-
-        '</form>' +
-
-      '</section>';
+  return fallback;
+}
+
+// =============================================================
+// MEDIA HELPERS
+// =============================================================
+
+function isValidMediaFile(
+  value
+) {
+  if (!value) {
+    return false;
   }
 
-  const totalPages =
-    pages.length;
-
-  const totalAccounts =
-    accounts.length;
-
-  const totalReady =
-    pages.length;
-
-  return page(
-    APP_NAME,
-
-    '<div class="dashboard-shell">' +
-
-      '<div class="dashboard-noise"></div>' +
-
-      '<div class="dashboard-grid"></div>' +
-
-      '<div class="dashboard-orb orb-left"></div>' +
-      '<div class="dashboard-orb orb-right"></div>' +
-      '<div class="dashboard-orb orb-bottom"></div>' +
-
-      '<header class="hero-header">' +
-
-        '<div class="hero-top-line">' +
-          '<span></span>' +
-          'COMMAND CENTER · SYSTEM ONLINE' +
-          '<span></span>' +
-        '</div>' +
-
-        '<div class="hero-main">' +
-
-          '<div class="hero-brand">' +
-
-            '<div class="hero-kicker">' +
-              'META PUBLISHING COMMAND CENTER' +
-            '</div>' +
-
-            '<div class="hero-name">' +
-              'NAQI SHAH' +
-            '</div>' +
-
-            '<div class="hero-title">' +
-              'Meta Multi Page Publisher' +
-            '</div>' +
-
-            '<div class="hero-subtitle">' +
-              'One powerful workspace for managing Facebook accounts, Pages and large-scale content publishing.' +
-            '</div>' +
-
-            '<div class="hero-badges">' +
-
-              '<span class="hero-badge">' +
-                '<span></span>' +
-                ' LIVE SYSTEM' +
-              '</span>' +
-
-              '<span class="hero-badge">' +
-                '⚡ BATCH ENGINE' +
-              '</span>' +
-
-              '<span class="hero-badge">' +
-                '100 MB MEDIA' +
-              '</span>' +
-
-            '</div>' +
-
-          '</div>' +
-
-          '<div class="hero-visual">' +
-
-            '<div class="hero-orbit orbit-one"></div>' +
-            '<div class="hero-orbit orbit-two"></div>' +
-
-            '<div class="hero-core">' +
-
-              '<div class="hero-core-inner">' +
-                '<span>NAQI</span>' +
-                '<strong>MC</strong>' +
-              '</div>' +
-
-            '</div>' +
-
-            '<div class="hero-floating-card card-top">' +
-              '<span class="mini-dot"></span>' +
-              'PUBLISH' +
-            '</div>' +
-
-            '<div class="hero-floating-card card-bottom">' +
-              '<span>15</span>' +
-              'BATCH SIZE' +
-            '</div>' +
-
-          '</div>' +
-
-        '</div>' +
-
-        '<div class="header-actions">' +
-
-          '<a class="connect-btn" href="/auth/meta">' +
-            '<span class="connect-plus">+</span>' +
-            '<span>Connect Facebook Account</span>' +
-            '<span class="connect-arrow">→</span>' +
-          '</a>' +
-
-          '<form method="POST" action="/logout">' +
-            '<button class="header-logout" type="submit">' +
-              '<span>↪</span>' +
-              ' Logout' +
-            '</button>' +
-          '</form>' +
-
-        '</div>' +
-
-      '</header>' +
-
-      '<main class="container">' +
-
-        '<section class="overview-strip">' +
-
-          '<div class="overview-intro">' +
-
-            '<div class="overview-kicker">' +
-              'CONTROL PANEL' +
-            '</div>' +
-
-            '<h1>Publishing Overview</h1>' +
-
-            '<p>Everything is ready from one place.</p>' +
-
-          '</div>' +
-
-          '<div class="overview-stats">' +
-
-            '<div class="overview-stat">' +
-              '<div class="overview-stat-icon blue">◉</div>' +
-              '<div>' +
-                '<span>Accounts</span>' +
-                '<strong>' +
-                  totalAccounts +
-                '</strong>' +
-              '</div>' +
-            '</div>' +
-
-            '<div class="overview-stat">' +
-              '<div class="overview-stat-icon purple">▣</div>' +
-              '<div>' +
-                '<span>Pages</span>' +
-                '<strong>' +
-                  totalPages +
-                '</strong>' +
-              '</div>' +
-            '</div>' +
-
-            '<div class="overview-stat">' +
-              '<div class="overview-stat-icon green">✓</div>' +
-              '<div>' +
-                '<span>Ready</span>' +
-                '<strong>' +
-                  totalReady +
-                '</strong>' +
-              '</div>' +
-            '</div>' +
-
-            '<div class="overview-stat overview-online">' +
-              '<div class="overview-stat-icon cyan">⚡</div>' +
-              '<div>' +
-                '<span>Engine</span>' +
-                '<strong>LIVE</strong>' +
-              '</div>' +
-            '</div>' +
-
-          '</div>' +
-
-        '</section>' +
-
-        '<div class="section-heading">' +
-
-          '<div>' +
-            '<div class="section-kicker">' +
-              '01 · ACCOUNTS & PAGES' +
-            '</div>' +
-            '<h2>Connected Accounts</h2>' +
-          '</div>' +
-
-          '<div class="section-line"></div>' +
-
-        '</div>' +
-
-        accountHtml +
-
-        (
-          publisherHtml
-            ? (
-              '<div class="section-heading studio-section-heading">' +
-
-                '<div>' +
-                  '<div class="section-kicker">' +
-                    '02 · CONTENT DISTRIBUTION' +
-                  '</div>' +
-                  '<h2>Publishing Studio</h2>' +
-                '</div>' +
-
-                '<div class="section-line"></div>' +
-
-              '</div>' +
-
-              publisherHtml
-            )
-            : ""
-        ) +
-
-      '</main>' +
-
-      '<footer class="dashboard-footer">' +
-
-        '<div>' +
-          '<strong>NAQI SHAH</strong>' +
-          '<span> · META MULTI PAGE PUBLISHER</span>' +
-        '</div>' +
-
-        '<div class="footer-status">' +
-          '<span></span>' +
-          'SECURE PUBLISHING ENVIRONMENT' +
-        '</div>' +
-
-      '</footer>' +
-
-    '</div>' +
-
-    '<script>' +
-
-      'const BATCH = ' +
-        BATCH +
-      ';' +
-
-      'function updateSelectedCount(){' +
-
-        'const checked=document.querySelectorAll(".page-checkbox:checked");' +
-
-        'const counter=document.getElementById("selected-count");' +
-
-        'const button=document.getElementById("publish-btn");' +
-
-        'const selected=checked.length;' +
-
-        'if(counter){counter.textContent=selected+" Page"+(selected===1?"":"s")+" Selected";}' +
-
-        'if(button){' +
-          'if(selected>0){button.classList.add("has-selection");}' +
-          'else{button.classList.remove("has-selection");}' +
-        '}' +
-
-      '}' +
-
-      'function selectAccountPages(accountId,select){' +
-
-        'document.querySelectorAll(".account-"+accountId).forEach(function(checkbox){checkbox.checked=select;});' +
-
-        'updateSelectedCount();' +
-
-      '}' +
-
-      'document.addEventListener("change",function(event){' +
-
-        'if(event.target&&event.target.classList.contains("page-checkbox")){' +
-          'updateSelectedCount();' +
-        '}' +
-
-        'if(event.target&&event.target.id==="media"){' +
-          'updateMediaName();' +
-        '}' +
-
-      '});' +
-
-      'function updateMediaName(){' +
-
-        'const input=document.getElementById("media");' +
-
-        'const box=document.getElementById("upload-box");' +
-
-        'if(!input||!box)return;' +
-
-        'const strong=box.querySelector("strong");' +
-
-        'const spans=box.querySelectorAll("span");' +
-
-        'const info=box.querySelector("small");' +
-
-        'if(input.files&&input.files.length){' +
-
-          'const file=input.files[0];' +
-
-          'strong.textContent=file.name;' +
-
-          'if(info){info.textContent=(file.size/1024/1024).toFixed(2)+" MB selected";}' +
-
-          'box.classList.add("has-file");' +
-
-        '}else{' +
-
-          'strong.textContent="Drop your media here";' +
-
-          'if(info){info.textContent="Maximum file size · 100 MB";}' +
-
-          'box.classList.remove("has-file");' +
-
-        '}' +
-
-      '}' +
-
-      'const message=document.getElementById("message");' +
-
-      'if(message){' +
-
-        'message.addEventListener("input",function(){' +
-
-          'const count=document.getElementById("char-count");' +
-
-          'if(count){' +
-            'count.textContent=message.value.length.toLocaleString()+" / 63,206";' +
-          '}' +
-
-        '});' +
-
-      '}' +
-
-      'const uploadBox=document.getElementById("upload-box");' +
-
-      'const media=document.getElementById("media");' +
-
-      'if(uploadBox&&media){' +
-
-        'uploadBox.addEventListener("click",function(event){' +
-
-          'if(event.target!==media){' +
-            'media.click();' +
-          '}' +
-
-        '});' +
-
-        'uploadBox.addEventListener("dragover",function(event){' +
-
-          'event.preventDefault();' +
-
-          'uploadBox.classList.add("dragging");' +
-
-        '});' +
-
-        'uploadBox.addEventListener("dragleave",function(){' +
-
-          'uploadBox.classList.remove("dragging");' +
-
-        '});' +
-
-        'uploadBox.addEventListener("drop",function(event){' +
-
-          'event.preventDefault();' +
-
-          'uploadBox.classList.remove("dragging");' +
-
-          'if(event.dataTransfer&&event.dataTransfer.files&&event.dataTransfer.files.length){' +
-
-            'try{' +
-              'media.files=event.dataTransfer.files;' +
-            '}catch(e){}' +
-
-            'updateMediaName();' +
-
-          '}' +
-
-        '});' +
-
-      '}' +
-
-      'const publishForm=document.getElementById("publish-form");' +
-
-      'if(publishForm){' +
-
-        'publishForm.addEventListener("submit",async function(event){' +
-
-          'event.preventDefault();' +
-
-          'const selected=Array.from(document.querySelectorAll(".page-checkbox:checked"));' +
-
-          'const text=message?message.value.trim():"";' +
-
-          'const hasMedia=media&&media.files&&media.files.length>0;' +
-
-          'const button=document.getElementById("publish-btn");' +
-
-          'const buttonText=button?button.querySelector(".publish-btn-text"):null;' +
-
-          'if(!selected.length){' +
-
-            'alert("Please select at least one Facebook Page.");' +
-
-            'return;' +
-
-          '}' +
-
-          'if(!text&&!hasMedia){' +
-
-            'alert("Please enter post text or select an image/video.");' +
-
-            'return;' +
-
-          '}' +
-
-          'if(hasMedia&&media.files[0].size>100*1024*1024){' +
-
-            'alert("File is too large. Maximum supported size is 100 MB.");' +
-
-            'return;' +
-
-          '}' +
-
-          'if(selected.length>15&&!confirm("You selected "+selected.length+" Pages. They will be published in batches of 15. Continue?")){' +
-
-            'return;' +
-
-          '}' +
-
-          'if(button){' +
-
-            'button.disabled=true;' +
-
-            'button.classList.add("loading");' +
-
-          '}' +
-
-          'try{' +
-
-            'const startForm=new FormData();' +
-
-            'startForm.append("message",text);' +
-
-            'selected.forEach(function(checkbox){' +
-
-              'startForm.append("page_ids",checkbox.value);' +
-
-            '});' +
-
-            'if(hasMedia){' +
-
-              'startForm.append("media",media.files[0],media.files[0].name);' +
-
-            '}' +
-
-            'const startResponse=await fetch("/publish",{method:"POST",body:startForm,credentials:"same-origin",headers:{"Accept":"application/json"}});' +
-
-            'const startData=await startResponse.json();' +
-
-            'if(!startResponse.ok||!startData.ok||!startData.run_id){' +
-
-              'throw new Error(startData.error||"Unable to start publishing.");' +
-
-            '}' +
-
-            'const runId=startData.run_id;' +
-
-            'for(let start=0;start<selected.length;start+=BATCH){' +
-
-              'const batch=selected.slice(start,start+BATCH);' +
-
-              'const batchForm=new FormData();' +
-
-              'batchForm.append("run_id",runId);' +
-
-              'batchForm.append("message",text);' +
-
-              'batch.forEach(function(checkbox){' +
-
-                'batchForm.append("page_ids",checkbox.value);' +
-
-              '});' +
-
-              'if(hasMedia){' +
-
-                'batchForm.append("media",media.files[0],media.files[0].name);' +
-
-              '}' +
-
-              'if(buttonText){' +
-
-                'buttonText.textContent="Publishing "+Math.min(start+BATCH,selected.length)+" / "+selected.length;' +
-
-              '}' +
-
-              'const response=await fetch("/publish-batch",{method:"POST",body:batchForm,credentials:"same-origin",headers:{"Accept":"application/json"}});' +
-
-              'const data=await response.json();' +
-
-              'if(!response.ok||!data.ok||!Array.isArray(data.results)){throw new Error(data.error||"Publishing batch failed.");}' +
-
-            '}' +
-
-            'window.location.href="/publish-results?run_id="+encodeURIComponent(runId);' +
-
-          '}catch(error){' +
-
-            'console.error(error);' +
-
-            'if(button){' +
-
-              'button.disabled=false;' +
-              'button.classList.remove("loading");' +
-            '}' +
-
-            'if(buttonText){' +
-              'buttonText.textContent="Publish to Selected Pages";' +
-            '}' +
-
-            'alert(error&&error.message?error.message:"Publishing failed. Please try again.");' +
-
-          '}' +
-
-        '});' +
-
-      '}' +
-
-      'document.querySelectorAll(".page-row").forEach(function(row){' +
-
-        'row.addEventListener("click",function(event){' +
-
-          'if(event.target.closest("button")||event.target.closest("a"))return;' +
-
-          'const checkbox=row.querySelector(".page-checkbox");' +
-
-          'if(!checkbox)return;' +
-
-          'if(event.target!==checkbox&&!event.target.closest(".custom-check")){' +
-
-            'checkbox.checked=!checkbox.checked;' +
-
-          '}' +
-
-          'updateSelectedCount();' +
-
-        '});' +
-
-      '});' +
-
-      'updateSelectedCount();' +
-
-    '</script>'
+  if (
+    typeof value !==
+    "object"
+  ) {
+    return false;
+  }
+
+  if (
+    typeof value.size !==
+    "number"
+  ) {
+    return false;
+  }
+
+  if (
+    value.size <= 0
+  ) {
+    return false;
+  }
+
+  return (
+    typeof value.type ===
+      "string" ||
+    typeof value.name ===
+      "string"
   );
 }
 
-
-// =============================================================
-// LOGIN PAGE
-// =============================================================
-
-function showLoginPage(
-  errorMessage
+async function getMediaFromFormRequest(
+  request
 ) {
+  // ---------------------------------------------------------
+  // This helper is intentionally lightweight.
+  // The multipart body has already been consumed by
+  // startPublishRun() when the publishing run was created.
+  // If a batch request contains media again, read it here.
+  // ---------------------------------------------------------
 
-  return page(
-    "Secure Login",
+  try {
+    const form =
+      await request.formData();
 
-    '<div class="login-page">' +
+    const media =
+      form.get("media");
 
-      '<div class="login-grid"></div>' +
+    return isValidMediaFile(
+      media
+    )
+      ? media
+      : null;
+  } catch (error) {
+    return null;
+  }
+}
 
-      '<div class="login-background-orb orb-one"></div>' +
-      '<div class="login-background-orb orb-two"></div>' +
-      '<div class="login-background-orb orb-three"></div>' +
+// =============================================================
+// GENERAL RESPONSE HELPERS
+// =============================================================
 
-      '<div class="login-card">' +
-
-        '<div class="login-top-line">' +
-          '<span></span>' +
-          'SECURE ACCESS' +
-          '<span></span>' +
-        '</div>' +
-
-        '<div class="login-brand">' +
-
-          '<div class="brand-mark">' +
-            '<span>N</span>' +
-          '</div>' +
-
-          '<div>' +
-
-            '<div class="brand-mini">' +
-              'META PUBLISHING COMMAND CENTER' +
-            '</div>' +
-
-            '<div class="brand-name">' +
-              'NAQI SHAH' +
-            '</div>' +
-
-          '</div>' +
-
-        '</div>' +
-
-        '<div class="login-icon">' +
-          '◆' +
-        '</div>' +
-
-        '<div class="login-kicker">' +
-          'PRIVATE PUBLISHING ENVIRONMENT' +
-        '</div>' +
-
-        '<h1>Welcome Back</h1>' +
-
-        '<p class="login-description">' +
-          'Enter your password to access the Meta Multi Page Publisher command center.' +
-        '</p>' +
-
-        (
-          errorMessage
-            ? '<div class="login-error">' +
-                '<span>!</span>' +
-                '<div>' +
-                  escapeHtml(
-                    errorMessage
-                  ) +
-                '</div>' +
-              '</div>'
-            : ""
-        ) +
-
-        '<form method="POST" action="/login">' +
-
-          '<div class="field">' +
-
-            '<label for="password">' +
-              'Dashboard Password' +
-            '</label>' +
-
-            '<div class="password-shell">' +
-
-              '<span class="password-icon">◆</span>' +
-
-              '<input id="password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required />' +
-
-              '<span class="password-lock">●</span>' +
-
-            '</div>' +
-
-          '</div>' +
-
-          '<button class="login-submit" type="submit">' +
-
-            '<span>Enter Dashboard</span>' +
-            '<strong>→</strong>' +
-
-          '</button>' +
-
-        '</form>' +
-
-        '<div class="login-security">' +
-
-          '<span class="security-dot"></span>' +
-
-          '<span>Protected publishing environment</span>' +
-
-          '<span class="security-divider"></span>' +
-
-          '<span>SECURE</span>' +
-
-        '</div>' +
-
-      '</div>' +
-
-      '<div class="login-footer-brand">' +
-        'NAQI SHAH · META MULTI PAGE PUBLISHER' +
-      '</div>' +
-
-    '</div>'
+function jsonResponse(
+  data,
+  status = 200
+) {
+  return new Response(
+    JSON.stringify(
+      data
+    ),
+    {
+      status,
+      headers: {
+        "Content-Type":
+          "application/json; charset=utf-8",
+        "Cache-Control":
+          "no-store"
+      }
+    }
   );
 }
 
+function redirectPage(
+  location,
+  message
+) {
+  const url =
+    new URL(
+      location,
+      "https://example.com"
+    );
 
-// =============================================================
-// HTML PAGE WRAPPER + CSS
-// =============================================================
+  if (message) {
+    url.searchParams.set(
+      "message",
+      message
+    );
+  }
+
+  return new Response(
+    null,
+    {
+      status: 302,
+      headers: {
+        Location:
+          url.pathname +
+          url.search,
+        "Cache-Control":
+          "no-store"
+      }
+    }
+  );
+}
 
 function page(
   title,
   content
 ) {
+  return new Response(
+    `
+<!DOCTYPE html>
+<html lang="en">
 
-  const css = `
+<head>
 
-/* =========================================================
-   ULTRA PREMIUM COMMAND CENTER
-   ========================================================= */
+  <meta charset="UTF-8">
 
-* {
-  box-sizing: border-box;
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <meta
+    name="robots"
+    content="noindex,nofollow"
+  >
+
+  <title>
+    ${escapeHtml(
+      title
+    )} · ${escapeHtml(
+      APP_NAME
+    )}
+  </title>
+
+  <style>
+    :root {
+      --bg: #07090d;
+      --bg-soft: #0c1017;
+      --card: rgba(18, 23, 32, 0.82);
+      --card-strong: #111722;
+      --line: rgba(255, 255, 255, 0.09);
+      --line-strong: rgba(255, 255, 255, 0.14);
+      --text: #f4f7fb;
+      --muted: #9ca7b8;
+      --muted-2: #687386;
+      --accent: #1877f2;
+      --accent-2: #4f9cff;
+      --success: #35d49a;
+      --danger: #ff647c;
+      --warning: #ffc857;
+      --shadow:
+        0 24px 80px rgba(0, 0, 0, 0.42);
+      --radius: 22px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-height: 100%;
+      background: var(--bg);
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(
+          circle at 15% 5%,
+          rgba(24, 119, 242, 0.11),
+          transparent 32%
+        ),
+        radial-gradient(
+          circle at 90% 20%,
+          rgba(95, 74, 255, 0.08),
+          transparent 30%
+        ),
+        linear-gradient(
+          180deg,
+          #080a0f 0%,
+          #07090d 100%
+        );
+      font-family:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.32;
+      background-image:
+        linear-gradient(
+          rgba(255,255,255,0.025) 1px,
+          transparent 1px
+        ),
+        linear-gradient(
+          90deg,
+          rgba(255,255,255,0.025) 1px,
+          transparent 1px
+        );
+      background-size:
+        40px 40px;
+      mask-image:
+        linear-gradient(
+          to bottom,
+          black,
+          transparent 75%
+        );
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .dashboard-shell,
+    .results-shell {
+      position: relative;
+      min-height: 100vh;
+      z-index: 1;
+    }
+
+    .topbar {
+      width: min(
+        1440px,
+        calc(100% - 48px)
+      );
+      margin: 0 auto;
+      min-height: 82px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand-area {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .brand-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 13px;
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(
+          135deg,
+          #1877f2,
+          #5a9fff
+        );
+      color: white;
+      font-size: 20px;
+      font-weight: 900;
+      box-shadow:
+        0 10px 28px
+        rgba(24,119,242,.25);
+    }
+
+    .brand-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .brand-name {
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: .02em;
+    }
+
+    .brand-byline {
+      color: var(--muted-2);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .17em;
+    }
+
+    .brand-byline strong {
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .live-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted-2);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .13em;
+    }
+
+    .live-dot,
+    .status-dot,
+    .ready-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow:
+        0 0 0 4px
+        rgba(53,212,154,.08),
+        0 0 14px
+        rgba(53,212,154,.5);
+    }
+
+    .logout-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 9px 13px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      background: rgba(255,255,255,.025);
+      font-size: 11px;
+      font-weight: 700;
+      transition:
+        .2s ease;
+    }
+
+    .logout-btn:hover {
+      border-color:
+        var(--line-strong);
+      color: var(--text);
+      background:
+        rgba(255,255,255,.05);
+    }
+
+    .logout-btn svg {
+      width: 15px;
+      height: 15px;
+    }
+
+    .dashboard-main,
+    .results-main {
+      width: min(
+        1440px,
+        calc(100% - 48px)
+      );
+      margin: 0 auto;
+      padding:
+        66px 0 70px;
+    }
+
+    .hero-section {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 60px;
+      padding-bottom: 54px;
+    }
+
+    .hero-copy {
+      max-width: 760px;
+    }
+
+    .eyebrow {
+      color: var(--accent-2);
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+
+    .hero-copy h1 {
+      margin:
+        14px 0 17px;
+      font-size:
+        clamp(40px, 5vw, 68px);
+      line-height: .98;
+      letter-spacing:
+        -.055em;
+      font-weight: 900;
+    }
+
+    .hero-copy h1 span {
+      display: block;
+      color: transparent;
+      background:
+        linear-gradient(
+          100deg,
+          #4d9cff,
+          #91bfff
+        );
+      background-clip: text;
+      -webkit-background-clip: text;
+    }
+
+    .hero-copy p {
+      max-width: 630px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.8;
+    }
+
+    .hero-stats {
+      display: flex;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .stat-card {
+      width: 132px;
+      min-height: 132px;
+      padding: 19px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background:
+        linear-gradient(
+          145deg,
+          rgba(255,255,255,.055),
+          rgba(255,255,255,.018)
+        );
+      box-shadow:
+        0 14px 45px
+        rgba(0,0,0,.17);
+    }
+
+    .stat-icon {
+      width: 31px;
+      height: 31px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 17px;
+      border-radius: 9px;
+      background:
+        rgba(24,119,242,.1);
+      color: var(--accent-2);
+    }
+
+    .stat-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .stat-value {
+      font-size: 27px;
+      font-weight: 900;
+      letter-spacing: -.04em;
+    }
+
+    .stat-label {
+      margin-top: 2px;
+      color: var(--muted-2);
+      font-size: 8px;
+      font-weight: 900;
+      letter-spacing: .16em;
+    }
+
+    .section-heading,
+    .publisher-heading,
+    .results-card-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 25px;
+    }
+
+    .section-heading {
+      margin-bottom: 20px;
+    }
+
+    .section-heading h2,
+    .publisher-heading h2,
+    .results-card-header h2 {
+      margin:
+        7px 0 0;
+      font-size: 24px;
+      letter-spacing: -.035em;
+    }
+
+    .primary-btn,
+    .secondary-btn,
+    .danger-btn,
+    .publish-btn,
+    .login-submit,
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border-radius: 11px;
+      transition:
+        transform .18s ease,
+        border-color .18s ease,
+        background .18s ease,
+        box-shadow .18s ease;
+    }
+
+    .primary-btn {
+      padding: 11px 15px;
+      border:
+        1px solid
+        rgba(79,156,255,.28);
+      color: white;
+      background:
+        linear-gradient(
+          135deg,
+          #1877f2,
+          #246fe0
+        );
+      box-shadow:
+        0 12px 30px
+        rgba(24,119,242,.2);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .primary-btn:hover {
+      transform:
+        translateY(-1px);
+      box-shadow:
+        0 15px 34px
+        rgba(24,119,242,.28);
+    }
+
+    .primary-btn.small {
+      padding:
+        10px 14px;
+    }
+
+    .fb-symbol {
+      width: 17px;
+      height: 17px;
+      display: grid;
+      place-items: center;
+      border-radius: 5px;
+      background: white;
+      color: #1877f2;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .accounts-container {
+      display: grid;
+      gap: 17px;
+    }
+
+    .account-card {
+      overflow: hidden;
+      border:
+        1px solid var(--line);
+      border-radius:
+        var(--radius);
+      background:
+        linear-gradient(
+          145deg,
+          rgba(18,23,32,.9),
+          rgba(11,15,22,.88)
+        );
+      box-shadow:
+        var(--shadow);
+    }
+
+    .account-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 25px;
+      padding: 22px 24px;
+      border-bottom:
+        1px solid var(--line);
+    }
+
+    .account-identity {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .account-avatar,
+    .result-avatar {
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      border-radius: 14px;
+      background:
+        linear-gradient(
+          135deg,
+          #1b7ff4,
+          #3f5efb
+        );
+      color: white;
+      font-size: 15px;
+      font-weight: 900;
+      box-shadow:
+        0 9px 22px
+        rgba(24,119,242,.2);
+    }
+
+    .account-avatar {
+      width: 48px;
+      height: 48px;
+    }
+
+    .account-details {
+      min-width: 0;
+    }
+
+    .account-label {
+      margin-bottom: 3px;
+      color: var(--muted-2);
+      font-size: 8px;
+      font-weight: 900;
+      letter-spacing: .16em;
+    }
+
+    .account-details h3 {
+      overflow: hidden;
+      margin: 0;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 15px;
+    }
+
+    .account-id {
+      margin-top: 3px;
+      overflow: hidden;
+      color: var(--muted-2);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .account-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .account-actions form {
+      margin: 0;
+    }
+
+    .secondary-btn,
+    .danger-btn {
+      padding:
+        9px 12px;
+      border:
+        1px solid var(--line);
+      background:
+        rgba(255,255,255,.025);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .secondary-btn:hover {
+      border-color:
+        rgba(79,156,255,.3);
+      color: var(--text);
+      background:
+        rgba(24,119,242,.07);
+    }
+
+    .secondary-btn svg,
+    .danger-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .danger-btn {
+      color:
+        rgba(255,100,124,.78);
+    }
+
+    .danger-btn:hover {
+      border-color:
+        rgba(255,100,124,.25);
+      color: var(--danger);
+      background:
+        rgba(255,100,124,.06);
+    }
+
+    .page-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding:
+        18px 24px 12px;
+    }
+
+    .toolbar-title {
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .toolbar-subtitle {
+      margin-top: 3px;
+      color: var(--muted-2);
+      font-size: 9px;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .toolbar-btn {
+      padding:
+        7px 9px;
+      border:
+        1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      background:
+        rgba(255,255,255,.025);
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .toolbar-btn:hover {
+      color: var(--text);
+      border-color:
+        var(--line-strong);
+    }
+
+    .page-list {
+      display: grid;
+      gap: 1px;
+      padding:
+        0 12px 12px;
+    }
+
+    .page-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 65px;
+      padding:
+        8px 12px;
+      border-radius: 13px;
+      cursor: pointer;
+      transition:
+        background .16s ease;
+    }
+
+    .page-row:hover {
+      background:
+        rgba(255,255,255,.035);
+    }
+
+    .page-row input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .custom-check {
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      border:
+        1px solid
+        rgba(255,255,255,.16);
+      border-radius: 6px;
+      background:
+        rgba(255,255,255,.02);
+      transition:
+        .16s ease;
+    }
+
+    .custom-check svg {
+      width: 12px;
+      height: 12px;
+      opacity: 0;
+      color: white;
+      transition:
+        .16s ease;
+    }
+
+    .page-row input:checked
+      + .custom-check {
+      border-color:
+        #1877f2;
+      background:
+        #1877f2;
+      box-shadow:
+        0 0 0 4px
+        rgba(24,119,242,.09);
+    }
+
+    .page-row input:checked
+      + .custom-check svg {
+      opacity: 1;
+    }
+
+    .page-avatar {
+      width: 37px;
+      height: 37px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      border-radius: 11px;
+      background:
+        rgba(255,255,255,.07);
+      color: #dce7f8;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .page-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .page-name {
+      overflow: hidden;
+      font-size: 12px;
+      font-weight: 800;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .page-id {
+      margin-top: 2px;
+      overflow: hidden;
+      color: var(--muted-2);
+      font-size: 9px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .page-ready {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted-2);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .page-ready .ready-dot {
+      width: 5px;
+      height: 5px;
+      box-shadow: none;
+    }
+
+    .no-pages {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin:
+        0 24px 22px;
+      padding: 17px;
+      border:
+        1px dashed
+        rgba(255,255,255,.12);
+      border-radius: 13px;
+      color: var(--muted);
+    }
+
+    .no-pages-icon {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      border-radius: 9px;
+      background:
+        rgba(255,200,87,.08);
+      color: var(--warning);
+      font-weight: 900;
+    }
+
+    .no-pages strong {
+      color: var(--text);
+      font-size: 11px;
+    }
+
+    .no-pages p {
+      margin:
+        3px 0 0;
+      font-size: 9px;
+    }
+
+    .empty-state {
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding:
+        75px 25px;
+      border:
+        1px dashed
+        rgba(255,255,255,.11);
+      border-radius:
+        var(--radius);
+      background:
+        rgba(255,255,255,.018);
+    }
+
+    .empty-icon {
+      width: 56px;
+      height: 56px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 17px;
+      border-radius: 16px;
+      background:
+        rgba(24,119,242,.08);
+      color: var(--accent-2);
+    }
+
+    .empty-icon svg {
+      width: 26px;
+      height: 26px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .empty-state h3 {
+      margin:
+        9px 0 7px;
+      font-size: 18px;
+    }
+
+    .empty-state p {
+      max-width: 500px;
+      margin:
+        0 auto 20px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .publisher-section {
+      margin-top: 35px;
+      padding: 27px;
+      border:
+        1px solid var(--line);
+      border-radius:
+        var(--radius);
+      background:
+        linear-gradient(
+          145deg,
+          rgba(18,23,32,.92),
+          rgba(10,14,21,.9)
+        );
+      box-shadow:
+        var(--shadow);
+    }
+
+    .publisher-heading {
+      align-items: flex-start;
+      margin-bottom: 25px;
+    }
+
+    .publisher-heading p {
+      margin:
+        7px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .publisher-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding:
+        8px 10px;
+      border:
+        1px solid
+        rgba(53,212,154,.13);
+      border-radius: 9px;
+      background:
+        rgba(53,212,154,.045);
+      color:
+        rgba(157,239,211,.72);
+      font-size: 8px;
+      font-weight: 900;
+      letter-spacing: .11em;
+    }
+
+    .publisher-badge .ready-dot {
+      width: 5px;
+      height: 5px;
+      box-shadow: none;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns:
+        minmax(0, 1.45fr)
+        minmax(270px, .75fr);
+      gap: 18px;
+    }
+
+    .field-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 8px;
+      color: #dfe6f1;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .optional {
+      color: var(--muted-2);
+      font-size: 7px;
+      letter-spacing: .1em;
+    }
+
+    textarea,
+    input[type="password"] {
+      width: 100%;
+      border:
+        1px solid var(--line);
+      outline: none;
+      border-radius: 13px;
+      color: var(--text);
+      background:
+        rgba(5,8,12,.58);
+      transition:
+        border-color .18s ease,
+        box-shadow .18s ease;
+    }
+
+    textarea {
+      min-height: 190px;
+      resize: vertical;
+      padding: 15px;
+      line-height: 1.65;
+      font-size: 12px;
+    }
+
+    textarea::placeholder,
+    input::placeholder {
+      color:
+        rgba(156,167,184,.38);
+    }
+
+    textarea:focus,
+    input[type="password"]:focus {
+      border-color:
+        rgba(79,156,255,.48);
+      box-shadow:
+        0 0 0 4px
+        rgba(24,119,242,.07);
+    }
+
+    .field-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 7px;
+      color: var(--muted-2);
+      font-size: 8px;
+    }
+
+    .upload-zone {
+      min-height: 190px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      border:
+        1px dashed
+        rgba(255,255,255,.13);
+      border-radius: 13px;
+      background:
+        rgba(5,8,12,.45);
+      cursor: pointer;
+      text-align: center;
+      transition:
+        .18s ease;
+    }
+
+    .upload-zone:hover {
+      border-color:
+        rgba(79,156,255,.4);
+      background:
+        rgba(24,119,242,.035);
+    }
+
+    .upload-zone input {
+      display: none;
+    }
+
+    .upload-icon {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 11px;
+      border-radius: 13px;
+      background:
+        rgba(24,119,242,.09);
+      color: var(--accent-2);
+    }
+
+    .upload-icon svg {
+      width: 21px;
+      height: 21px;
+    }
+
+    .upload-zone strong {
+      font-size: 11px;
+    }
+
+    .upload-zone span {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .upload-zone small {
+      margin-top: 10px;
+      color: var(--muted-2);
+      font-size: 8px;
+    }
+
+    .file-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 8px;
+      padding:
+        9px 11px;
+      border:
+        1px solid
+        rgba(53,212,154,.12);
+      border-radius: 9px;
+      background:
+        rgba(53,212,154,.035);
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .file-info strong {
+      overflow: hidden;
+      color: var(--text);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .publish-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top:
+        1px solid var(--line);
+    }
+
+    .selection-summary {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .selection-icon {
+      width: 25px;
+      height: 25px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background:
+        rgba(53,212,154,.08);
+      color: var(--success);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .selection-summary strong {
+      color: var(--text);
+    }
+
+    .publish-btn {
+      min-width: 145px;
+      padding:
+        12px 16px;
+      border:
+        1px solid
+        rgba(79,156,255,.3);
+      color: white;
+      background:
+        linear-gradient(
+          135deg,
+          #1877f2,
+          #286fd7
+        );
+      box-shadow:
+        0 13px 30px
+        rgba(24,119,242,.2);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .publish-btn:hover:not(:disabled) {
+      transform:
+        translateY(-1px);
+      box-shadow:
+        0 16px 35px
+        rgba(24,119,242,.27);
+    }
+
+    .publish-btn:disabled {
+      opacity: .55;
+      cursor:
+        not-allowed;
+    }
+
+    .publish-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .publish-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+      padding:
+        13px 15px;
+      border:
+        1px solid
+        rgba(79,156,255,.12);
+      border-radius: 12px;
+      background:
+        rgba(24,119,242,.045);
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .publish-status strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--text);
+      font-size: 10px;
+    }
+
+    .publish-status span {
+      color: var(--muted);
+    }
+
+    .publish-status.error {
+      border-color:
+        rgba(255,100,124,.16);
+      background:
+        rgba(255,100,124,.045);
+    }
+
+    .publish-status.success {
+      border-color:
+        rgba(53,212,154,.16);
+      background:
+        rgba(53,212,154,.045);
+    }
+
+    .status-spinner {
+      width: 19px;
+      height: 19px;
+      flex-shrink: 0;
+      border:
+        2px solid
+        rgba(255,255,255,.12);
+      border-top-color:
+        var(--accent-2);
+      border-radius: 50%;
+      animation:
+        spin .8s linear infinite;
+    }
+
+    .status-success-icon,
+    .status-message-icon {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .status-success-icon {
+      background:
+        rgba(53,212,154,.1);
+      color: var(--success);
+    }
+
+    .status-message-icon {
+      background:
+        rgba(255,100,124,.1);
+      color: var(--danger);
+    }
+
+    @keyframes spin {
+      to {
+        transform:
+          rotate(360deg);
+      }
+    }
+
+    .dashboard-footer {
+      width: min(
+        1440px,
+        calc(100% - 48px)
+      );
+      margin: 0 auto;
+      padding:
+        22px 0 27px;
+      border-top:
+        1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      color: var(--muted-2);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .05em;
+    }
+
+    .dashboard-footer strong {
+      color: var(--muted);
+    }
+
+    /* ---------------------------------------------------------
+       LOGIN
+       --------------------------------------------------------- */
+
+    .login-shell {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      position: relative;
+      overflow: hidden;
+      padding: 30px;
+    }
+
+    .login-glow {
+      position: absolute;
+      width: 500px;
+      height: 500px;
+      border-radius: 50%;
+      filter: blur(100px);
+      pointer-events: none;
+      opacity: .13;
+    }
+
+    .login-glow-one {
+      top: -250px;
+      left: -180px;
+      background:
+        #1877f2;
+    }
+
+    .login-glow-two {
+      right: -220px;
+      bottom: -280px;
+      background:
+        #6c4cff;
+    }
+
+    .login-card {
+      position: relative;
+      width: min(
+        430px,
+        100%
+      );
+      padding:
+        42px;
+      border:
+        1px solid var(--line);
+      border-radius:
+        26px;
+      background:
+        linear-gradient(
+          145deg,
+          rgba(19,24,34,.93),
+          rgba(10,14,21,.96)
+        );
+      box-shadow:
+        0 30px 100px
+        rgba(0,0,0,.48);
+      backdrop-filter:
+        blur(20px);
+      text-align: center;
+    }
+
+    .brand-mark {
+      width: 62px;
+      height: 62px;
+      display: grid;
+      place-items: center;
+      margin:
+        0 auto 20px;
+      border-radius: 19px;
+      background:
+        linear-gradient(
+          135deg,
+          #1877f2,
+          #5b9fff
+        );
+      box-shadow:
+        0 18px 42px
+        rgba(24,119,242,.24);
+    }
+
+    .brand-mark-inner {
+      font-size: 28px;
+      font-weight: 950;
+    }
+
+    .login-card h1 {
+      margin:
+        9px 0 9px;
+      font-size: 24px;
+      letter-spacing: -.045em;
+    }
+
+    .login-subtitle {
+      margin:
+        0 auto 24px;
+      max-width: 310px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.65;
+    }
+
+    .login-error {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      margin-bottom: 16px;
+      padding:
+        11px 12px;
+      border:
+        1px solid
+        rgba(255,100,124,.16);
+      border-radius: 10px;
+      background:
+        rgba(255,100,124,.045);
+      color:
+        rgba(255,190,199,.88);
+      font-size: 10px;
+      line-height: 1.45;
+      text-align: left;
+    }
+
+    .login-error-icon {
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      border-radius: 6px;
+      background:
+        rgba(255,100,124,.12);
+      color: var(--danger);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .login-form {
+      text-align: left;
+    }
+
+    .password-wrap {
+      position: relative;
+    }
+
+    input[type="password"] {
+      height: 48px;
+      padding:
+        0 46px 0 14px;
+      font-size: 12px;
+    }
+
+    .password-toggle {
+      position: absolute;
+      top: 50%;
+      right: 12px;
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      transform:
+        translateY(-50%);
+      border: 0;
+      border-radius: 7px;
+      color: var(--muted-2);
+      background: transparent;
+    }
+
+    .password-toggle:hover {
+      color: var(--text);
+      background:
+        rgba(255,255,255,.05);
+    }
+
+    .password-toggle svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .login-submit {
+      width: 100%;
+      height: 48px;
+      margin-top: 12px;
+      border:
+        1px solid
+        rgba(79,156,255,.28);
+      color: white;
+      background:
+        linear-gradient(
+          135deg,
+          #1877f2,
+          #286fd7
+        );
+      box-shadow:
+        0 13px 32px
+        rgba(24,119,242,.2);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .login-submit:hover {
+      transform:
+        translateY(-1px);
+      box-shadow:
+        0 17px 38px
+        rgba(24,119,242,.28);
+    }
+
+    .login-submit svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .login-footer {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      margin-top: 22px;
+      color: var(--muted-2);
+      font-size: 8px;
+    }
+
+    .naqi-signature {
+      margin-top: 25px;
+      color:
+        rgba(255,255,255,.17);
+      font-size: 8px;
+      font-weight: 900;
+      letter-spacing: .27em;
+    }
+
+    /* ---------------------------------------------------------
+       ERROR / SUCCESS SCREENS
+       --------------------------------------------------------- */
+
+    .error-screen,
+    .success-screen {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 30px;
+    }
+
+    .error-box,
+    .success-box {
+      width: min(
+        560px,
+        100%
+      );
+      padding: 38px;
+      border:
+        1px solid var(--line);
+      border-radius: 23px;
+      background:
+        rgba(15,20,28,.92);
+      box-shadow:
+        var(--shadow);
+      text-align: center;
+    }
+
+    .error-icon,
+    .success-icon {
+      width: 58px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      margin:
+        0 auto 18px;
+      border-radius: 18px;
+      font-size: 24px;
+      font-weight: 950;
+    }
+
+    .error-icon {
+      background:
+        rgba(255,100,124,.08);
+      color: var(--danger);
+    }
+
+    .success-icon {
+      background:
+        rgba(53,212,154,.08);
+      color: var(--success);
+    }
+
+    .error-box h2,
+    .success-box h2 {
+      margin:
+        9px 0 9px;
+      font-size: 25px;
+      letter-spacing: -.04em;
+    }
+
+    .error-intro,
+    .success-intro {
+      margin:
+        0 auto 22px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.7;
+    }
+
+    .error-box pre {
+      max-width: 100%;
+      margin:
+        0 0 22px;
+      padding: 13px;
+      overflow: auto;
+      border:
+        1px solid var(--line);
+      border-radius: 10px;
+      background:
+        rgba(0,0,0,.25);
+      color:
+        rgba(255,180,190,.8);
+      font-size: 9px;
+      line-height: 1.55;
+      text-align: left;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .back-btn {
+      padding:
+        11px 15px;
+      border:
+        1px solid var(--line);
+      background:
+        rgba(255,255,255,.04);
+      color: var(--text);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .back-btn:hover {
+      border-color:
+        var(--line-strong);
+      background:
+        rgba(255,255,255,.07);
+    }
+
+    .success-back {
+      border-color:
+        rgba(53,212,154,.17);
+      background:
+        rgba(53,212,154,.07);
+    }
+
+    .success-stats {
+      display: flex;
+      justify-content: center;
+      margin:
+        0 0 22px;
+    }
+
+    .success-stats > div {
+      min-width: 130px;
+      padding:
+        15px 22px;
+      border:
+        1px solid var(--line);
+      border-radius: 13px;
+      background:
+        rgba(255,255,255,.025);
+    }
+
+    .success-stats strong {
+      display: block;
+      font-size: 25px;
+    }
+
+    .success-stats span {
+      color: var(--muted-2);
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: .12em;
+    }
+
+    /* ---------------------------------------------------------
+       RESULTS
+       --------------------------------------------------------- */
+
+    .results-hero {
+      max-width: 760px;
+      margin:
+        0 auto 35px;
+      text-align: center;
+    }
+
+    .results-hero-icon {
+      width: 58px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      margin:
+        0 auto 17px;
+      border-radius: 18px;
+      background:
+        rgba(53,212,154,.08);
+      color: var(--success);
+      font-size: 25px;
+      font-weight: 950;
+    }
+
+    .results-hero h1 {
+      margin:
+        9px 0 8px;
+      font-size:
+        clamp(31px, 4vw, 46px);
+      letter-spacing:
+        -.05em;
+    }
+
+    .results-hero p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .results-summary {
+      display: grid;
+      grid-template-columns:
+        repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .result-stat {
+      padding: 19px;
+      border:
+        1px solid var(--line);
+      border-radius: 16px;
+      background:
+        rgba(255,255,255,.025);
+    }
+
+    .result-stat-value {
+      font-size: 27px;
+      font-weight: 900;
+      letter-spacing: -.04em;
+    }
+
+    .result-stat-label {
+      margin-top: 3px;
+      color: var(--muted-2);
+      font-size: 8px;
+      font-weight: 900;
+      letter-spacing: .14em;
+    }
+
+    .results-card {
+      overflow: hidden;
+      border:
+        1px solid var(--line);
+      border-radius:
+        var(--radius);
+      background:
+        rgba(15,20,28,.9);
+      box-shadow:
+        var(--shadow);
+    }
+
+    .results-card-header {
+      padding:
+        22px 24px;
+      border-bottom:
+        1px solid var(--line);
+    }
+
+    .result-list {
+      display: grid;
+    }
+
+    .result-row {
+      display: grid;
+      grid-template-columns:
+        minmax(240px, 1.4fr)
+        120px
+        minmax(230px, 1fr);
+      align-items: center;
+      gap: 20px;
+      min-height: 72px;
+      padding:
+        10px 24px;
+      border-bottom:
+        1px solid var(--line);
+    }
+
+    .result-row:last-child {
+      border-bottom: 0;
+    }
+
+    .result-page {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      min-width: 0;
+    }
+
+    .result-avatar {
+      width: 39px;
+      height: 39px;
+      border-radius: 11px;
+      font-size: 10px;
+    }
+
+    .result-page-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .result-page-info strong {
+      overflow: hidden;
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .result-page-info span {
+      margin-top: 2px;
+      overflow: hidden;
+      color: var(--muted-2);
+      font-size: 8px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .result-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      width: fit-content;
+      padding:
+        6px 8px;
+      border-radius: 8px;
+      font-size: 8px;
+      font-weight: 900;
+    }
+
+    .result-success {
+      color:
+        rgba(131,238,196,.88);
+      background:
+        rgba(53,212,154,.07);
+    }
+
+    .result-failed {
+      color:
+        rgba(255,150,164,.9);
+      background:
+        rgba(255,100,124,.07);
+    }
+
+    .result-pending {
+      color:
+        rgba(255,214,128,.9);
+      background:
+        rgba(255,200,87,.07);
+    }
+
+    .result-detail {
+      min-width: 0;
+      color: var(--muted-2);
+      font-size: 9px;
+    }
+
+    .post-id {
+      overflow: hidden;
+      display: block;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .result-error-text {
+      display: block;
+      overflow: hidden;
+      color:
+        rgba(255,160,174,.76);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .no-results {
+      padding: 35px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 11px;
+    }
+
+    .run-info-card {
+      display: grid;
+      grid-template-columns:
+        repeat(4, 1fr);
+      gap: 1px;
+      margin-top: 14px;
+      overflow: hidden;
+      border:
+        1px solid var(--line);
+      border-radius: 16px;
+      background:
+        var(--line);
+    }
+
+    .run-info-item {
+      min-width: 0;
+      padding: 15px;
+      background:
+        rgba(15,20,28,.86);
+    }
+
+    .run-info-item span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted-2);
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .run-info-item strong {
+      display: block;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 9px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ---------------------------------------------------------
+       RESPONSIVE
+       --------------------------------------------------------- */
+
+    @media (max-width: 900px) {
+      .hero-section {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 28px;
+      }
+
+      .hero-stats {
+        width: 100%;
+      }
+
+      .stat-card {
+        flex: 1;
+        width: auto;
+      }
+
+      .form-grid {
+        grid-template-columns:
+          1fr;
+      }
+
+      .results-summary {
+        grid-template-columns:
+          repeat(2, 1fr);
+      }
+
+      .run-info-card {
+        grid-template-columns:
+          repeat(2, 1fr);
+      }
+
+      .result-row {
+        grid-template-columns:
+          1fr 110px;
+      }
+
+      .result-detail {
+        grid-column:
+          1 / -1;
+        padding:
+          0 0 8px 50px;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .topbar,
+      .dashboard-main,
+      .results-main,
+      .dashboard-footer {
+        width:
+          calc(100% - 28px);
+      }
+
+      .topbar {
+        min-height: 70px;
+      }
+
+      .live-status {
+        display: none;
+      }
+
+      .brand-name {
+        font-size: 12px;
+      }
+
+      .dashboard-main,
+      .results-main {
+        padding-top: 42px;
+      }
+
+      .hero-copy h1 {
+        font-size: 40px;
+      }
+
+      .section-heading,
+      .publisher-heading,
+      .results-card-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .account-top {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .account-actions {
+        width: 100%;
+      }
+
+      .account-actions form {
+        flex: 1;
+      }
+
+      .account-actions button {
+        width: 100%;
+      }
+
+      .page-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .publisher-section {
+        padding: 18px;
+      }
+
+      .publish-footer {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .publish-btn {
+        width: 100%;
+      }
+
+      .login-card {
+        padding: 30px 22px;
+      }
+
+      .results-card-header {
+        padding: 18px;
+      }
+
+      .result-row {
+        grid-template-columns:
+          1fr;
+        gap: 9px;
+        padding:
+          14px 18px;
+      }
+
+      .result-status {
+        margin-left: 50px;
+      }
+
+      .result-detail {
+        padding:
+          0 0 0 50px;
+      }
+
+      .run-info-card {
+        grid-template-columns:
+          1fr;
+      }
+
+      .dashboard-footer {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+
+</head>
+
+<body>
+
+  ${content}
+
+</body>
+
+</html>
+    `,
+    {
+      "Content-Type":
+        "text/html; charset=utf-8",
+      "Cache-Control":
+        "no-store"
+    }
+  );
 }
 
-html {
-  background: #030712;
+function getInitials(
+  value
+) {
+  const text =
+    String(
+      value || ""
+    ).trim();
+
+  if (!text) {
+    return "NA";
+  }
+
+  const parts =
+    text
+      .split(/\s+/)
+      .filter(Boolean);
+
+  if (
+    parts.length === 1
+  ) {
+    return parts[0]
+      .slice(0, 2)
+      .toUpperCase();
+  }
+
+  return (
+    parts[0][0] +
+    parts[
+      parts.length - 1
+    ][0]
+  ).toUpperCase();
 }
 
-body {
-  margin: 0;
-  min-height: 100vh;
+function formatDate(
+  value
+) {
+  if (!value) {
+    return "—";
+  }
 
-  position: relative;
-
-  overflow-x: hidden;
-
-  color: #dbeafe;
-
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-
-  background:
-    radial-gradient(
-      circle at 10% 0%,
-      rgba(37,99,235,.19),
-      transparent 28%
-    ),
-    radial-gradient(
-      circle at 90% 5%,
-      rgba(124,58,237,.17),
-      transparent 29%
-    ),
-    radial-gradient(
-      circle at 50% 45%,
-      rgba(8,145,178,.08),
-      transparent 31%
-    ),
-    linear-gradient(
-      135deg,
-      #030712 0%,
-      #07111f 35%,
-      #040a14 68%,
-      #07101d 100%
+  const date =
+    new Date(
+      String(value)
+        .replace(
+          " ",
+          "T"
+        ) +
+        (
+          String(value).includes(
+            "Z"
+          )
+            ? ""
+            : "Z"
+        )
     );
 
-  background-attachment: fixed;
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return String(
+      value
+    );
+  }
+
+  return date.toLocaleString(
+    "en-US",
+    {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    }
+  );
 }
 
-body::before {
-  content: "";
-
-  position: fixed;
-  inset: 0;
-
-  pointer-events: none;
-
-  z-index: 0;
-
-  opacity: .35;
-
-  background-image:
-    linear-gradient(
-      rgba(96,165,250,.035) 1px,
-      transparent 1px
-    ),
-    linear-gradient(
-      90deg,
-      rgba(96,165,250,.035) 1px,
-      transparent 1px
-    );
-
-  background-size: 42px 42px;
-
-  mask-image:
-    linear-gradient(
-      to bottom,
-      black 0%,
-      rgba(0,0,0,.65) 60%,
-      transparent 100%
+function escapeHtml(
+  value
+) {
+  return String(
+    value == null
+      ? ""
+      : value
+  )
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&#039;"
     );
 }
 
-body::after {
-  content: "";
+///**********PART 4***************
 
-  position: fixed;
 
-  width: 650px;
-  height: 650px;
-
-  right: -260px;
-  bottom: -300px;
-
-  border-radius: 50%;
-
-  pointer-events: none;
-
-  z-index: 0;
-
+.orb-one {
+  width: 320px;
+  height: 320px;
+  top: -150px;
+  left: -100px;
   background:
     radial-gradient(
       circle,
-      rgba(37,99,235,.13),
-      rgba(79,70,229,.055) 38%,
+      rgba(24, 119, 242, .20),
       transparent 70%
     );
-
-  filter: blur(20px);
-
-  animation:
-    ambientFloat
-    11s
-    ease-in-out
-    infinite
-    alternate;
 }
 
-body > * {
+.orb-two {
+  width: 380px;
+  height: 380px;
+  bottom: -200px;
+  right: -100px;
+  background:
+    radial-gradient(
+      circle,
+      rgba(0, 191, 255, .13),
+      transparent 70%
+    );
+}
+
+.login-card {
+  width: 100%;
+  max-width: 470px;
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  padding: 42px;
+  border-radius: 26px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(19, 34, 55, .96),
+      rgba(9, 21, 36, .98)
+    );
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow:
+    0 35px 100px rgba(0,0,0,.45);
+  color: #fff;
 }
 
-@keyframes ambientFloat {
-  0% {
-    transform:
-      translate3d(0,0,0)
-      scale(1);
-  }
-
-  100% {
-    transform:
-      translate3d(-70px,-40px,0)
-      scale(1.12);
-  }
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 42px;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: .45;
-    transform: scale(.92);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scale(1.12);
-  }
+.login-brand .brand-mini {
+  color: #91a8c5;
 }
 
-@keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
+.login-icon {
+  width: 62px;
+  height: 62px;
+  border-radius: 19px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    rgba(24,119,242,.12);
+  border: 1px solid rgba(24,119,242,.25);
+  color: #4d9bff;
+  margin-bottom: 22px;
 }
 
-@keyframes shine {
-  0% {
-    transform: translateX(-130%);
-  }
-
-  100% {
-    transform: translateX(130%);
-  }
+.login-icon svg {
+  width: 28px;
+  height: 28px;
 }
 
-@keyframes riseIn {
-  from {
-    opacity: 0;
-    transform:
-      translateY(18px);
-  }
-
-  to {
-    opacity: 1;
-    transform:
-      translateY(0);
-  }
+.login-card h1 {
+  margin: 8px 0 12px;
+  font-size: 32px;
+  letter-spacing: -.04em;
 }
 
-@media (
-  prefers-reduced-motion: reduce
-) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: .01ms !important;
-    animation-iteration-count: 1 !important;
-  }
+.login-description {
+  color: #94a7bd;
+  line-height: 1.65;
+  margin: 0 0 28px;
+  font-size: 14px;
 }
 
-a,
-button {
-  -webkit-tap-highlight-color:
-    transparent;
+.login-form label {
+  display: block;
+  color: #d8e3f0;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 9px;
 }
 
-a {
-  text-decoration: none;
+.password-wrap {
+  position: relative;
 }
 
-button {
+.password-wrap input {
+  width: 100%;
+  height: 54px;
+  padding: 0 52px 0 16px;
+  border-radius: 13px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.055);
+  color: #fff;
+  outline: none;
+  transition: .2s;
+}
+
+.password-wrap input::placeholder {
+  color: #667b95;
+}
+
+.password-wrap input:focus {
+  border-color: rgba(24,119,242,.7);
+  box-shadow:
+    0 0 0 4px rgba(24,119,242,.10);
+}
+
+.show-password {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  width: 44px;
+  height: 44px;
   border: 0;
+  background: transparent;
+  color: #7890ab;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-/* =========================================================
-   DASHBOARD BACKGROUND
-   ========================================================= */
-
-.dashboard-shell {
-  min-height: 100vh;
-
-  position: relative;
-
-  padding-bottom: 45px;
+.show-password svg {
+  width: 19px;
+  height: 19px;
 }
 
-.dashboard-grid {
-  position: fixed;
-  inset: 0;
-
-  pointer-events: none;
-
-  z-index: 0;
-
-  background-image:
-    linear-gradient(
-      rgba(59,130,246,.025) 1px,
-      transparent 1px
-    ),
-    linear-gradient(
-      90deg,
-      rgba(59,130,246,.025) 1px,
-      transparent 1px
-    );
-
-  background-size: 80px 80px;
-
-  mask-image:
-    radial-gradient(
-      ellipse at center,
-      black 10%,
-      transparent 75%
-    );
-}
-
-.dashboard-noise {
-  position: fixed;
-  inset: 0;
-
-  pointer-events: none;
-
-  z-index: 0;
-
-  opacity: .025;
-
-  background-image:
-    url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
-}
-
-.dashboard-orb {
-  position: fixed;
-
-  border-radius: 999px;
-
-  pointer-events: none;
-
-  filter: blur(80px);
-
-  z-index: 0;
-
-  opacity: .25;
-}
-
-.orb-left {
-  width: 430px;
-  height: 430px;
-
-  left: -260px;
-  top: 180px;
-
+.login-submit {
+  width: 100%;
+  height: 54px;
+  border: 0;
+  border-radius: 13px;
+  margin-top: 14px;
+  cursor: pointer;
   background:
-    #2563eb;
-}
-
-.orb-right {
-  width: 370px;
-  height: 370px;
-
-  right: -210px;
-  top: 480px;
-
-  background:
-    #7c3aed;
-}
-
-.orb-bottom {
-  width: 450px;
-  height: 250px;
-
-  left: 35%;
-  bottom: -180px;
-
-  background:
-    #0891b2;
-}
-
-/* =========================================================
-   HERO
-   ========================================================= */
-
-.hero-header {
-  width:
-    min(
-      1220px,
-      calc(100% - 32px)
-    );
-
-  min-height: 460px;
-
-  margin: 18px auto 38px;
-
-  padding: 26px 38px 38px;
-
-  position: relative;
-
-  overflow: hidden;
-
-  border:
-    1px solid
-    rgba(148,163,184,.14);
-
-  border-radius: 34px;
-
-  background:
-    radial-gradient(
-      circle at 78% 42%,
-      rgba(37,99,235,.19),
-      transparent 31%
-    ),
-    radial-gradient(
-      circle at 93% 8%,
-      rgba(139,92,246,.15),
-      transparent 26%
-    ),
     linear-gradient(
       135deg,
-      rgba(5,15,29,.98),
-      rgba(7,21,40,.96) 48%,
-      rgba(7,16,31,.98)
+      #1877f2,
+      #0d5fd2
     );
-
+  color: #fff;
+  font-weight: 900;
   box-shadow:
-    0 40px 100px
-      rgba(0,0,0,.38),
-    inset 0 1px 0
-      rgba(255,255,255,.045);
-
-  backdrop-filter:
-    blur(18px);
-
-  animation:
-    riseIn
-    .55s
-    ease
-    both;
-}
-
-.hero-header::before {
-  content: "";
-
-  position: absolute;
-  inset: 0;
-
-  pointer-events: none;
-
-  background:
-    linear-gradient(
-      110deg,
-      transparent 0%,
-      rgba(96,165,250,.045) 42%,
-      transparent 70%
-    );
-}
-
-.hero-header::after {
-  content: "";
-
-  position: absolute;
-
-  width: 550px;
-  height: 550px;
-
-  right: -240px;
-  top: -290px;
-
-  border-radius: 50%;
-
-  border:
-    1px solid
-    rgba(96,165,250,.09);
-
-  box-shadow:
-    0 0 0 70px
-      rgba(96,165,250,.015),
-    0 0 0 140px
-      rgba(96,165,250,.01);
-}
-
-.hero-top-line {
+    0 14px 28px rgba(24,119,242,.24);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-
-  color:
-    rgba(147,197,253,.72);
-
-  font-size: 8px;
-  font-weight: 900;
-
-  letter-spacing: .22em;
-
-  margin-bottom: 26px;
+  transition:
+    transform .18s,
+    box-shadow .18s;
 }
 
-.hero-top-line span {
+.login-submit:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 18px 34px rgba(24,119,242,.30);
+}
+
+.login-submit svg {
+  width: 18px;
+}
+
+.login-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(239,68,68,.10);
+  border: 1px solid rgba(239,68,68,.20);
+  color: #ff9b9b;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+.login-error-icon {
   width: 22px;
-  height: 1px;
-
-  background:
-    rgba(96,165,250,.42);
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(239,68,68,.18);
+  font-weight: 900;
 }
 
-.hero-main {
+.login-security {
+  margin-top: 24px;
+  color: #60758f;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.security-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #36d399;
+  box-shadow:
+    0 0 10px rgba(54,211,153,.6);
+}
+
+.dashboard-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  color: #fff;
+  background:
+    linear-gradient(
+      105deg,
+      #071426,
+      #0a1c34 60%,
+      #09203c
+    );
+  border-bottom:
+    1px solid rgba(255,255,255,.08);
+  box-shadow:
+    0 10px 30px rgba(5,15,30,.12);
+}
+
+.header-inner {
+  max-width: 1280px;
+  min-height: 76px;
+  margin: auto;
+  padding: 0 26px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-
-  gap: 30px;
-
-  position: relative;
-  z-index: 2;
+  gap: 20px;
 }
 
-.hero-brand {
-  max-width: 760px;
-}
-
-.hero-kicker {
-  color:
-    #60a5fa;
-
-  font-size: 10px;
-
-  font-weight: 950;
-
-  letter-spacing: .24em;
-
-  margin-bottom: 11px;
-}
-
-.hero-name {
-  color:
-    rgba(191,219,254,.80);
-
-  font-size: 12px;
-
-  font-weight: 950;
-
-  letter-spacing: .30em;
-
-  margin-bottom: 8px;
-}
-
-.hero-title {
-  font-size:
-    clamp(
-      34px,
-      5vw,
-      61px
-    );
-
-  line-height: .98;
-
-  letter-spacing: -.055em;
-
-  font-weight: 950;
-
-  color: #fff;
-
-  text-shadow:
-    0 10px 50px
-    rgba(37,99,235,.17);
-}
-
-.hero-subtitle {
-  max-width: 650px;
-
-  margin-top: 18px;
-
-  color:
-    rgba(203,213,225,.63);
-
-  font-size: 13px;
-
-  line-height: 1.7;
-}
-
-.hero-badges {
-  display: flex;
-
-  align-items: center;
-
-  flex-wrap: wrap;
-
-  gap: 8px;
-
-  margin-top: 20px;
-}
-
-.hero-badge {
-  min-height: 28px;
-
-  display: inline-flex;
-
-  align-items: center;
-
-  gap: 7px;
-
-  padding: 0 10px;
-
-  border-radius: 999px;
-
-  color:
-    rgba(191,219,254,.72);
-
-  border:
-    1px solid
-    rgba(96,165,250,.12);
-
-  background:
-    rgba(30,64,175,.08);
-
-  font-size: 8px;
-
-  font-weight: 850;
-
-  letter-spacing: .08em;
-}
-
-.hero-badge span {
-  width: 5px;
-  height: 5px;
-
-  border-radius: 50%;
-
-  background:
-    #34d399;
-
-  box-shadow:
-    0 0 0 4px
-    rgba(52,211,153,.08);
-
-  animation:
-    pulse
-    2s
-    ease-in-out
-    infinite;
-}
-
-.hero-visual {
-  width: 270px;
-  height: 270px;
-
-  flex: 0 0 auto;
-
-  position: relative;
-
+.brand-area {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 13px;
 }
 
-.hero-core {
-  width: 130px;
-  height: 130px;
-
-  border-radius: 50%;
-
-  padding: 1px;
-
-  background:
-    conic-gradient(
-      from 0deg,
-      #2563eb,
-      #38bdf8,
-      #7c3aed,
-      #2563eb
-    );
-
-  animation:
-    rotate
-    9s
-    linear
-    infinite;
-
-  box-shadow:
-    0 0 55px
-      rgba(37,99,235,.22);
-}
-
-.hero-core-inner {
-  width: 100%;
-  height: 100%;
-
-  border-radius: 50%;
-
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-
-  background:
-    radial-gradient(
-      circle,
-      #12284a,
-      #050d1b 72%
-    );
-
-  animation:
-    rotateReverse
-    9s
-    linear
-    infinite;
-}
-
-@keyframes rotateReverse {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(-360deg);
-  }
-}
-
-.hero-core-inner span {
-  color:
-    #60a5fa;
-
-  font-size: 9px;
-
-  font-weight: 950;
-
-  letter-spacing: .25em;
-}
-
-.hero-core-inner strong {
-  margin-top: 3px;
-
-  color: #fff;
-
-  font-size: 27px;
-
-  font-weight: 950;
-
-  letter-spacing: -.06em;
-}
-
-.hero-orbit {
-  position: absolute;
-
-  border-radius: 50%;
-
-  border:
-    1px solid
-    rgba(96,165,250,.12);
-}
-
-.orbit-one {
-  width: 190px;
-  height: 190px;
-
-  animation:
-    rotate
-    14s
-    linear
-    infinite;
-}
-
-.orbit-two {
-  width: 245px;
-  height: 245px;
-
-  border-color:
-    rgba(129,140,248,.08);
-
-  animation:
-    rotateReverse
-    18s
-    linear
-    infinite;
-}
-
-.hero-floating-card {
-  position: absolute;
-
-  padding: 8px 11px;
-
-  border-radius: 10px;
-
-  border:
-    1px solid
-    rgba(148,163,184,.13);
-
-  background:
-    rgba(15,30,52,.78);
-
-  box-shadow:
-    0 15px 35px
-      rgba(0,0,0,.25);
-
-  backdrop-filter:
-    blur(12px);
-
-  color:
-    rgba(219,234,254,.74);
-
-  font-size: 8px;
-
-  font-weight: 900;
-
-  letter-spacing: .09em;
-}
-
-.card-top {
-  right: 0;
-  top: 32px;
-}
-
-.mini-dot {
-  width: 5px;
-  height: 5px;
-
-  display: inline-block;
-
-  border-radius: 50%;
-
-  margin-right: 5px;
-
-  background:
-    #34d399;
-}
-
-.card-bottom {
-  left: -2px;
-  bottom: 38px;
-}
-
-.card-bottom span {
-  color:
-    #60a5fa;
-
-  font-size: 14px;
-
-  margin-right: 4px;
+.header-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  font-size: 26px;
+  box-shadow: none;
 }
 
 .header-actions {
   display: flex;
-
   align-items: center;
-
-  justify-content: flex-end;
-
   gap: 10px;
-
-  position: relative;
-
-  z-index: 4;
-
-  margin-top: 22px;
 }
 
 .header-actions form {
   margin: 0;
 }
 
-.connect-btn {
-  min-height: 48px;
-
-  padding: 0 15px 0 8px;
-
+.connect-account-btn {
+  height: 42px;
   display: inline-flex;
-
-  align-items: center;
-
-  gap: 9px;
-
-  border:
-    1px solid
-    rgba(96,165,250,.20);
-
-  border-radius: 14px;
-
-  color: #fff;
-
-  background:
-    linear-gradient(
-      135deg,
-      #1877f2,
-      #2563eb 55%,
-      #4f46e5
-    );
-
-  box-shadow:
-    0 15px 38px
-      rgba(37,99,235,.24);
-
-  font-size: 11px;
-
-  font-weight: 900;
-
-  transition:
-    transform .2s ease,
-    box-shadow .2s ease;
-}
-
-.connect-btn:hover {
-  transform:
-    translateY(-3px);
-
-  box-shadow:
-    0 21px 46px
-      rgba(37,99,235,.34);
-}
-
-.connect-plus {
-  width: 32px;
-  height: 32px;
-
-  display: flex;
   align-items: center;
   justify-content: center;
-
-  border-radius: 9px;
-
-  background:
-    rgba(255,255,255,.14);
-
-  font-size: 18px;
+  gap: 8px;
+  padding: 0 16px;
+  border-radius: 11px;
+  background: #1877f2;
+  color: #fff;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow:
+    0 9px 20px rgba(24,119,242,.22);
 }
 
-.connect-arrow {
-  margin-left: 4px;
+.connect-account-btn:hover {
+  background: #2380f5;
+}
 
-  opacity: .62;
-
-  font-size: 15px;
+.plus-icon {
+  font-size: 18px;
+  line-height: 1;
 }
 
 .header-logout {
-  min-height: 48px;
-
-  padding: 0 14px;
-
-  border-radius: 14px;
-
-  color:
-    rgba(226,232,240,.74);
-
+  height: 42px;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 11px;
   border:
-    1px solid
-    rgba(148,163,184,.13);
-
+    1px solid rgba(255,255,255,.11);
   background:
-    rgba(15,23,42,.58);
-
-  font-size: 11px;
-
-  font-weight: 850;
-
-  transition:
-    background .18s ease,
-    color .18s ease,
-    transform .18s ease;
+    rgba(255,255,255,.055);
+  color: #b7c7d9;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .header-logout:hover {
   color: #fff;
-
   background:
-    rgba(30,41,59,.90);
-
-  transform:
-    translateY(-2px);
+    rgba(255,255,255,.09);
 }
 
-/* =========================================================
-   MAIN CONTAINER
-   ========================================================= */
+.header-logout svg {
+  width: 16px;
+  height: 16px;
+}
 
-.container {
-  width:
-    min(
-      1160px,
-      calc(100% - 32px)
-    );
-
+.dashboard-container {
+  max-width: 1280px;
   margin: 0 auto;
+  padding: 0 26px 70px;
 }
 
-/* =========================================================
-   OVERVIEW
-   ========================================================= */
+.hero {
+  position: relative;
+  min-height: 285px;
+  margin: 28px 0 22px;
+  padding: 48px;
+  border-radius: 27px;
+  overflow: hidden;
+  color: #fff;
+  background:
+    radial-gradient(
+      circle at 85% 15%,
+      rgba(24,119,242,.25),
+      transparent 35%
+    ),
+    linear-gradient(
+      125deg,
+      #08172b,
+      #0b2341 58%,
+      #0b2b50
+    );
+  box-shadow:
+    0 22px 55px rgba(12,32,57,.15);
+}
 
-.overview-strip {
-  display: flex;
+.hero-glow {
+  position: absolute;
+  width: 450px;
+  height: 450px;
+  right: -180px;
+  bottom: -280px;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle,
+      rgba(24,119,242,.25),
+      transparent 68%
+    );
+}
 
-  align-items: center;
+.hero-content {
+  max-width: 700px;
+  position: relative;
+  z-index: 2;
+}
 
-  justify-content: space-between;
+.hero-eyebrow {
+  color: #6fb0ff;
+  margin-bottom: 12px;
+}
 
-  gap: 20px;
+.hero h1 {
+  margin: 0;
+  max-width: 720px;
+  font-size:
+    clamp(32px, 4vw, 51px);
+  line-height: 1.02;
+  letter-spacing: -.055em;
+}
 
-  margin-bottom: 38px;
+.hero h1 span {
+  display: block;
+  color: #4d9bff;
+}
 
-  padding: 18px 20px;
+.hero p {
+  max-width: 640px;
+  margin: 18px 0 0;
+  color: #a8bad0;
+  line-height: 1.65;
+  font-size: 14px;
+}
 
+.hero-decoration {
+  position: absolute;
+  right: 50px;
+  top: 55px;
+  width: 250px;
+  height: 160px;
+}
+
+.floating-card {
+  position: absolute;
+  min-width: 145px;
+  padding: 13px 15px;
+  border-radius: 14px;
+  background:
+    rgba(255,255,255,.07);
   border:
-    1px solid
-    rgba(148,163,184,.10);
+    1px solid rgba(255,255,255,.10);
+  backdrop-filter: blur(10px);
+  color: #a9bad0;
+  font-size: 10px;
+  font-weight: 700;
+}
 
-  border-radius: 20px;
+.floating-card strong {
+  display: block;
+  color: #fff;
+  font-size: 22px;
+  margin-top: 4px;
+}
 
+.floating-one {
+  top: 5px;
+  right: 0;
+}
+
+.floating-two {
+  bottom: 0;
+  left: 0;
+}
+
+.mini-status {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #36d399;
+  margin-right: 6px;
+  box-shadow:
+    0 0 10px rgba(54,211,153,.7);
+}
+
+.mini-facebook {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #1877f2;
+  color: #fff;
+  font-weight: 900;
+  font-size: 14px;
+  margin-right: 6px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 25px;
+}
+
+.stat-card {
+  min-height: 116px;
+  padding: 21px;
+  border-radius: 18px;
+  background: #fff;
+  border:
+    1px solid #e6ebf2;
+  box-shadow:
+    0 9px 28px rgba(18,34,55,.055);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.stat-highlight {
   background:
     linear-gradient(
       135deg,
-      rgba(15,28,48,.70),
-      rgba(7,18,33,.58)
+      #fff,
+      #f4f9ff
     );
-
-  box-shadow:
-    0 18px 45px
-      rgba(0,0,0,.18);
-
-  backdrop-filter:
-    blur(16px);
 }
 
-.overview-intro {
-  min-width: 190px;
-}
-
-.overview-kicker {
-  color:
-    #60a5fa;
-
-  font-size: 8px;
-
-  font-weight: 950;
-
-  letter-spacing: .20em;
-}
-
-.overview-intro h1 {
-  margin: 4px 0 2px;
-
-  color: #f8fafc;
-
-  font-size: 18px;
-
-  letter-spacing: -.03em;
-}
-
-.overview-intro p {
-  margin: 0;
-
-  color:
-    rgba(148,163,184,.62);
-
-  font-size: 9px;
-}
-
-.overview-stats {
-  display: grid;
-
-  grid-template-columns:
-    repeat(4, minmax(110px,1fr));
-
-  gap: 8px;
-
-  flex: 1;
-
-  max-width: 700px;
-}
-
-.overview-stat {
-  min-height: 58px;
-
-  display: flex;
-
-  align-items: center;
-
-  gap: 10px;
-
-  padding: 8px 11px;
-
-  border:
-    1px solid
-    rgba(148,163,184,.08);
-
-  border-radius: 13px;
-
-  background:
-    rgba(15,23,42,.42);
-}
-
-.overview-stat-icon {
-  width: 33px;
-  height: 33px;
-
-  flex: 0 0 auto;
-
+.stat-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
-
-  border-radius: 10px;
-
-  font-size: 13px;
-
-  font-weight: 900;
+  flex: 0 0 auto;
 }
 
-.overview-stat-icon.blue {
-  color: #60a5fa;
-  background:
-    rgba(37,99,235,.12);
+.accounts-icon {
+  color: #1877f2;
+  background: #edf5ff;
 }
 
-.overview-stat-icon.purple {
-  color: #a78bfa;
-  background:
-    rgba(124,58,237,.12);
+.pages-icon {
+  color: #7958e8;
+  background: #f2efff;
 }
 
-.overview-stat-icon.green {
-  color: #34d399;
-  background:
-    rgba(16,185,129,.10);
+.ready-icon {
+  color: #10a879;
+  background: #eafaf4;
 }
 
-.overview-stat-icon.cyan {
-  color: #22d3ee;
-  background:
-    rgba(8,145,178,.10);
+.stat-icon svg {
+  width: 24px;
+  height: 24px;
 }
 
-.overview-stat span {
+.stat-data span {
   display: block;
-
-  color:
-    rgba(148,163,184,.60);
-
-  font-size: 8px;
-
-  font-weight: 800;
-
-  letter-spacing: .07em;
-}
-
-.overview-stat strong {
-  display: block;
-
-  margin-top: 2px;
-
-  color: #f8fafc;
-
-  font-size: 16px;
-
-  font-weight: 950;
-}
-
-.overview-online strong {
-  color:
-    #34d399;
-
+  color: #647188;
   font-size: 11px;
-
-  letter-spacing: .08em;
+  font-weight: 800;
+  margin-bottom: 4px;
 }
 
-/* =========================================================
-   SECTION HEADINGS
-   ========================================================= */
-
-.section-heading {
-  display: flex;
-
-  align-items: flex-end;
-
-  gap: 20px;
-
-  margin:
-    0 0 15px;
+.stat-data strong {
+  display: block;
+  color: #162033;
+  font-size: 27px;
+  letter-spacing: -.04em;
+  line-height: 1.05;
 }
 
-.section-kicker {
-  color:
-    rgba(96,165,250,.76);
-
-  font-size: 8px;
-
-  font-weight: 950;
-
-  letter-spacing: .18em;
+.stat-data small {
+  display: block;
+  color: #98a3b4;
+  font-size: 10px;
+  margin-top: 5px;
 }
-
-.section-heading h2 {
-  margin: 4px 0 0;
-
-  color: #f1f5f9;
-
-  font-size: 22px;
-
-  letter-spacing: -.035em;
-
-  font-weight: 950;
-}
-
-.section-line {
-  height: 1px;
-
-  flex: 1;
-
-  margin-bottom: 7px;
-
-  background:
-    linear-gradient(
-      90deg,
-      rgba(96,165,250,.15),
-      transparent
-    );
-}
-
-.studio-section-heading {
-  margin-top: 45px;
-}
-
-/* =========================================================
-   ACCOUNT CARD
-   ========================================================= */
 
 .account-card {
-  position: relative;
-
-  overflow: hidden;
-
-  margin-bottom: 19px;
-
+  margin-bottom: 18px;
+  border-radius: 20px;
+  background: #fff;
   border:
-    1px solid
-    rgba(148,163,184,.12);
-
-  border-radius: 24px;
-
-  background:
-    linear-gradient(
-      135deg,
-      rgba(15,29,49,.92),
-      rgba(7,17,31,.88)
-    );
-
+    1px solid #e4eaf2;
   box-shadow:
-    0 25px 65px
-      rgba(0,0,0,.25),
-    inset 0 1px 0
-      rgba(255,255,255,.035);
-
-  backdrop-filter:
-    blur(17px);
-
-  transition:
-    border-color .25s ease,
-    transform .25s ease;
-}
-
-.account-card::before {
-  content: "";
-
-  position: absolute;
-
-  left: 0;
-  right: 0;
-  top: 0;
-
-  height: 1px;
-
-  background:
-    linear-gradient(
-      90deg,
-      transparent,
-      rgba(96,165,250,.34),
-      rgba(129,140,248,.24),
-      transparent
-    );
-}
-
-.account-card:hover {
-  border-color:
-    rgba(96,165,250,.18);
-
-  transform:
-    translateY(-2px);
+    0 10px 32px rgba(18,34,55,.055);
+  overflow: hidden;
 }
 
 .account-top {
-  min-height: 108px;
-
-  padding: 20px 22px;
-
+  padding: 23px;
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
   gap: 20px;
-
-  position: relative;
-
-  background:
-    linear-gradient(
-      90deg,
-      rgba(30,58,138,.055),
-      transparent 52%
-    );
-
   border-bottom:
-    1px solid
-    rgba(148,163,184,.075);
+    1px solid #edf1f5;
 }
 
 .account-identity {
-  display: flex;
-
-  align-items: center;
-
-  gap: 13px;
-
   min-width: 0;
-}
-
-.account-avatar-wrap {
-  position: relative;
-
-  flex: 0 0 auto;
-}
-
-.account-avatar {
-  width: 52px;
-  height: 52px;
-
   display: flex;
+  align-items: center;
+  gap: 15px;
+}
 
+.account-avatar,
+.page-avatar,
+.result-avatar {
+  display: flex;
   align-items: center;
   justify-content: center;
-
-  border-radius: 16px;
-
   color: #fff;
-
-  font-size: 15px;
-
-  font-weight: 950;
-
+  font-weight: 900;
   background:
     linear-gradient(
       145deg,
       #1877f2,
-      #4f46e5
+      #6a55df
     );
-
-  box-shadow:
-    0 15px 30px
-      rgba(37,99,235,.25),
-    inset 0 1px 0
-      rgba(255,255,255,.18);
 }
 
-.account-online {
-  position: absolute;
-
-  width: 10px;
-  height: 10px;
-
-  right: -2px;
-  bottom: -1px;
-
-  border-radius: 50%;
-
-  background:
-    #34d399;
-
-  border:
-    2px solid
-    #0a1728;
-
+.account-avatar {
+  width: 54px;
+  height: 54px;
+  border-radius: 17px;
+  font-size: 17px;
   box-shadow:
-    0 0 12px
-      rgba(52,211,153,.65);
+    0 10px 22px rgba(24,119,242,.18);
+  flex: 0 0 auto;
 }
 
 .account-details {
   min-width: 0;
 }
 
-.account-label {
-  color:
-    rgba(96,165,250,.72);
-
-  font-size: 7px;
-
-  font-weight: 950;
-
-  letter-spacing: .16em;
-
-  margin-bottom: 3px;
+.account-name-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
 }
 
-.account-identity h2 {
+.account-name-line h2 {
   margin: 0;
-
-  overflow: hidden;
-
-  text-overflow: ellipsis;
-
-  white-space: nowrap;
-
-  color: #f8fafc;
-
-  font-size: 16px;
-
-  font-weight: 900;
-
+  font-size: 17px;
   letter-spacing: -.02em;
 }
 
-.facebook-id {
-  display: flex;
-
+.connected-badge {
+  display: inline-flex;
   align-items: center;
-
-  gap: 7px;
-
-  margin-top: 5px;
-
-  color:
-    rgba(148,163,184,.48);
-
-  font-size: 8px;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 99px;
+  color: #0d9b6f;
+  background: #eafaf4;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .06em;
 }
 
-.facebook-id span {
-  color:
-    rgba(148,163,184,.35);
+.connected-badge span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #15bd82;
+}
 
-  font-size: 7px;
-
-  font-weight: 850;
-
-  letter-spacing: .08em;
+.facebook-id {
+  margin-top: 6px;
+  color: #8b97a8;
+  font-size: 10px;
 }
 
 .facebook-id code {
-  color:
-    rgba(191,219,254,.52);
+  color: #657188;
+}
 
+code {
   font-family:
     ui-monospace,
     SFMono-Regular,
@@ -4604,3424 +7276,1078 @@ button {
     Monaco,
     Consolas,
     monospace;
+  word-break: break-all;
 }
 
-.account-right {
-  display: flex;
-
-  align-items: center;
-
-  gap: 14px;
+.account-meta {
+  margin-top: 8px;
+  color: #8793a5;
+  font-size: 10px;
 }
 
-.account-status {
-  display: inline-flex;
-
-  align-items: center;
-
-  gap: 6px;
-
-  padding: 7px 9px;
-
-  border-radius: 999px;
-
-  color:
-    rgba(52,211,153,.78);
-
-  border:
-    1px solid
-    rgba(52,211,153,.10);
-
-  background:
-    rgba(16,185,129,.055);
-
-  font-size: 7px;
-
-  font-weight: 950;
-
-  letter-spacing: .10em;
-}
-
-.account-status-dot {
-  width: 5px;
-  height: 5px;
-
-  border-radius: 50%;
-
-  background:
-    #34d399;
-
-  box-shadow:
-    0 0 8px
-      rgba(52,211,153,.7);
-}
-
-.account-pages-count {
-  min-width: 51px;
-
-  text-align: center;
-}
-
-.account-pages-count strong {
-  display: block;
-
-  color:
-    #e0f2fe;
-
-  font-size: 19px;
-
-  font-weight: 950;
-
-  line-height: 1;
-}
-
-.account-pages-count span {
-  display: block;
-
-  margin-top: 4px;
-
-  color:
-    rgba(148,163,184,.42);
-
-  font-size: 6px;
-
-  font-weight: 900;
-
-  letter-spacing: .13em;
+.account-meta strong {
+  color: #3c4b61;
 }
 
 .account-actions {
   display: flex;
-
   align-items: center;
-
-  gap: 6px;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .account-actions form {
   margin: 0;
 }
 
-.btn {
-  min-height: 36px;
-
-  padding: 0 10px;
-
-  display: inline-flex;
-
-  align-items: center;
-
-  justify-content: center;
-
-  gap: 6px;
-
+.action-btn {
+  height: 38px;
+  padding: 0 12px;
   border-radius: 10px;
-
-  font-size: 9px;
-
-  font-weight: 850;
-
-  transition:
-    transform .18s ease,
-    box-shadow .18s ease,
-    background .18s ease;
-}
-
-.btn:hover {
-  transform:
-    translateY(-2px);
-}
-
-.btn-blue {
-  color:
-    #bfdbfe;
-
-  background:
-    rgba(37,99,235,.11);
-
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 900;
   border:
-    1px solid
-    rgba(96,165,250,.13);
+    1px solid #e1e7ef;
+  background: #fff;
 }
 
-.btn-blue:hover {
-  color: #fff;
-
-  background:
-    rgba(37,99,235,.20);
-
-  box-shadow:
-    0 10px 25px
-      rgba(37,99,235,.13);
+.action-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
-.btn-red {
-  color:
-    #fca5a5;
-
-  background:
-    rgba(220,38,38,.055);
-
-  border:
-    1px solid
-    rgba(248,113,113,.10);
+.sync-btn {
+  color: #1877f2;
 }
 
-.btn-red:hover {
-  color: #fff;
-
-  background:
-    rgba(220,38,38,.13);
-
-  box-shadow:
-    0 10px 25px
-      rgba(220,38,38,.10);
+.sync-btn:hover {
+  background: #f2f7ff;
+  border-color: #c9ddfa;
 }
 
-.btn-icon {
-  font-size: 13px;
+.remove-btn {
+  color: #d94645;
 }
 
-/* =========================================================
-   PAGES
-   ========================================================= */
+.remove-btn:hover {
+  background: #fff5f5;
+  border-color: #ffd4d4;
+}
 
 .pages-area {
-  padding: 17px 20px 20px;
+  padding: 20px 23px 24px;
 }
 
 .page-toolbar {
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
   gap: 15px;
-
-  margin-bottom: 11px;
-}
-
-.toolbar-title-wrap {
-  display: flex;
-
-  align-items: center;
-
-  gap: 9px;
-}
-
-.toolbar-live-dot {
-  width: 7px;
-  height: 7px;
-
-  border-radius: 50%;
-
-  background:
-    #22c55e;
-
-  box-shadow:
-    0 0 0 4px
-    rgba(34,197,94,.07),
-    0 0 13px
-    rgba(34,197,94,.45);
+  margin-bottom: 13px;
 }
 
 .toolbar-title {
-  color:
-    rgba(191,219,254,.68);
-
-  font-size: 8px;
-
-  font-weight: 950;
-
-  letter-spacing: .13em;
+  color: #28364c;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .toolbar-subtitle {
   margin-top: 3px;
-
-  color:
-    rgba(148,163,184,.40);
-
-  font-size: 8px;
+  color: #9aa5b5;
+  font-size: 10px;
 }
 
 .toolbar-actions {
   display: flex;
-
-  align-items: center;
-
   gap: 6px;
 }
 
 .toolbar-btn {
-  min-height: 31px;
-
+  height: 31px;
   padding: 0 10px;
-
-  border-radius: 9px;
-
-  color:
-    rgba(148,163,184,.66);
-
+  border-radius: 8px;
   border:
-    1px solid
-    rgba(148,163,184,.08);
-
-  background:
-    rgba(15,23,42,.60);
-
-  font-size: 8px;
-
-  font-weight: 850;
-
-  transition:
-    .18s ease;
+    1px solid #e0e6ee;
+  background: #f9fafc;
+  color: #647188;
+  font-size: 9px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .toolbar-btn:hover {
-  color: #fff;
-
-  border-color:
-    rgba(96,165,250,.16);
-
-  background:
-    rgba(30,41,59,.82);
+  border-color: #bdd5f5;
+  color: #1877f2;
+  background: #f4f8ff;
 }
 
-.toolbar-select {
-  color:
-    rgba(147,197,253,.80);
-}
-
-.pages-list {
-  display: grid;
-
-  grid-template-columns:
-    repeat(
-      auto-fit,
-      minmax(
-        300px,
-        1fr
-      )
-    );
-
+.page-list {
+  display: flex;
+  flex-direction: column;
   gap: 7px;
 }
 
 .page-row {
-  min-height: 60px;
-
   position: relative;
-
+  min-height: 63px;
+  padding: 10px 13px;
   display: flex;
-
   align-items: center;
-
-  gap: 10px;
-
-  padding: 9px 10px;
-
+  gap: 11px;
+  border-radius: 12px;
   border:
-    1px solid
-    rgba(148,163,184,.065);
-
-  border-radius: 14px;
-
-  background:
-    linear-gradient(
-      135deg,
-      rgba(15,30,50,.68),
-      rgba(9,20,35,.54)
-    );
-
+    1px solid #e8edf3;
+  background: #fafbfd;
   cursor: pointer;
-
-  overflow: hidden;
-
   transition:
-    transform .18s ease,
-    border-color .18s ease,
-    background .18s ease,
-    box-shadow .18s ease;
-}
-
-.page-row::before {
-  content: "";
-
-  position: absolute;
-
-  inset: 0;
-
-  pointer-events: none;
-
-  background:
-    linear-gradient(
-      100deg,
-      transparent,
-      rgba(96,165,250,.04),
-      transparent
-    );
-
-  transform:
-    translateX(-100%);
-
-  transition:
-    transform .45s ease;
+    border-color .16s,
+    background .16s,
+    transform .16s,
+    box-shadow .16s;
 }
 
 .page-row:hover {
-  transform:
-    translateY(-2px);
+  border-color: #c9ddf7;
+  background: #f7faff;
+  transform: translateY(-1px);
+}
 
-  border-color:
-    rgba(96,165,250,.16);
-
+.page-row.selected {
+  border-color: #8fbaf0;
   background:
     linear-gradient(
-      135deg,
-      rgba(18,38,65,.82),
-      rgba(10,24,41,.70)
+      90deg,
+      #f3f8ff,
+      #fbfdff
     );
-
   box-shadow:
-    0 12px 30px
-      rgba(0,0,0,.18);
+    0 7px 20px rgba(24,119,242,.06);
 }
 
-.page-row:hover::before {
-  transform:
-    translateX(100%);
-}
-
-.custom-check {
-  width: 21px;
-  height: 21px;
-
-  position: relative;
-
-  flex: 0 0 auto;
-}
-
-.custom-check input {
+.page-checkbox {
   position: absolute;
-
   opacity: 0;
-
   pointer-events: none;
 }
 
-.checkmark {
-  position: absolute;
-
-  inset: 0;
-
-  display: flex;
-
-  align-items: center;
-
-  justify-content: center;
-
+.custom-check {
+  width: 19px;
+  height: 19px;
+  border-radius: 6px;
   border:
-    1px solid
-    rgba(148,163,184,.18);
-
-  border-radius: 7px;
-
-  background:
-    rgba(2,6,23,.55);
-
-  color: transparent;
-
-  transition:
-    .18s ease;
-}
-
-.checkmark span {
-  font-size: 10px;
-
-  font-weight: 950;
-}
-
-.custom-check input:checked
-~ .checkmark {
+    1.5px solid #cdd6e2;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
   color: #fff;
-
-  border-color:
-    #3b82f6;
-
-  background:
-    linear-gradient(
-      135deg,
-      #1877f2,
-      #4f46e5
-    );
-
-  box-shadow:
-    0 5px 15px
-      rgba(37,99,235,.22);
+  transition: .15s;
 }
 
-.page-row:has(
-  .page-checkbox:checked
-) {
-  border-color:
-    rgba(59,130,246,.28);
+.custom-check svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0;
+  transform: scale(.7);
+  transition: .15s;
+}
 
-  background:
-    linear-gradient(
-      135deg,
-      rgba(20,48,88,.78),
-      rgba(15,29,55,.65)
-    );
+.page-checkbox:checked
++ .custom-check {
+  background: #1877f2;
+  border-color: #1877f2;
+}
 
-  box-shadow:
-    inset 3px 0 0
-      rgba(59,130,246,.80);
+.page-checkbox:checked
++ .custom-check svg {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .page-avatar {
-  width: 36px;
-  height: 36px;
-
-  flex: 0 0 auto;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
+  width: 37px;
+  height: 37px;
   border-radius: 11px;
-
-  color:
-    #bfdbfe;
-
-  background:
-    linear-gradient(
-      145deg,
-      rgba(37,99,235,.18),
-      rgba(79,70,229,.13)
-    );
-
-  border:
-    1px solid
-    rgba(96,165,250,.10);
-
-  font-size: 9px;
-
-  font-weight: 950;
+  font-size: 11px;
+  flex: 0 0 auto;
 }
 
 .page-info {
   min-width: 0;
-
   flex: 1;
 }
 
-.page-info strong {
+.page-name {
   display: block;
-
+  color: #26344a;
+  font-size: 12px;
+  font-weight: 900;
   overflow: hidden;
-
   text-overflow: ellipsis;
-
   white-space: nowrap;
-
-  color:
-    rgba(241,245,249,.90);
-
-  font-size: 10px;
-
-  font-weight: 850;
 }
 
-.page-info small {
+.page-id {
   display: block;
-
+  color: #9aa5b5;
+  font-size: 9px;
   margin-top: 4px;
-
   overflow: hidden;
-
   text-overflow: ellipsis;
-
   white-space: nowrap;
-
-  color:
-    rgba(148,163,184,.42);
-
-  font-size: 7px;
 }
 
 .page-ready {
   display: inline-flex;
-
   align-items: center;
-
   gap: 5px;
-
-  padding: 5px 7px;
-
-  border-radius: 999px;
-
-  color:
-    rgba(52,211,153,.68);
-
-  background:
-    rgba(16,185,129,.045);
-
-  border:
-    1px solid
-    rgba(52,211,153,.07);
-
-  font-size: 6px;
-
-  font-weight: 950;
-
-  letter-spacing: .10em;
+  color: #8490a1;
+  font-size: 9px;
+  font-weight: 800;
+  flex: 0 0 auto;
 }
 
 .ready-dot {
-  width: 4px;
-  height: 4px;
-
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-
-  background:
-    #34d399;
-
-  box-shadow:
-    0 0 7px
-      rgba(52,211,153,.65);
+  background: #2cc994;
 }
 
-.page-arrow {
-  color:
-    rgba(148,163,184,.20);
-
-  font-size: 17px;
-
-  transition:
-    color .18s ease,
-    transform .18s ease;
-}
-
-.page-row:hover .page-arrow {
-  color:
-    rgba(147,197,253,.65);
-
-  transform:
-    translateX(2px);
-}
-
-.empty-pages {
-  min-height: 86px;
-
+.no-pages {
   display: flex;
-
   align-items: center;
-
-  justify-content: center;
-
-  gap: 11px;
-
-  border-radius: 14px;
-
+  gap: 13px;
+  padding: 15px;
+  border-radius: 12px;
+  background: #fafbfd;
   border:
-    1px dashed
-    rgba(148,163,184,.10);
-
-  background:
-    rgba(15,23,42,.32);
+    1px dashed #dce3ec;
+  color: #778499;
 }
 
-.empty-pages-icon {
-  width: 36px;
-  height: 36px;
-
+.no-pages-icon {
+  width: 32px;
+  height: 32px;
   display: flex;
-
   align-items: center;
   justify-content: center;
-
-  border-radius: 11px;
-
-  color:
-    rgba(96,165,250,.65);
-
-  background:
-    rgba(37,99,235,.08);
-
-  font-size: 17px;
+  border-radius: 10px;
+  color: #d88920;
+  background: #fff6e7;
+  font-weight: 900;
 }
 
-.empty-pages strong {
-  display: block;
+.no-pages strong {
+  color: #39475c;
+  font-size: 11px;
+}
 
-  color:
-    rgba(226,232,240,.72);
-
+.no-pages p {
+  margin: 4px 0 0;
   font-size: 10px;
 }
 
-.empty-pages span {
-  display: block;
-
-  margin-top: 3px;
-
-  color:
-    rgba(148,163,184,.40);
-
-  font-size: 8px;
-}
-
-/* =========================================================
-   STUDIO
-   ========================================================= */
-
 .studio-card {
-  position: relative;
-
-  overflow: hidden;
-
-  padding: 25px;
-
+  margin-top: 24px;
+  padding: 26px;
+  border-radius: 22px;
+  background: #fff;
   border:
-    1px solid
-    rgba(96,165,250,.14);
-
-  border-radius: 27px;
-
-  background:
-    radial-gradient(
-      circle at 100% 0%,
-      rgba(79,70,229,.10),
-      transparent 29%
-    ),
-    radial-gradient(
-      circle at 0% 100%,
-      rgba(8,145,178,.075),
-      transparent 28%
-    ),
-    linear-gradient(
-      135deg,
-      rgba(12,28,49,.95),
-      rgba(7,17,31,.94)
-    );
-
+    1px solid #e4eaf2;
   box-shadow:
-    0 35px 85px
-      rgba(0,0,0,.30),
-    inset 0 1px 0
-      rgba(255,255,255,.045);
-}
-
-.studio-card::before {
-  content: "";
-
-  position: absolute;
-
-  left: 8%;
-  right: 8%;
-  top: 0;
-
-  height: 1px;
-
-  background:
-    linear-gradient(
-      90deg,
-      transparent,
-      rgba(96,165,250,.45),
-      rgba(129,140,248,.30),
-      transparent
-    );
-}
-
-.studio-glow {
-  position: absolute;
-
-  border-radius: 50%;
-
-  pointer-events: none;
-
-  filter: blur(60px);
-
-  opacity: .20;
-}
-
-.studio-glow-one {
-  width: 260px;
-  height: 260px;
-
-  right: -130px;
-  top: -120px;
-
-  background:
-    #2563eb;
-}
-
-.studio-glow-two {
-  width: 220px;
-  height: 220px;
-
-  left: -130px;
-  bottom: -130px;
-
-  background:
-    #7c3aed;
+    0 13px 38px rgba(18,34,55,.065);
 }
 
 .studio-heading {
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
   gap: 20px;
-
-  position: relative;
-
-  z-index: 2;
+  margin-bottom: 22px;
 }
 
 .studio-title-wrap {
   display: flex;
-
   align-items: center;
-
-  gap: 13px;
-}
-
-.studio-icon-wrap {
-  position: relative;
+  gap: 14px;
 }
 
 .studio-icon {
   width: 48px;
   height: 48px;
-
+  border-radius: 15px;
   display: flex;
-
   align-items: center;
   justify-content: center;
-
-  border-radius: 15px;
-
-  color: #bfdbfe;
-
-  background:
-    linear-gradient(
-      145deg,
-      rgba(37,99,235,.22),
-      rgba(79,70,229,.18)
-    );
-
-  border:
-    1px solid
-    rgba(96,165,250,.16);
-
-  box-shadow:
-    0 12px 30px
-      rgba(37,99,235,.12);
-
-  font-size: 20px;
+  color: #1877f2;
+  background: #edf5ff;
+  flex: 0 0 auto;
 }
 
-.studio-icon-wrap > span {
-  position: absolute;
-
-  width: 6px;
-  height: 6px;
-
-  right: -2px;
-  top: -2px;
-
-  border-radius: 50%;
-
-  background:
-    #22d3ee;
-
-  box-shadow:
-    0 0 12px
-      rgba(34,211,238,.8);
+.studio-icon svg {
+  width: 22px;
+  height: 22px;
 }
 
-.studio-kicker {
-  color:
-    #60a5fa;
-
-  font-size: 8px;
-
-  font-weight: 950;
-
-  letter-spacing: .19em;
-
-  margin-bottom: 5px;
+.studio-title-wrap h2 {
+  margin: 4px 0 3px;
+  font-size: 19px;
+  letter-spacing: -.03em;
 }
 
-.studio-heading h2 {
+.studio-title-wrap p {
   margin: 0;
-
-  color: #f8fafc;
-
-  font-size: 22px;
-
-  font-weight: 950;
-
-  letter-spacing: -.035em;
-}
-
-.studio-heading p {
-  margin: 5px 0 0;
-
-  color:
-    rgba(148,163,184,.55);
-
-  font-size: 9px;
+  color: #8d98a9;
+  font-size: 10px;
 }
 
 .selected-pill {
-  min-height: 36px;
-
   display: inline-flex;
-
   align-items: center;
-
   gap: 7px;
-
+  min-height: 33px;
   padding: 0 11px;
-
-  border-radius: 999px;
-
-  color:
-    rgba(52,211,153,.78);
-
-  border:
-    1px solid
-    rgba(52,211,153,.10);
-
-  background:
-    rgba(16,185,129,.055);
-
-  font-size: 8px;
-
+  border-radius: 99px;
+  background: #edf5ff;
+  color: #1877f2;
+  font-size: 10px;
   font-weight: 900;
-
   white-space: nowrap;
 }
 
 .selected-dot {
   width: 6px;
   height: 6px;
-
   border-radius: 50%;
-
-  background:
-    #34d399;
-
-  box-shadow:
-    0 0 10px
-      rgba(52,211,153,.65);
-
-  animation:
-    pulse
-    2s
-    ease-in-out
-    infinite;
+  background: #1877f2;
 }
 
-.studio-divider {
-  height: 1px;
-
-  margin:
-    22px 0;
-
-  background:
-    linear-gradient(
-      90deg,
-      rgba(148,163,184,.09),
-      transparent
-    );
+.composer-box {
+  border:
+    1px solid #e3e8ef;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #fbfcfe;
 }
 
-/* =========================================================
-   FORM FIELDS
-   ========================================================= */
-
-.field {
-  margin-bottom: 18px;
-
-  position: relative;
-
-  z-index: 2;
-}
-
-.field-heading {
+.composer-top {
+  min-height: 44px;
+  padding: 0 14px;
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
-  gap: 10px;
-
-  margin-bottom: 8px;
+  border-bottom:
+    1px solid #e8edf3;
+  background: #fff;
 }
 
-.field-heading label {
-  color:
-    rgba(226,232,240,.78);
-
+.composer-top label {
+  color: #334259;
   font-size: 10px;
-
   font-weight: 900;
-}
-
-.field-badge {
-  padding: 4px 6px;
-
-  border-radius: 5px;
-
-  color:
-    rgba(96,165,250,.62);
-
-  background:
-    rgba(37,99,235,.07);
-
-  border:
-    1px solid
-    rgba(96,165,250,.07);
-
-  font-size: 6px;
-
-  font-weight: 950;
-
-  letter-spacing: .11em;
-}
-
-.field-badge-soft {
-  color:
-    rgba(148,163,184,.42);
-
-  background:
-    rgba(148,163,184,.035);
-
-  border-color:
-    rgba(148,163,184,.06);
-}
-
-.textarea-shell {
-  position: relative;
-}
-
-.textarea-decoration {
-  position: absolute;
-
-  left: 13px;
-  top: 13px;
-
-  width: 28px;
-  height: 28px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 8px;
-
-  color:
-    rgba(147,197,253,.46);
-
-  background:
-    rgba(37,99,235,.07);
-
-  font-size: 9px;
-
-  font-weight: 950;
-
-  pointer-events: none;
-
-  z-index: 2;
-}
-
-textarea {
-  width: 100%;
-
-  min-height: 155px;
-
-  resize: vertical;
-
-  padding:
-    17px
-    15px
-    15px
-    53px;
-
-  border:
-    1px solid
-    rgba(148,163,184,.10);
-
-  border-radius: 16px;
-
-  outline: none;
-
-  background:
-    rgba(2,8,20,.52);
-
-  color:
-    #e2e8f0;
-
-  caret-color:
-    #60a5fa;
-
-  font-size: 12px;
-
-  line-height: 1.65;
-
-  transition:
-    border-color .2s ease,
-    box-shadow .2s ease,
-    background .2s ease;
-}
-
-textarea::placeholder {
-  color:
-    rgba(148,163,184,.28);
-}
-
-textarea:focus {
-  border-color:
-    rgba(96,165,250,.28);
-
-  background:
-    rgba(2,8,20,.72);
-
-  box-shadow:
-    0 0 0 4px
-      rgba(37,99,235,.055),
-    0 18px 40px
-      rgba(0,0,0,.12);
-}
-
-.field-meta {
-  margin-top: 6px;
-
-  display: flex;
-
-  align-items: center;
-
-  justify-content: space-between;
-
-  gap: 10px;
-
-  color:
-    rgba(148,163,184,.36);
-
-  font-size: 7px;
 }
 
 #char-count {
-  color:
-    rgba(147,197,253,.50);
+  color: #a1aaba;
+  font-size: 9px;
+}
 
-  font-weight: 850;
+#message {
+  width: 100%;
+  min-height: 145px;
+  resize: vertical;
+  padding: 16px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #253349;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+#message::placeholder {
+  color: #adb7c5;
 }
 
 .upload-box {
-  min-height: 137px;
-
   position: relative;
-
-  display: flex;
-
-  flex-direction: column;
-
-  align-items: center;
-
-  justify-content: center;
-
-  gap: 4px;
-
-  padding: 20px;
-
-  overflow: hidden;
-
+  min-height: 150px;
+  margin-top: 14px;
+  border-radius: 15px;
   border:
-    1px dashed
-    rgba(96,165,250,.16);
-
-  border-radius: 17px;
-
-  background:
-    radial-gradient(
-      circle at center,
-      rgba(37,99,235,.055),
-      transparent 50%
-    ),
-    rgba(2,8,20,.40);
-
+    1.5px dashed #cfd9e6;
+  background: #fafcff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-
   cursor: pointer;
-
-  transition:
-    border-color .2s ease,
-    background .2s ease,
-    transform .2s ease;
-}
-
-.upload-box::before {
-  content: "";
-
-  position: absolute;
-
-  width: 45%;
-  height: 1px;
-
-  top: 0;
-  left: 27.5%;
-
-  background:
-    linear-gradient(
-      90deg,
-      transparent,
-      rgba(96,165,250,.35),
-      transparent
-    );
+  overflow: hidden;
+  transition: .18s;
 }
 
 .upload-box:hover,
-.upload-box.dragging {
-  border-color:
-    rgba(96,165,250,.35);
-
-  background:
-    radial-gradient(
-      circle at center,
-      rgba(37,99,235,.10),
-      transparent 55%
-    ),
-    rgba(2,8,20,.60);
-
-  transform:
-    translateY(-2px);
-}
-
 .upload-box.has-file {
-  border-style:
-    solid;
-
-  border-color:
-    rgba(52,211,153,.22);
-
-  background:
-    rgba(6,78,59,.08);
-}
-
-.upload-pulse {
-  position: absolute;
-
-  width: 90px;
-  height: 90px;
-
-  border-radius: 50%;
-
-  background:
-    rgba(37,99,235,.07);
-
-  filter: blur(10px);
-
-  animation:
-    pulse
-    3s
-    ease-in-out
-    infinite;
-
-  pointer-events: none;
-}
-
-.upload-icon {
-  width: 38px;
-  height: 38px;
-
-  position: relative;
-
-  z-index: 2;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 12px;
-
-  color:
-    #93c5fd;
-
-  background:
-    linear-gradient(
-      145deg,
-      rgba(37,99,235,.16),
-      rgba(79,70,229,.13)
-    );
-
-  border:
-    1px solid
-    rgba(96,165,250,.12);
-
-  font-size: 19px;
-
-  font-weight: 900;
-}
-
-.upload-box strong {
-  position: relative;
-
-  z-index: 2;
-
-  max-width: 88%;
-
-  overflow: hidden;
-
-  text-overflow: ellipsis;
-
-  white-space: nowrap;
-
-  color:
-    rgba(226,232,240,.76);
-
-  font-size: 10px;
-
-  font-weight: 900;
-}
-
-.upload-box > span {
-  position: relative;
-
-  z-index: 2;
-
-  color:
-    rgba(148,163,184,.38);
-
-  font-size: 7px;
-}
-
-.upload-box small {
-  position: relative;
-
-  z-index: 2;
-
-  margin-top: 2px;
-
-  color:
-    rgba(96,165,250,.48);
-
-  font-size: 7px;
-
-  font-weight: 800;
+  border-color: #8db9ed;
+  background: #f5f9ff;
 }
 
 .upload-box input {
   position: absolute;
-
   inset: 0;
-
+  width: 100%;
+  height: 100%;
   opacity: 0;
-
   cursor: pointer;
 }
 
-/* =========================================================
-   BATCH NOTICE
-   ========================================================= */
-
-.batch-notice {
+.upload-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
   display: flex;
-
-  align-items: center;
-
-  gap: 12px;
-
-  position: relative;
-
-  z-index: 2;
-
-  padding: 13px 14px;
-
-  margin:
-    2px 0 20px;
-
-  border:
-    1px solid
-    rgba(96,165,250,.09);
-
-  border-radius: 15px;
-
-  background:
-    linear-gradient(
-      100deg,
-      rgba(37,99,235,.075),
-      rgba(79,70,229,.045)
-    );
-}
-
-.batch-icon {
-  width: 34px;
-  height: 34px;
-
-  flex: 0 0 auto;
-
-  display: flex;
-
   align-items: center;
   justify-content: center;
-
-  border-radius: 10px;
-
-  color:
-    #fbbf24;
-
-  background:
-    rgba(245,158,11,.07);
-
-  border:
-    1px solid
-    rgba(245,158,11,.08);
-
-  font-size: 14px;
+  color: #1877f2;
+  background: #eaf3ff;
+  margin-bottom: 8px;
 }
 
-.batch-content {
-  flex: 1;
-
-  min-width: 0;
+.upload-icon svg {
+  width: 20px;
+  height: 20px;
 }
 
-.batch-title-line {
-  display: flex;
-
-  align-items: center;
-
-  gap: 8px;
-}
-
-.batch-title-line strong {
-  color:
-    rgba(191,219,254,.76);
-
-  font-size: 9px;
-
+.upload-title {
+  color: #36445a;
+  font-size: 11px;
   font-weight: 900;
 }
 
-.batch-title-line span {
-  padding: 3px 5px;
-
-  border-radius: 4px;
-
-  color:
-    rgba(96,165,250,.55);
-
-  background:
-    rgba(37,99,235,.07);
-
-  font-size: 5px;
-
-  font-weight: 950;
-
-  letter-spacing: .08em;
+.upload-subtitle {
+  color: #98a4b5;
+  font-size: 9px;
+  margin-top: 4px;
 }
 
-.batch-content p {
-  margin: 4px 0 0;
-
-  color:
-    rgba(148,163,184,.42);
-
-  font-size: 7px;
-
-  line-height: 1.5;
+.upload-hint {
+  color: #b0b8c5;
+  font-size: 8px;
+  margin-top: 9px;
 }
 
-.batch-engine-status {
-  display: inline-flex;
-
-  align-items: center;
-
-  gap: 5px;
-
-  padding: 6px 7px;
-
-  border-radius: 999px;
-
-  color:
-    rgba(52,211,153,.60);
-
-  background:
-    rgba(16,185,129,.045);
-
-  border:
-    1px solid
-    rgba(52,211,153,.07);
-
-  font-size: 5px;
-
-  font-weight: 950;
-
-  letter-spacing: .08em;
+.file-name {
+  max-width: 80%;
+  color: #1877f2;
+  font-size: 9px;
+  font-weight: 800;
+  margin-top: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.batch-engine-status span {
-  width: 4px;
-  height: 4px;
-
-  border-radius: 50%;
-
-  background:
-    #34d399;
-}
-
-/* =========================================================
-   PUBLISH FOOTER
-   ========================================================= */
 
 .publish-footer {
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
   gap: 15px;
-
-  position: relative;
-
-  z-index: 2;
+  margin-top: 18px;
 }
 
-.publish-footer-left {
+.publish-info {
   display: flex;
-
   align-items: center;
-
   gap: 9px;
 }
 
-.publish-shield {
-  width: 30px;
-  height: 30px;
-
+.publish-info-icon {
+  width: 31px;
+  height: 31px;
   display: flex;
-
   align-items: center;
   justify-content: center;
+  border-radius: 10px;
+  color: #0ca879;
+  background: #eafaf4;
+  font-size: 12px;
+  font-weight: 900;
+}
 
-  border-radius: 9px;
-
-  color:
-    #34d399;
-
-  background:
-    rgba(16,185,129,.065);
-
-  border:
-    1px solid
-    rgba(52,211,153,.08);
-
+.publish-info strong {
+  display: block;
+  color: #39475c;
   font-size: 10px;
-
-  font-weight: 950;
 }
 
-.publish-footer-left strong {
+.publish-info span {
   display: block;
-
-  color:
-    rgba(226,232,240,.65);
-
-  font-size: 8px;
-
-  font-weight: 850;
-}
-
-.publish-footer-left span {
-  display: block;
-
-  margin-top: 3px;
-
-  color:
-    rgba(148,163,184,.34);
-
-  font-size: 7px;
+  color: #99a4b4;
+  font-size: 9px;
+  margin-top: 2px;
 }
 
 .publish-btn {
-  min-height: 49px;
-
-  padding: 0 10px 0 13px;
-
+  min-width: 190px;
+  height: 46px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 17px;
   display: inline-flex;
-
   align-items: center;
-
+  justify-content: center;
   gap: 9px;
-
-  border-radius: 13px;
-
   color: #fff;
-
   background:
     linear-gradient(
       135deg,
-      #155eef,
-      #4f46e5
+      #1877f2,
+      #0d5fd2
     );
-
+  font-size: 10px;
+  font-weight: 900;
+  cursor: pointer;
   box-shadow:
-    0 15px 35px
-      rgba(37,99,235,.19);
-
-  font-size: 9px;
-
-  font-weight: 950;
-
-  position: relative;
-
-  overflow: hidden;
-
-  transition:
-    transform .2s ease,
-    box-shadow .2s ease,
-    opacity .2s ease;
-}
-
-.publish-btn::before {
-  content: "";
-
-  position: absolute;
-
-  inset: 0;
-
-  background:
-    linear-gradient(
-      90deg,
-      transparent,
-      rgba(255,255,255,.16),
-      transparent
-    );
-
-  transform:
-    translateX(-130%);
-}
-
-.publish-btn:hover::before {
-  animation:
-    shine
-    .8s
-    ease;
+    0 12px 25px rgba(24,119,242,.22);
+  transition: .18s;
 }
 
 .publish-btn:hover {
-  transform:
-    translateY(-3px);
-
+  transform: translateY(-1px);
   box-shadow:
-    0 21px 45px
-      rgba(37,99,235,.28);
-}
-
-.publish-btn.has-selection {
-  box-shadow:
-    0 15px 40px
-      rgba(37,99,235,.26);
+    0 16px 30px rgba(24,119,242,.28);
 }
 
 .publish-btn:disabled {
-  opacity: .65;
-
   cursor: wait;
-
+  opacity: .82;
   transform: none;
 }
 
-.publish-btn-icon {
-  width: 29px;
-  height: 29px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 8px;
-
-  background:
-    rgba(255,255,255,.12);
-
-  font-size: 10px;
+.publish-arrow {
+  width: 15px;
+  height: 15px;
 }
 
-.publish-btn-arrow {
-  width: 27px;
-  height: 27px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 8px;
-
-  background:
-    rgba(255,255,255,.10);
-
-  font-size: 13px;
+.publish-spinner {
+  display: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border:
+    2px solid rgba(255,255,255,.35);
+  border-top-color: #fff;
+  animation:
+    spin .7s linear infinite;
 }
 
-/* =========================================================
-   EMPTY STATE
-   ========================================================= */
+.publish-btn.loading
+.publish-btn-text {
+  display: none;
+}
+
+.publish-btn.loading
+.publish-arrow {
+  display: none;
+}
+
+.publish-btn.loading
+.publish-spinner {
+  display: block;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 .empty-state {
-  min-height: 390px;
-
-  display: flex;
-
-  flex-direction: column;
-
-  align-items: center;
-
-  justify-content: center;
-
-  padding: 45px 25px;
-
-  position: relative;
-
-  overflow: hidden;
-
+  margin: 24px 0;
+  padding: 60px 30px;
   text-align: center;
-
+  border-radius: 22px;
+  background: #fff;
   border:
-    1px solid
-    rgba(96,165,250,.12);
-
-  border-radius: 25px;
-
-  background:
-    radial-gradient(
-      circle at center,
-      rgba(37,99,235,.08),
-      transparent 40%
-    ),
-    rgba(8,20,35,.72);
-
+    1px solid #e4eaf2;
   box-shadow:
-    0 30px 70px
-      rgba(0,0,0,.24);
+    0 12px 34px rgba(18,34,55,.055);
 }
 
-.empty-state::before {
-  content: "";
-
-  position: absolute;
-
-  width: 500px;
-  height: 500px;
-
-  border-radius: 50%;
-
-  border:
-    1px solid
-    rgba(96,165,250,.05);
-
-  box-shadow:
-    0 0 0 80px
-      rgba(96,165,250,.012),
-    0 0 0 160px
-      rgba(96,165,250,.008);
-}
-
-.empty-visual {
-  width: 82px;
-  height: 82px;
-
-  position: relative;
-
+.empty-icon {
+  width: 65px;
+  height: 65px;
+  margin: 0 auto 17px;
   display: flex;
-
   align-items: center;
   justify-content: center;
-
-  margin-bottom: 18px;
+  border-radius: 19px;
+  color: #1877f2;
+  background: #edf5ff;
 }
 
-.empty-visual-ring {
-  position: absolute;
-
-  inset: 0;
-
-  border:
-    1px solid
-    rgba(96,165,250,.22);
-
-  border-radius: 50%;
-
-  animation:
-    rotate
-    8s
-    linear
-    infinite;
+.empty-icon svg {
+  width: 28px;
+  height: 28px;
 }
 
-.empty-visual-ring::before {
-  content: "";
-
-  position: absolute;
-
-  width: 7px;
-  height: 7px;
-
-  top: -3px;
-  left: 50%;
-
-  border-radius: 50%;
-
-  background:
-    #60a5fa;
-
-  box-shadow:
-    0 0 15px
-      rgba(96,165,250,.8);
-}
-
-.empty-visual-icon {
-  width: 52px;
-  height: 52px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 16px;
-
-  color: #fff;
-
-  background:
-    linear-gradient(
-      145deg,
-      #1877f2,
-      #4f46e5
-    );
-
-  box-shadow:
-    0 18px 35px
-      rgba(37,99,235,.25);
-
-  font-size: 24px;
-
-  font-weight: 950;
-}
-
-.empty-kicker {
-  color:
-    rgba(96,165,250,.65);
-
-  font-size: 7px;
-
-  font-weight: 950;
-
-  letter-spacing: .20em;
-
-  position: relative;
-}
-
-.empty-state h2 {
-  margin: 7px 0 6px;
-
-  color:
-    #f8fafc;
-
-  font-size: 22px;
-
-  font-weight: 950;
-
-  letter-spacing: -.035em;
-
-  position: relative;
+.empty-state h3 {
+  margin: 8px 0 8px;
+  font-size: 21px;
+  letter-spacing: -.03em;
 }
 
 .empty-state p {
   max-width: 470px;
-
-  margin: 0 0 20px;
-
-  color:
-    rgba(148,163,184,.48);
-
-  font-size: 10px;
-
+  margin: 0 auto 21px;
+  color: #8793a5;
+  font-size: 12px;
   line-height: 1.6;
-
-  position: relative;
 }
 
-.empty-connect {
-  position: relative;
-}
-
-/* =========================================================
-   FOOTER
-   ========================================================= */
-
-.dashboard-footer {
-  width:
-    min(
-      1160px,
-      calc(100% - 32px)
-    );
-
-  margin:
-    36px auto 0;
-
-  padding:
-    17px 3px;
-
-  display: flex;
-
+.primary-btn {
+  display: inline-flex;
   align-items: center;
-
-  justify-content: space-between;
-
-  gap: 15px;
-
-  color:
-    rgba(148,163,184,.28);
-
-  border-top:
-    1px solid
-    rgba(148,163,184,.06);
-
-  font-size: 7px;
-
-  font-weight: 800;
-
-  letter-spacing: .06em;
+  justify-content: center;
+  gap: 9px;
+  min-height: 43px;
+  padding: 0 16px;
+  border-radius: 11px;
+  background: #1877f2;
+  color: #fff;
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 900;
 }
 
-.dashboard-footer strong {
-  color:
-    rgba(147,197,253,.45);
-
-  font-weight: 950;
-}
-
-.footer-status {
-  display: flex;
-
+.fb-symbol {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
   align-items: center;
-
-  gap: 6px;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(255,255,255,.15);
+  font-weight: 900;
+  font-size: 15px;
 }
 
-.footer-status span {
-  width: 5px;
-  height: 5px;
+.error-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 25px;
+  background: #f5f8fc;
+}
 
-  border-radius: 50%;
-
-  background:
-    #34d399;
-
+.error-box {
+  width: 100%;
+  max-width: 760px;
+  padding: 32px;
+  border-radius: 20px;
+  background: #fff;
+  border:
+    1px solid #e3e8ef;
   box-shadow:
-    0 0 9px
-      rgba(52,211,153,.7);
+    0 16px 50px rgba(18,34,55,.08);
 }
 
-/* =========================================================
-   RESULTS PAGE
-   ========================================================= */
+.error-icon {
+  width: 45px;
+  height: 45px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: #fff0f0;
+  color: #d94141;
+  font-size: 20px;
+  font-weight: 900;
+  margin-bottom: 17px;
+}
+
+.error-box h2 {
+  margin: 8px 0;
+  font-size: 24px;
+}
+
+.error-intro,
+.error-detail {
+  color: #7e899a;
+  font-size: 12px;
+}
+
+.error-box pre {
+  margin-top: 18px;
+  padding: 15px;
+  max-height: 330px;
+  overflow: auto;
+  border-radius: 12px;
+  background: #f7f8fa;
+  color: #59667a;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  margin-top: 18px;
+  padding: 0 15px;
+  border-radius: 10px;
+  background: #1877f2;
+  color: #fff;
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: 900;
+}
 
 .results-page {
   min-height: 100vh;
-
-  position: relative;
-
-  padding:
-    18px 0 60px;
-}
-
-.results-background-orb {
-  position: fixed;
-
-  border-radius: 50%;
-
-  pointer-events: none;
-
-  filter: blur(80px);
-
-  opacity: .22;
-}
-
-.result-orb-one {
-  width: 420px;
-  height: 420px;
-
-  left: -220px;
-  top: 160px;
-
   background:
-    #2563eb;
-}
-
-.result-orb-two {
-  width: 390px;
-  height: 390px;
-
-  right: -210px;
-  bottom: 100px;
-
-  background:
-    #7c3aed;
-}
-
-.results-container {
-  width:
-    min(
-      1100px,
-      calc(100% - 32px)
-    );
-
-  margin: 0 auto;
+    radial-gradient(
+      circle at 50% -10%,
+      rgba(24,119,242,.12),
+      transparent 35%
+    ),
+    #f5f8fc;
 }
 
 .results-topbar {
-  min-height: 68px;
-
-  padding: 9px 10px 9px 13px;
-
+  min-height: 76px;
+  padding: 0 26px;
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
-  gap: 15px;
-
-  border:
-    1px solid
-    rgba(148,163,184,.11);
-
-  border-radius: 18px;
-
-  background:
-    rgba(9,20,35,.76);
-
-  box-shadow:
-    0 18px 50px
-      rgba(0,0,0,.22);
-
-  backdrop-filter:
-    blur(16px);
+  background: #081628;
+  color: #fff;
 }
 
 .results-brand {
   display: flex;
-
   align-items: center;
-
-  gap: 10px;
+  gap: 11px;
+  color: #fff;
+  text-decoration: none;
 }
 
-.results-logo {
-  width: 42px;
-  height: 42px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
+.small-mark {
+  width: 40px;
+  height: 40px;
   border-radius: 12px;
-
-  color: #fff;
-
-  background:
-    linear-gradient(
-      145deg,
-      #1877f2,
-      #4f46e5
-    );
-
-  font-size: 20px;
-
-  font-weight: 950;
+  font-size: 25px;
+  box-shadow: none;
 }
 
-.results-brand-mini {
-  color:
-    rgba(96,165,250,.70);
-
-  font-size: 7px;
-
-  font-weight: 950;
-
-  letter-spacing: .18em;
-}
-
-.results-brand-name {
-  margin-top: 3px;
-
-  color:
-    rgba(226,232,240,.60);
-
-  font-size: 8px;
-
-  font-weight: 850;
-
-  letter-spacing: .05em;
-}
-
-.results-back {
-  min-height: 39px;
-
-  display: inline-flex;
-
-  align-items: center;
-
-  gap: 7px;
-
-  padding: 0 12px;
-
-  border-radius: 10px;
-
-  color:
-    rgba(191,219,254,.72);
-
-  border:
-    1px solid
-    rgba(96,165,250,.10);
-
-  background:
-    rgba(37,99,235,.06);
-
-  font-size: 9px;
-
-  font-weight: 850;
-}
-
-.results-back:hover {
-  color: #fff;
-
-  background:
-    rgba(37,99,235,.13);
+.results-container {
+  max-width: 950px;
+  margin: 0 auto;
+  padding: 60px 24px 70px;
 }
 
 .results-hero {
-  min-height: 230px;
-
-  display: flex;
-
-  align-items: center;
-
-  gap: 25px;
-
-  padding:
-    35px 10px 20px;
+  text-align: center;
 }
 
-.results-success-ring {
-  width: 78px;
-  height: 78px;
-
-  flex: 0 0 auto;
-
-  padding: 1px;
-
-  border-radius: 50%;
-
-  background:
-    conic-gradient(
-      #34d399,
-      #22d3ee,
-      #2563eb,
-      #34d399
-    );
-
-  box-shadow:
-    0 0 40px
-      rgba(52,211,153,.12);
-}
-
-.results-success-ring > div {
-  width: 100%;
-  height: 100%;
-
+.success-big-icon {
+  width: 66px;
+  height: 66px;
+  margin: 0 auto 18px;
+  border-radius: 21px;
   display: flex;
-
   align-items: center;
   justify-content: center;
-
-  border-radius: 50%;
-
-  background:
-    #061322;
-
-  color:
-    #34d399;
-
-  font-size: 28px;
-
-  font-weight: 950;
-}
-
-.results-kicker {
-  color:
-    rgba(52,211,153,.68);
-
-  font-size: 8px;
-
-  font-weight: 950;
-
-  letter-spacing: .20em;
+  background: #eafaf4;
+  color: #0ca879;
+  font-size: 30px;
+  font-weight: 900;
 }
 
 .results-hero h1 {
-  margin: 5px 0 6px;
-
-  color: #f8fafc;
-
-  font-size: 42px;
-
-  line-height: 1;
-
-  letter-spacing: -.055em;
-
-  font-weight: 950;
+  margin: 8px 0 10px;
+  font-size: 34px;
+  letter-spacing: -.045em;
 }
 
 .results-hero p {
-  margin: 0;
-
-  color:
-    rgba(148,163,184,.50);
-
-  font-size: 10px;
+  margin: 0 auto;
+  max-width: 650px;
+  color: #8793a5;
+  font-size: 12px;
+  line-height: 1.65;
 }
 
 .results-stats {
   display: grid;
-
   grid-template-columns:
-    repeat(3,1fr);
-
-  gap: 10px;
-
-  margin-bottom: 17px;
+    repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 32px 0 18px;
 }
 
 .result-stat {
-  min-height: 90px;
-
-  display: flex;
-
-  align-items: center;
-
-  gap: 11px;
-
-  padding: 15px;
-
+  padding: 19px;
+  border-radius: 15px;
+  background: #fff;
   border:
-    1px solid
-    rgba(148,163,184,.09);
-
-  border-radius: 16px;
-
-  background:
-    rgba(9,20,35,.72);
-
-  box-shadow:
-    0 15px 40px
-      rgba(0,0,0,.15);
-}
-
-.result-stat-icon {
-  width: 38px;
-  height: 38px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 11px;
-
-  font-size: 14px;
-
-  font-weight: 950;
-}
-
-.result-stat-total .result-stat-icon {
-  color: #60a5fa;
-  background:
-    rgba(37,99,235,.09);
-}
-
-.result-stat-success .result-stat-icon {
-  color: #34d399;
-  background:
-    rgba(16,185,129,.08);
-}
-
-.result-stat-failed .result-stat-icon {
-  color: #f87171;
-  background:
-    rgba(220,38,38,.07);
+    1px solid #e4eaf2;
+  text-align: center;
 }
 
 .result-stat span {
   display: block;
-
-  color:
-    rgba(148,163,184,.40);
-
-  font-size: 7px;
-
-  font-weight: 850;
-
+  color: #8c98a9;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
   letter-spacing: .08em;
 }
 
 .result-stat strong {
   display: block;
-
   margin-top: 4px;
+  font-size: 25px;
+}
 
-  color:
-    #f1f5f9;
+.success-stat strong {
+  color: #0ca879;
+}
 
-  font-size: 22px;
+.failed-stat strong {
+  color: #d94141;
+}
 
-  font-weight: 950;
+.total-stat strong {
+  color: #1877f2;
 }
 
 .results-card {
-  overflow: hidden;
-
-  padding: 19px;
-
+  padding: 22px;
+  border-radius: 20px;
+  background: #fff;
   border:
-    1px solid
-    rgba(148,163,184,.10);
-
-  border-radius: 21px;
-
-  background:
-    rgba(9,20,35,.78);
-
+    1px solid #e4eaf2;
   box-shadow:
-    0 25px 65px
-      rgba(0,0,0,.22);
+    0 12px 35px rgba(18,34,55,.055);
 }
 
 .results-card-header {
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
   gap: 15px;
-
-  padding-bottom: 13px;
-
+  padding-bottom: 17px;
   border-bottom:
-    1px solid
-    rgba(148,163,184,.07);
-}
-
-.results-card-kicker {
-  color:
-    rgba(96,165,250,.50);
-
-  font-size: 6px;
-
-  font-weight: 950;
-
-  letter-spacing: .18em;
+    1px solid #edf1f5;
+  margin-bottom: 14px;
 }
 
 .results-card-header h2 {
-  margin: 4px 0 0;
+  margin: 5px 0 0;
+  font-size: 18px;
+}
 
-  color:
-    rgba(241,245,249,.82);
-
-  font-size: 15px;
-
+.report-pill {
+  padding: 7px 10px;
+  border-radius: 99px;
+  background: #edf5ff;
+  color: #1877f2;
+  font-size: 9px;
   font-weight: 900;
 }
 
-.results-live {
-  display: inline-flex;
-
-  align-items: center;
-
-  gap: 5px;
-
-  padding: 6px 8px;
-
-  border-radius: 999px;
-
-  color:
-    rgba(52,211,153,.60);
-
-  background:
-    rgba(16,185,129,.045);
-
-  border:
-    1px solid
-    rgba(52,211,153,.07);
-
-  font-size: 6px;
-
-  font-weight: 950;
-
-  letter-spacing: .08em;
-}
-
-.results-live span {
-  width: 4px;
-  height: 4px;
-
-  border-radius: 50%;
-
-  background:
-    #34d399;
-}
-
 .results-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .result-row {
-  display: grid;
-
-  grid-template-columns:
-    1fr auto;
-
-  gap: 12px;
-
-  padding: 12px 4px;
-
-  border-bottom:
-    1px solid
-    rgba(148,163,184,.055);
-}
-
-.result-row:last-child {
-  border-bottom: 0;
-}
-
-.result-page-main {
-  display: flex;
-
-  align-items: center;
-
-  gap: 9px;
-}
-
-.result-page-avatar {
-  width: 33px;
-  height: 33px;
-
-  flex: 0 0 auto;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 10px;
-
-  color:
-    #bfdbfe;
-
-  background:
-    rgba(37,99,235,.10);
-
+  padding: 12px;
+  border-radius: 12px;
   border:
-    1px solid
-    rgba(96,165,250,.09);
-
-  font-size: 8px;
-
-  font-weight: 950;
+    1px solid #e5eaf0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 15px;
 }
 
-.result-row strong {
-  color:
-    rgba(226,232,240,.76);
+.result-success {
+  background: #fbfffd;
+  border-color: #d7eee4;
+}
 
+.result-failed {
+  background: #fffafa;
+  border-color: #f1dddd;
+}
+
+.result-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.result-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   font-size: 9px;
-
-  font-weight: 850;
+  flex: 0 0 auto;
 }
 
-.result-id {
-  margin-top: 3px;
-
-  color:
-    rgba(148,163,184,.33);
-
-  font-size: 6px;
+.result-main strong {
+  color: #334259;
+  font-size: 11px;
 }
 
-.result-post-id {
+.result-page-id {
   margin-top: 3px;
-
-  color:
-    rgba(52,211,153,.43);
-
-  font-size: 6px;
+  color: #9ba6b5;
+  font-size: 8px;
 }
 
 .result-status {
   align-self: center;
-
   display: inline-flex;
-
   align-items: center;
-
   gap: 5px;
-
-  padding: 6px 8px;
-
-  border-radius: 999px;
-
-  font-size: 6px;
-
-  font-weight: 950;
-
-  letter-spacing: .06em;
-}
-
-.result-status.success {
-  color:
-    rgba(52,211,153,.72);
-
-  background:
-    rgba(16,185,129,.055);
-
-  border:
-    1px solid
-    rgba(52,211,153,.08);
-}
-
-.result-status.failed {
-  color:
-    rgba(248,113,113,.72);
-
-  background:
-    rgba(220,38,38,.05);
-
-  border:
-    1px solid
-    rgba(248,113,113,.08);
-}
-
-.status-icon {
-  width: 14px;
-  height: 14px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 50%;
-
-  background:
-    rgba(255,255,255,.04);
-
-  font-size: 7px;
-}
-
-.result-error {
-  grid-column:
-    1 / -1;
-
-  padding: 8px 9px;
-
-  border-radius: 8px;
-
-  color:
-    rgba(248,113,113,.60);
-
-  background:
-    rgba(220,38,38,.035);
-
-  font-size: 7px;
-
-  line-height: 1.5;
-}
-
-/* =========================================================
-   LOGIN
-   ========================================================= */
-
-.login-page {
-  min-height: 100vh;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  padding: 22px;
-
-  position: relative;
-
-  overflow: hidden;
-
-  background:
-    radial-gradient(
-      circle at 15% 10%,
-      rgba(37,99,235,.17),
-      transparent 30%
-    ),
-    radial-gradient(
-      circle at 88% 90%,
-      rgba(124,58,237,.15),
-      transparent 30%
-    ),
-    linear-gradient(
-      135deg,
-      #020617,
-      #061222 50%,
-      #030712
-    );
-}
-
-.login-page::before {
-  content: "";
-
-  position: absolute;
-
-  inset: 0;
-
-  pointer-events: none;
-
-  background-image:
-    linear-gradient(
-      rgba(96,165,250,.03) 1px,
-      transparent 1px
-    ),
-    linear-gradient(
-      90deg,
-      rgba(96,165,250,.03) 1px,
-      transparent 1px
-    );
-
-  background-size: 42px 42px;
-}
-
-.login-grid {
-  position: absolute;
-
-  inset: 0;
-
-  pointer-events: none;
-
-  background:
-    radial-gradient(
-      ellipse at center,
-      transparent 10%,
-      rgba(2,6,23,.35) 70%
-    );
-}
-
-.login-background-orb {
-  position: absolute;
-
-  border-radius: 50%;
-
-  filter: blur(80px);
-
-  pointer-events: none;
-}
-
-.orb-one {
-  width: 330px;
-  height: 330px;
-
-  left: -160px;
-  top: -100px;
-
-  background:
-    rgba(37,99,235,.18);
-}
-
-.orb-two {
-  width: 350px;
-  height: 350px;
-
-  right: -170px;
-  bottom: -130px;
-
-  background:
-    rgba(124,58,237,.17);
-}
-
-.orb-three {
-  width: 180px;
-  height: 180px;
-
-  right: 18%;
-  top: 15%;
-
-  background:
-    rgba(8,145,178,.08);
-}
-
-.login-card {
-  width:
-    min(
-      445px,
-      100%
-    );
-
-  padding:
-    27px 30px 22px;
-
-  position: relative;
-
-  z-index: 2;
-
-  border:
-    1px solid
-    rgba(148,163,184,.13);
-
-  border-radius: 27px;
-
-  background:
-    linear-gradient(
-      145deg,
-      rgba(12,28,48,.93),
-      rgba(5,14,27,.96)
-    );
-
-  box-shadow:
-    0 40px 100px
-      rgba(0,0,0,.50),
-    inset 0 1px 0
-      rgba(255,255,255,.04);
-
-  backdrop-filter:
-    blur(20px);
-
-  animation:
-    riseIn
-    .5s
-    ease
-    both;
-}
-
-.login-card::before {
-  content: "";
-
-  position: absolute;
-
-  left: 12%;
-  right: 12%;
-  top: 0;
-
-  height: 1px;
-
-  background:
-    linear-gradient(
-      90deg,
-      transparent,
-      rgba(96,165,250,.45),
-      rgba(129,140,248,.32),
-      transparent
-    );
-}
-
-.login-top-line {
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  gap: 8px;
-
-  margin-bottom: 22px;
-
-  color:
-    rgba(96,165,250,.55);
-
-  font-size: 6px;
-
-  font-weight: 950;
-
-  letter-spacing: .20em;
-}
-
-.login-top-line span {
-  width: 18px;
-  height: 1px;
-
-  background:
-    rgba(96,165,250,.20);
-}
-
-.login-brand {
-  display: flex;
-
-  align-items: center;
-
-  gap: 11px;
-
-  margin-bottom: 29px;
-}
-
-.brand-mark {
-  width: 46px;
-  height: 46px;
-
-  flex: 0 0 auto;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 14px;
-
-  color: #fff;
-
-  background:
-    linear-gradient(
-      145deg,
-      #1877f2,
-      #4f46e5
-    );
-
-  box-shadow:
-    0 14px 30px
-      rgba(37,99,235,.22);
-}
-
-.brand-mark span {
-  transform:
-    translateY(2px);
-
-  font-size: 27px;
-
-  font-weight: 950;
-}
-
-.brand-mini {
-  color:
-    rgba(148,163,184,.48);
-
-  font-size: 6px;
-
-  font-weight: 950;
-
-  letter-spacing: .15em;
-}
-
-.brand-name {
-  margin-top: 5px;
-
-  color:
-    rgba(191,219,254,.72);
-
-  font-size: 12px;
-
-  font-weight: 950;
-
-  letter-spacing: .15em;
-}
-
-.login-icon {
-  width: 38px;
-  height: 38px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  margin-bottom: 13px;
-
-  border-radius: 11px;
-
-  color:
-    #60a5fa;
-
-  background:
-    rgba(37,99,235,.08);
-
-  border:
-    1px solid
-    rgba(96,165,250,.10);
-
-  font-size: 12px;
-}
-
-.login-kicker {
-  color:
-    rgba(96,165,250,.64);
-
-  font-size: 7px;
-
-  font-weight: 950;
-
-  letter-spacing: .17em;
-}
-
-.login-card h1 {
-  margin: 5px 0 7px;
-
-  color: #f8fafc;
-
-  font-size: 31px;
-
-  line-height: 1;
-
-  font-weight: 950;
-
-  letter-spacing: -.045em;
-}
-
-.login-description {
-  margin: 0 0 22px;
-
-  color:
-    rgba(148,163,184,.48);
-
   font-size: 9px;
-
-  line-height: 1.6;
+  font-weight: 900;
 }
 
-.login-error {
-  display: flex;
-
-  align-items: center;
-
-  gap: 8px;
-
-  margin-bottom: 15px;
-
-  padding: 10px;
-
-  border-radius: 10px;
-
-  color:
-    rgba(248,113,113,.72);
-
-  background:
-    rgba(220,38,38,.055);
-
-  border:
-    1px solid
-    rgba(248,113,113,.09);
-
-  font-size: 8px;
-
-  line-height: 1.4;
+.status-success {
+  color: #0ca879;
 }
 
-.login-error > span {
-  width: 20px;
-  height: 20px;
+.status-failed {
+  color: #d94141;
+}
 
-  flex: 0 0 auto;
-
+.result-status span {
+  width: 18px;
+  height: 18px;
   display: flex;
-
   align-items: center;
   justify-content: center;
-
-  border-radius: 7px;
-
-  color:
-    #f87171;
-
-  background:
-    rgba(220,38,38,.08);
-
-  font-weight: 950;
-}
-
-.login-card .field {
-  margin-bottom: 14px;
-}
-
-.login-card .field label {
-  display: block;
-
-  margin-bottom: 7px;
-
-  color:
-    rgba(203,213,225,.58);
-
-  font-size: 8px;
-
-  font-weight: 850;
-}
-
-.password-shell {
-  position: relative;
-}
-
-.password-shell input {
-  width: 100%;
-
-  height: 49px;
-
-  padding:
-    0 39px 0 39px;
-
-  border:
-    1px solid
-    rgba(148,163,184,.11);
-
-  border-radius: 13px;
-
-  outline: none;
-
-  color:
-    #e2e8f0;
-
-  background:
-    rgba(2,8,20,.58);
-
-  font-size: 10px;
-
-  transition:
-    border-color .2s ease,
-    box-shadow .2s ease;
-}
-
-.password-shell input::placeholder {
-  color:
-    rgba(148,163,184,.27);
-}
-
-.password-shell input:focus {
-  border-color:
-    rgba(96,165,250,.28);
-
-  box-shadow:
-    0 0 0 4px
-      rgba(37,99,235,.055);
-}
-
-.password-icon,
-.password-lock {
-  position: absolute;
-
-  top: 50%;
-
-  transform:
-    translateY(-50%);
-
-  z-index: 2;
-
-  pointer-events: none;
-}
-
-.password-icon {
-  left: 13px;
-
-  color:
-    rgba(96,165,250,.42);
-
-  font-size: 8px;
-}
-
-.password-lock {
-  right: 14px;
-
-  color:
-    rgba(148,163,184,.23);
-
-  font-size: 7px;
-}
-
-.login-submit {
-  width: 100%;
-
-  min-height: 49px;
-
-  display: flex;
-
-  align-items: center;
-
-  justify-content: space-between;
-
-  padding:
-    0 9px 0 15px;
-
-  border-radius: 13px;
-
-  color: #fff;
-
-  background:
-    linear-gradient(
-      135deg,
-      #155eef,
-      #4f46e5
-    );
-
-  box-shadow:
-    0 15px 35px
-      rgba(37,99,235,.20);
-
-  font-size: 10px;
-
-  font-weight: 950;
-
-  transition:
-    transform .2s ease,
-    box-shadow .2s ease;
-}
-
-.login-submit strong {
-  width: 31px;
-  height: 31px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 9px;
-
-  background:
-    rgba(255,255,255,.11);
-
-  font-size: 13px;
-}
-
-.login-submit:hover {
-  transform:
-    translateY(-2px);
-
-  box-shadow:
-    0 21px 43px
-      rgba(37,99,235,.28);
-}
-
-.login-security {
-  margin-top: 17px;
-
-  padding-top: 14px;
-
-  display: flex;
-
-  align-items: center;
-  justify-content: center;
-
-  gap: 6px;
-
-  border-top:
-    1px solid
-    rgba(148,163,184,.06);
-
-  color:
-    rgba(148,163,184,.29);
-
-  font-size: 6px;
-
-  font-weight: 850;
-
-  letter-spacing: .06em;
-}
-
-.security-dot {
-  width: 4px;
-  height: 4px;
-
   border-radius: 50%;
-
-  background:
-    #34d399;
-
-  box-shadow:
-    0 0 8px
-      rgba(52,211,153,.6);
+  background: currentColor;
+  color: #fff;
 }
 
-.security-divider {
-  width: 1px;
-  height: 9px;
-
-  background:
-    rgba(148,163,184,.10);
-
-  margin: 0 2px;
+.result-extra {
+  grid-column: 1 / -1;
+  color: #7e899a;
+  font-size: 9px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
-.login-footer-brand {
-  position: absolute;
+.success-extra {
+  color: #5f907f;
+}
 
-  left: 0;
-  right: 0;
-
-  bottom: 17px;
-
+.results-actions {
   text-align: center;
-
-  color:
-    rgba(148,163,184,.18);
-
-  font-size: 6px;
-
-  font-weight: 850;
-
-  letter-spacing: .16em;
 }
 
-/* =========================================================
-   RESPONSIVE
-   ========================================================= */
+.results-actions .back-btn {
+  margin-top: 22px;
+}
 
 @media (max-width: 980px) {
-
-  .hero-header {
-    min-height: auto;
-
-    padding:
-      25px 27px 30px;
-  }
-
-  .hero-main {
-    align-items: flex-start;
-  }
-
-  .hero-visual {
-    width: 220px;
-    height: 220px;
-  }
-
-  .hero-core {
-    width: 105px;
-    height: 105px;
-  }
-
-  .orbit-one {
-    width: 160px;
-    height: 160px;
-  }
-
-  .orbit-two {
-    width: 200px;
-    height: 200px;
-  }
-
-  .overview-strip {
-    align-items: flex-start;
-
-    flex-direction: column;
-  }
-
-  .overview-stats {
-    width: 100%;
-
-    max-width: none;
-  }
-}
-
-@media (max-width: 820px) {
-
-  .hero-main {
-    flex-direction: column;
-  }
-
-  .hero-visual {
-    align-self: center;
-
-    margin-top: 3px;
-  }
-
-  .header-actions {
-    justify-content: flex-start;
+  .hero-decoration {
+    opacity: .45;
+    right: 15px;
   }
 
   .account-top {
     align-items: flex-start;
-
     flex-direction: column;
   }
 
-  .account-right {
-    width: 100%;
-
-    justify-content: space-between;
-  }
-
-  .account-actions {
-    margin-left: auto;
-  }
-
-  .overview-stats {
-    grid-template-columns:
-      repeat(2,1fr);
-  }
-
-  .pages-list {
-    grid-template-columns: 1fr;
-  }
-
-  .results-stats {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 680px) {
-
-  .hero-header {
-    width:
-      calc(100% - 18px);
-
-    margin-top: 9px;
-
-    border-radius: 25px;
-
-    padding:
-      21px 19px 23px;
-  }
-
-  .hero-top-line {
-    font-size: 6px;
-
-    letter-spacing: .13em;
-  }
-
-  .hero-title {
-    font-size: 36px;
-  }
-
-  .hero-subtitle {
-    font-size: 10px;
-  }
-
-  .hero-visual {
-    width: 190px;
-    height: 190px;
-  }
-
-  .hero-core {
-    width: 88px;
-    height: 88px;
-  }
-
-  .hero-core-inner strong {
-    font-size: 20px;
-  }
-
-  .orbit-one {
-    width: 135px;
-    height: 135px;
-  }
-
-  .orbit-two {
-    width: 175px;
-    height: 175px;
-  }
-
-  .card-top {
-    right: -4px;
-    top: 14px;
-  }
-
-  .card-bottom {
-    left: -8px;
-    bottom: 18px;
-  }
-
-  .header-actions {
-    display: grid;
-
-    grid-template-columns:
-      1fr auto;
-
-    width: 100%;
-  }
-
-  .connect-btn {
-    width: 100%;
-  }
-
-  .container {
-    width:
-      calc(100% - 18px);
-  }
-
-  .overview-strip {
-    padding: 15px;
-
-    border-radius: 17px;
-  }
-
-  .overview-stats {
-    grid-template-columns:
-      repeat(2,1fr);
-  }
-
-  .section-heading h2 {
-    font-size: 18px;
-  }
-
-  .account-top {
-    padding: 17px;
-  }
-
-  .account-right {
-    align-items: flex-start;
-
-    flex-wrap: wrap;
-  }
-
-  .account-pages-count {
-    order: 2;
-  }
-
-  .account-status {
-    order: 1;
-  }
-
   .account-actions {
     width: 100%;
-
-    order: 3;
-
-    margin-left: 0;
   }
 
   .account-actions form {
     flex: 1;
   }
 
-  .account-actions .btn {
+  .action-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 760px) {
+  .header-inner {
+    min-height: auto;
+    padding: 15px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+  }
+
+  .connect-account-btn {
+    width: 100%;
+  }
+
+  .dashboard-container {
+    padding: 0 14px 45px;
+  }
+
+  .hero {
+    min-height: 300px;
+    padding: 30px 24px;
+    margin-top: 14px;
+  }
+
+  .hero h1 {
+    font-size: 34px;
+  }
+
+  .hero-decoration {
+    display: none;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-top {
+    padding: 17px;
+  }
+
+  .account-identity {
     width: 100%;
   }
 
   .pages-area {
-    padding:
-      14px 14px 15px;
+    padding: 16px;
   }
 
   .page-toolbar {
     align-items: flex-start;
-
     flex-direction: column;
   }
 
@@ -8038,202 +8364,97 @@ textarea:focus {
   }
 
   .studio-card {
-    padding:
-      18px 15px;
-
-    border-radius: 21px;
+    padding: 18px;
   }
 
   .studio-heading {
     align-items: flex-start;
-
     flex-direction: column;
   }
 
   .selected-pill {
     width: 100%;
-
     justify-content: center;
-  }
-
-  .batch-notice {
-    align-items: flex-start;
-  }
-
-  .batch-engine-status {
-    display: none;
   }
 
   .publish-footer {
     align-items: stretch;
-
     flex-direction: column;
   }
 
   .publish-btn {
     width: 100%;
-
-    justify-content: space-between;
-  }
-
-  .dashboard-footer {
-    width:
-      calc(100% - 18px);
-
-    align-items: flex-start;
-
-    flex-direction: column;
-  }
-
-  .results-container {
-    width:
-      calc(100% - 18px);
   }
 
   .results-topbar {
-    min-height: 60px;
+    padding: 14px 16px;
   }
 
-  .results-brand-name {
-    font-size: 7px;
-  }
-
-  .results-hero {
-    align-items: flex-start;
-
-    flex-direction: column;
-
-    padding:
-      29px 5px 19px;
+  .results-container {
+    padding: 40px 14px 50px;
   }
 
   .results-hero h1 {
-    font-size: 34px;
+    font-size: 28px;
+  }
+
+  .results-stats {
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 520px) {
-
-  .hero-title {
-    font-size: 31px;
+  .login-page {
+    padding: 15px;
   }
 
-  .hero-badges {
-    gap: 5px;
+  .login-card {
+    padding: 28px 21px;
+    border-radius: 22px;
   }
 
-  .hero-badge {
-    font-size: 6px;
+  .login-card h1 {
+    font-size: 27px;
   }
 
-  .hero-visual {
-    transform:
-      scale(.90);
+  .brand-mini {
+    font-size: 8px;
   }
 
   .header-actions {
     grid-template-columns: 1fr;
   }
 
-  .header-actions form {
-    width: 100%;
-  }
-
   .header-logout {
     width: 100%;
+    justify-content: center;
   }
 
-  .overview-stats {
-    grid-template-columns:
-      1fr 1fr;
-  }
-
-  .overview-stat {
-    padding: 7px;
-
-    gap: 7px;
-  }
-
-  .overview-stat-icon {
-    width: 28px;
-    height: 28px;
-
-    font-size: 10px;
-  }
-
-  .overview-stat strong {
-    font-size: 14px;
-  }
-
-  .overview-stat span {
-    font-size: 6px;
-  }
-
-  .account-right {
-    gap: 9px;
-  }
-
-  .account-status {
-    display: none;
-  }
-
-  .account-pages-count {
-    margin-right: auto;
+  .account-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .page-row {
-    min-height: 57px;
-
-    padding: 8px;
+    padding: 9px;
   }
 
   .page-avatar {
-    width: 32px;
-    height: 32px;
-  }
-
-  .page-info strong {
-    font-size: 9px;
+    width: 34px;
+    height: 34px;
   }
 
   .studio-title-wrap {
     align-items: flex-start;
   }
 
-  .studio-icon {
-    width: 42px;
-    height: 42px;
+  .results-card {
+    padding: 15px;
   }
 
-  textarea {
-    min-height: 135px;
-  }
-
-  .batch-content p {
-    font-size: 6px;
-  }
-
-  .login-page {
-    padding: 14px;
-  }
-
-  .login-card {
-    padding:
-      24px 20px 19px;
-
-    border-radius: 23px;
-  }
-
-  .login-card h1 {
-    font-size: 28px;
-  }
-
-  .login-footer-brand {
-    display: none;
-  }
-
-  .results-hero h1 {
-    font-size: 29px;
+  .results-card-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .result-row {
@@ -8244,7 +8465,6 @@ textarea:focus {
     justify-self: start;
   }
 }
-
 `;
 
   return new Response(
@@ -8254,7 +8474,6 @@ textarea:focus {
       '<meta charset="UTF-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
       '<meta name="robots" content="noindex,nofollow">' +
-      '<meta name="theme-color" content="#030712">' +
       "<title>" +
       escapeHtml(title) +
       " - " +
@@ -8272,113 +8491,20 @@ textarea:focus {
       headers: {
         "Content-Type":
           "text/html; charset=UTF-8",
-
         "Cache-Control":
           "no-store, no-cache, must-revalidate, max-age=0",
-
         Pragma: "no-cache",
-
         Expires: "0"
       }
     }
   );
 }
 
-
-// =============================================================
-// JSON
-// =============================================================
-
-function json(
-  data,
-  status = 200
-) {
-  return new Response(
-    JSON.stringify(data),
-    {
-      status,
-
-      headers: {
-        "Content-Type":
-          "application/json; charset=UTF-8",
-
-        "Cache-Control":
-          "no-store, no-cache, must-revalidate, max-age=0"
-      }
-    }
-  );
-}
-
-
 // =============================================================
 // ESCAPE HTML
 // =============================================================
 
-function escapeHtml(
-  value
-) {
-  return String(
-    value == null
-      ? ""
-      : value
-  )
-    .replaceAll(
-      "&",
-      "&amp;"
-    )
-    .replaceAll(
-      "<",
-      "&lt;"
-    )
-    .replaceAll(
-      ">",
-      "&gt;"
-    )
-    .replaceAll(
-      '"',
-      "&quot;"
-    )
-    .replaceAll(
-      "'",
-      "&#39;"
-    );
-}
 
 
-// =============================================================
-// INITIALS
-// =============================================================
 
-function getInitials(
-  name
-) {
-  const value =
-    String(
-      name ||
-      ""
-    ).trim();
 
-  if (!value) {
-    return "FB";
-  }
-
-  const parts =
-    value
-      .split(/\s+/)
-      .filter(Boolean);
-
-  if (
-    parts.length === 1
-  ) {
-    return parts[0]
-      .slice(0,2)
-      .toUpperCase();
-  }
-
-  return (
-    parts[0][0] +
-    parts[
-      parts.length - 1
-    ][0]
-  ).toUpperCase();
-}
