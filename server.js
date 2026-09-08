@@ -7230,6 +7230,275 @@ function page(
         flex-direction: column;
       }
     }
+    ```css
+/* =========================================================
+   PREMIUM ACCOUNT TOP
+   ========================================================= */
+
+div.account-top {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+
+  padding: 20px 24px;
+  margin-bottom: 24px;
+
+  background:
+    radial-gradient(
+      circle at 0% 0%,
+      rgba(59, 130, 246, 0.18),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 100% 100%,
+      rgba(139, 92, 246, 0.15),
+      transparent 35%
+    ),
+    linear-gradient(
+      135deg,
+      rgba(15, 23, 42, 0.96),
+      rgba(17, 24, 39, 0.92)
+    );
+
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 20px;
+
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+
+  overflow: hidden;
+
+  transition:
+    transform 0.3s ease,
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+
+/* Top glowing accent line */
+div.account-top::before {
+  content: "";
+
+  position: absolute;
+  top: 0;
+  left: 22px;
+  right: 22px;
+
+  height: 2px;
+
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    #3b82f6 25%,
+    #8b5cf6 50%,
+    #6366f1 75%,
+    transparent 100%
+  );
+
+  opacity: 0.9;
+
+  box-shadow:
+    0 0 14px rgba(59, 130, 246, 0.55);
+}
+
+
+/* Soft decorative glow */
+div.account-top::after {
+  content: "";
+
+  position: absolute;
+
+  width: 190px;
+  height: 190px;
+
+  right: -95px;
+  top: -95px;
+
+  background: rgba(59, 130, 246, 0.13);
+
+  border-radius: 50%;
+
+  filter: blur(38px);
+
+  pointer-events: none;
+}
+
+
+/* Hover effect */
+div.account-top:hover {
+  transform: translateY(-2px);
+
+  border-color: rgba(96, 165, 250, 0.30);
+
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.26),
+    0 0 30px rgba(59, 130, 246, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+
+/* Keep existing content above decorative layers */
+div.account-top > * {
+  position: relative;
+  z-index: 2;
+}
+
+
+/* =========================================================
+   TEXT INSIDE ACCOUNT TOP
+   ========================================================= */
+
+div.account-top h1,
+div.account-top h2,
+div.account-top h3,
+div.account-top h4,
+div.account-top strong {
+  color: #f8fafc;
+  letter-spacing: -0.25px;
+}
+
+
+div.account-top p,
+div.account-top span {
+  color: #94a3b8;
+}
+
+
+/* =========================================================
+   BUTTONS / ACTIONS INSIDE ACCOUNT TOP
+   ========================================================= */
+
+div.account-top button {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+
+  background: rgba(255, 255, 255, 0.055);
+
+  color: #e2e8f0;
+
+  border-radius: 11px;
+
+  padding: 9px 13px;
+
+  font-weight: 650;
+
+  cursor: pointer;
+
+  transition:
+    background 0.25s ease,
+    border-color 0.25s ease,
+    transform 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+
+div.account-top button:hover {
+  background: rgba(59, 130, 246, 0.13);
+
+  border-color: rgba(96, 165, 250, 0.30);
+
+  color: #ffffff;
+
+  transform: translateY(-1px);
+
+  box-shadow:
+    0 6px 18px rgba(59, 130, 246, 0.12);
+}
+
+
+/* =========================================================
+   LINKS INSIDE ACCOUNT TOP
+   ========================================================= */
+
+div.account-top a {
+  color: #93c5fd;
+
+  text-decoration: none;
+
+  transition:
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+
+div.account-top a:hover {
+  color: #bfdbfe;
+}
+
+
+/* =========================================================
+   INPUTS INSIDE ACCOUNT TOP
+   ========================================================= */
+
+div.account-top input,
+div.account-top select {
+  background: rgba(15, 23, 42, 0.55);
+
+  color: #e2e8f0;
+
+  border: 1px solid rgba(148, 163, 184, 0.16);
+
+  border-radius: 10px;
+
+  outline: none;
+
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+
+div.account-top input:focus,
+div.account-top select:focus {
+  border-color: rgba(96, 165, 250, 0.45);
+
+  box-shadow:
+    0 0 0 3px rgba(59, 130, 246, 0.10);
+}
+
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 700px) {
+
+  div.account-top {
+    flex-direction: column;
+    align-items: stretch;
+
+    padding: 18px;
+
+    border-radius: 17px;
+  }
+
+  div.account-top::before {
+    left: 18px;
+    right: 18px;
+  }
+
+}
+
+
+@media (max-width: 420px) {
+
+  div.account-top {
+    padding: 16px;
+    margin-bottom: 18px;
+  }
+
+  div.account-top button {
+    width: 100%;
+  }
+
+}
+```
+
   </style>
 
 </head>
