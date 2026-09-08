@@ -2013,14 +2013,7 @@ async function showDashboard(env) {
         state
       );
 
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: loginUrl,
-        "Cache-Control": "no-store"
-      }
-    });
-return new Response(null, {
+   return new Response(null, {
   status: 302,
   headers: {
     Location: loginUrl,
@@ -2049,8 +2042,7 @@ async function metaCallback(
   const state =
     url.searchParams.get(
       "state"
-    );
-  `
+    );  `
   <div class="error-screen">
     <div class="error-box">
 
