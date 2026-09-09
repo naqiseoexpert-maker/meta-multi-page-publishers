@@ -1,7 +1,7 @@
 const APP_NAME = "Meta Multi Page Publisher";
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
       await ensureDatabaseSchema(env.DB);
 
@@ -125,12 +125,27 @@ export default {
         return startPublishRun(
           request,
           env,
+          auth.sessionId,
+          ctx
+        );
+      }
+
+      // ---------------------------------------------------------
+      // PUBLISH - STATUS
+      // ---------------------------------------------------------
+      if (
+        request.method === "GET" &&
+        path === "/publish-status"
+      ) {
+        return getPublishStatus(
+          request,
+          env,
           auth.sessionId
         );
       }
 
       // ---------------------------------------------------------
-      // PUBLISH - PROCESS BATCH
+      // PUBLISH - PROCESS BATCH (LEGACY COMPATIBILITY)
       // ---------------------------------------------------------
       if (
         request.method === "POST" &&
@@ -1822,11 +1837,7 @@ async function showDashboard(env) {
             ) {
               publishButtonText.textContent =
                 "Publishing " +
-                Math.min(
-                  processed +
-                    PUBLISH_BATCH_SIZE,
-                  total
-                ) +
+                processed +
                 " / " +
                 total;
 
@@ -1842,106 +1853,56 @@ async function showDashboard(env) {
                 total +
                 ' Pages processed.</span></div>';
 
-              let batchResponse;
+              const statusResponse =
+                await fetch(
+                  "/publish-status?runId=" +
+                    encodeURIComponent(runId),
+                  {
+                    method: "GET",
+                    credentials: "same-origin",
+                    cache: "no-store"
+                  }
+                );
 
-              // For media publishing, send the original browser File as the
-              // raw request body.  Multipart parsing a large video inside a
-              // Worker can fail before the File ever reaches the publisher.
-              // The run ID and media metadata travel in headers, so the
-              // Worker can read the video directly with request.arrayBuffer().
-              if (media) {
-                const mediaType =
-                  media.type ||
-                  "application/octet-stream";
-
-                const mediaName =
-                  media.name ||
-                  "upload.bin";
-
-                batchResponse =
-                  await fetch(
-                    "/publish-batch",
-                    {
-                      method: "POST",
-                      headers: {
-                        "Content-Type":
-                          mediaType,
-                        "X-Publish-Run-Id":
-                          runId,
-                        "X-Publish-Media":
-                          "1",
-                        "X-Media-Type":
-                          mediaType,
-                        "X-Media-Name":
-                          encodeURIComponent(
-                            mediaName
-                          )
-                      },
-                      credentials:
-                        "same-origin",
-                      body: media
-                    }
-                  );
-              } else {
-                batchResponse =
-                  await fetch(
-                    "/publish-batch",
-                    {
-                      method: "POST",
-                      headers: {
-                        "Content-Type":
-                          "application/json"
-                      },
-                      credentials:
-                        "same-origin",
-                      body: JSON.stringify({
-                        runId
-                      })
-                    }
-                  );
-              }
-
-              const batchResult =
+              const statusResult =
                 await readJsonResponse(
-                  batchResponse,
-                  "A publishing batch failed."
+                  statusResponse,
+                  "Could not read publishing status."
                 );
 
               if (
-                !batchResult ||
-                !batchResult.ok
+                !statusResult ||
+                !statusResult.ok
               ) {
                 throw new Error(
-                  batchResult &&
-                  batchResult.error
-                    ? batchResult.error
-                    : "A publishing batch failed."
+                  statusResult &&
+                  statusResult.error
+                    ? statusResult.error
+                    : "Could not read publishing status."
                 );
               }
 
-              processed =
-                Number(
-                  batchResult.processed ||
-                    processed
-                );
+              processed = Number(
+                statusResult.processed || 0
+              );
 
-              succeeded +=
-                Number(
-                  batchResult.succeeded ||
-                    0
-                );
+              succeeded = Number(
+                statusResult.succeeded || 0
+              );
 
-              failed +=
-                Number(
-                  batchResult.failed ||
-                    0
-                );
+              failed = Number(
+                statusResult.failed || 0
+              );
 
-              if (
-                batchResult.done
-              ) {
+              if (statusResult.done) {
                 break;
               }
+
+              await new Promise(
+                function(resolve) {
+                  setTimeout(resolve, 900);
+                }
+              );
             }
 
             publishButtonText.textContent =
@@ -2856,7 +2817,8 @@ async function removeAccount(
 async function startPublishRun(
   request,
   env,
-  sessionId
+  sessionId,
+  ctx
 ) {
   const form =
     await request.formData();
@@ -3010,10 +2972,222 @@ async function startPublishRun(
       .run();
   }
 
+  // IMPORTANT: the uploaded File is available only on this original
+  // request. Keep the media in the same execution and process the run in
+  // the Worker background instead of asking the browser to upload it again.
+  // This removes the source of the recurring "post is empty" / missing
+  // media failures.
+  const backgroundPromise = processPublishRun(
+    runId,
+    env,
+    sessionId,
+    media
+  );
+
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(backgroundPromise);
+  } else {
+    await backgroundPromise;
+  }
+
   return jsonResponse({
     ok: true,
     runId,
     total: pages.length
+  });
+}
+
+// =============================================================
+// BACKGROUND PUBLISH RUN
+// =============================================================
+
+async function processPublishRun(
+  runId,
+  env,
+  sessionId,
+  media
+) {
+  try {
+    if (media && !isValidMediaFile(media)) {
+      media = null;
+    }
+
+    const run =
+      await env.DB.prepare(
+        "SELECT id, session_id, message, status " +
+          "FROM publish_runs WHERE id = ?"
+      )
+        .bind(runId)
+        .first();
+
+    if (!run || run.session_id !== sessionId) {
+      return;
+    }
+
+    const result =
+      await env.DB.prepare(
+        "SELECT " +
+          "prp.id, prp.page_db_id, prp.facebook_page_id, " +
+          "prp.page_name, p.access_token " +
+          "FROM publish_run_pages prp " +
+          "INNER JOIN pages p ON p.id = prp.page_db_id " +
+          "WHERE prp.run_id = ? " +
+          "AND prp.status = 'pending' " +
+          "ORDER BY prp.id ASC"
+      )
+        .bind(runId)
+        .all();
+
+    const rows = result.results || [];
+
+    for (const row of rows) {
+      try {
+        const publishResult =
+          await publishToPage(
+            env,
+            row,
+            run.message || "",
+            media
+          );
+
+        await env.DB.prepare(
+          "UPDATE publish_run_pages SET " +
+            "status = 'success', post_id = ?, error = NULL, " +
+            "completed_at = datetime('now') WHERE id = ?"
+        )
+          .bind(
+            publishResult.postId || null,
+            row.id
+          )
+          .run();
+      } catch (error) {
+        const errorMessage =
+          error && error.message
+            ? error.message
+            : String(error);
+
+        await env.DB.prepare(
+          "UPDATE publish_run_pages SET " +
+            "status = 'failed', error = ?, " +
+            "completed_at = datetime('now') WHERE id = ?"
+        )
+          .bind(
+            errorMessage,
+            row.id
+          )
+          .run();
+      }
+    }
+
+    await env.DB.prepare(
+      "UPDATE publish_runs SET status = 'completed', " +
+        "completed_at = datetime('now') WHERE id = ?"
+    )
+      .bind(runId)
+      .run();
+  } catch (error) {
+    const errorMessage =
+      error && error.message
+        ? error.message
+        : String(error);
+
+    console.error(
+      "Background publish run failed:",
+      error
+    );
+
+    try {
+      await env.DB.prepare(
+        "UPDATE publish_run_pages SET status = 'failed', " +
+          "error = ?, completed_at = datetime('now') " +
+          "WHERE run_id = ? AND status = 'pending'"
+      )
+        .bind(
+          errorMessage,
+          runId
+        )
+        .run();
+
+      await env.DB.prepare(
+        "UPDATE publish_runs SET status = 'completed', " +
+          "completed_at = datetime('now') WHERE id = ?"
+      )
+        .bind(runId)
+        .run();
+    } catch (dbError) {
+      console.error(
+        "Could not record background publish failure:",
+        dbError
+      );
+    }
+  }
+}
+
+// =============================================================
+// PUBLISH STATUS
+// =============================================================
+
+async function getPublishStatus(
+  request,
+  env,
+  sessionId
+) {
+  const url = new URL(request.url);
+  const runId = String(
+    url.searchParams.get("runId") ||
+      url.searchParams.get("run_id") ||
+      ""
+  ).trim();
+
+  if (!runId) {
+    return jsonResponse(
+      { ok: false, error: "Publishing run ID is missing." },
+      400
+    );
+  }
+
+  const run =
+    await env.DB.prepare(
+      "SELECT id, session_id, status FROM publish_runs WHERE id = ?"
+    )
+      .bind(runId)
+      .first();
+
+  if (!run) {
+    return jsonResponse(
+      { ok: false, error: "Publishing run was not found." },
+      404
+    );
+  }
+
+  if (run.session_id !== sessionId) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "You are not authorized to view this publishing run."
+      },
+      403
+    );
+  }
+
+  const counts =
+    await getPublishRunCounts(
+      env.DB,
+      runId
+    );
+
+  const done =
+    counts.pending === 0;
+
+  return jsonResponse({
+    ok: true,
+    done,
+    status: run.status || (done ? "completed" : "processing"),
+    processed: counts.succeeded + counts.failed,
+    total: counts.total,
+    pending: counts.pending,
+    succeeded: counts.succeeded,
+    failed: counts.failed
   });
 }
 
