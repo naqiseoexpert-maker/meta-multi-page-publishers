@@ -706,11 +706,43 @@ async function ensureDatabaseSchema(db) {
     )
     .run();
 
+  // Migration for safe concurrent publish claiming. Existing deployments
+  // may already have this column, so ignore the duplicate-column error.
+  try {
+    await db
+      .prepare(
+        "ALTER TABLE publish_run_pages ADD COLUMN processing_started_at TEXT"
+      )
+      .run();
+  } catch (error) {
+    const message = String(
+      error && error.message
+        ? error.message
+        : error
+    ).toLowerCase();
+
+    if (!message.includes("duplicate column") &&
+        !message.includes("already exists")) {
+      throw error;
+    }
+  }
+
   await db
     .prepare(
       "CREATE INDEX IF NOT EXISTS " +
         "idx_publish_run_pages_status " +
         "ON publish_run_pages(run_id, status)"
+    )
+    .run();
+
+  // If a Worker execution died while a Page was being published, release
+  // that claim after a safety window so the Page can be retried later.
+  await db
+    .prepare(
+      "UPDATE publish_run_pages SET status = 'pending', " +
+        "processing_started_at = NULL " +
+        "WHERE status = 'publishing' " +
+        "AND processing_started_at < datetime('now', '-15 minutes')"
     )
     .run();
 
@@ -3040,7 +3072,24 @@ async function processPublishRun(
 
     const rows = result.results || [];
 
-    for (const row of rows) {
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+
+      // Atomically claim the Page before touching Meta. This prevents two
+      // simultaneous requests/background executions from publishing the
+      // same Page twice in the same run.
+      const claim = await env.DB.prepare(
+        "UPDATE publish_run_pages SET status = 'publishing', " +
+          "processing_started_at = datetime('now') " +
+          "WHERE id = ? AND status = 'pending'"
+      )
+        .bind(row.id)
+        .run();
+
+      if (Number(claim.meta && claim.meta.changes || 0) !== 1) {
+        continue;
+      }
+
       try {
         const publishResult =
           await publishToPage(
@@ -3053,7 +3102,7 @@ async function processPublishRun(
         await env.DB.prepare(
           "UPDATE publish_run_pages SET " +
             "status = 'success', post_id = ?, error = NULL, " +
-            "completed_at = datetime('now') WHERE id = ?"
+            "processing_started_at = NULL, completed_at = datetime('now') WHERE id = ?"
         )
           .bind(
             publishResult.postId || null,
@@ -3069,6 +3118,7 @@ async function processPublishRun(
         await env.DB.prepare(
           "UPDATE publish_run_pages SET " +
             "status = 'failed', error = ?, " +
+            "processing_started_at = NULL, " +
             "completed_at = datetime('now') WHERE id = ?"
         )
           .bind(
@@ -3076,6 +3126,12 @@ async function processPublishRun(
             row.id
           )
           .run();
+      }
+
+      // Keep a deliberate gap between Page publishes. The gap applies after
+      // successful, failed, and retried Pages so a burst cannot build up.
+      if (index < rows.length - 1) {
+        await sleep(PUBLISH_PAGE_DELAY_MS);
       }
     }
 
@@ -3476,7 +3532,23 @@ async function processPublishBatch(
 
   const results = [];
 
-  for (const row of batchRows) {
+  for (let index = 0; index < batchRows.length; index++) {
+    const row = batchRows[index];
+
+    // Claim each Page atomically so legacy/manual batch calls cannot race
+    // with the background publisher and create duplicate posts.
+    const claim = await env.DB.prepare(
+      "UPDATE publish_run_pages SET status = 'publishing', " +
+        "processing_started_at = datetime('now') " +
+        "WHERE id = ? AND status = 'pending'"
+    )
+      .bind(row.id)
+      .run();
+
+    if (Number(claim.meta && claim.meta.changes || 0) !== 1) {
+      continue;
+    }
+
     try {
       const result =
         await publishToPage(
@@ -3491,6 +3563,7 @@ async function processPublishBatch(
           "SET status = 'success', " +
           "post_id = ?, " +
           "error = NULL, " +
+          "processing_started_at = NULL, " +
           "completed_at = datetime('now') " +
           "WHERE id = ?"
       )
@@ -3522,6 +3595,7 @@ async function processPublishBatch(
         "UPDATE publish_run_pages " +
           "SET status = 'failed', " +
           "error = ?, " +
+          "processing_started_at = NULL, " +
           "completed_at = datetime('now') " +
           "WHERE id = ?"
       )
@@ -3539,6 +3613,10 @@ async function processPublishBatch(
         ok: false,
         error: message
       });
+    }
+
+    if (index < batchRows.length - 1) {
+      await sleep(PUBLISH_PAGE_DELAY_MS);
     }
   }
 
@@ -3591,7 +3669,7 @@ async function getPublishRunCounts(
     await db.prepare(
       "SELECT " +
         "COUNT(*) AS total, " +
-        "SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending, " +
+        "SUM(CASE WHEN status IN ('pending', 'publishing') THEN 1 ELSE 0 END) AS pending, " +
         "SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS succeeded, " +
         "SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed " +
         "FROM publish_run_pages " +
@@ -4124,6 +4202,90 @@ async function showPublishResults(
 // FACEBOOK PUBLISHING
 // =============================================================
 
+// Deliberate pacing between Pages. This is intentionally conservative to
+// reduce burst traffic and Meta throttling when many Pages are selected.
+const PUBLISH_PAGE_DELAY_MS = 4000;
+const PUBLISH_RETRY_DELAYS_MS = [5000, 10000, 20000];
+
+function sleep(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+function getGraphErrorCode(data) {
+  return Number(
+    data &&
+    data.error &&
+    data.error.code
+  );
+}
+
+function getGraphErrorSubcode(data) {
+  return Number(
+    data &&
+    data.error &&
+    data.error.error_subcode
+  );
+}
+
+function isMetaRateLimitError(response, data) {
+  const status = Number(response && response.status || 0);
+  const code = getGraphErrorCode(data);
+  const subcode = getGraphErrorSubcode(data);
+
+  // 429 is an explicit HTTP throttle. Meta also returns common rate-limit
+  // conditions as Graph API error codes with HTTP 400.
+  return (
+    status === 429 ||
+    code === 4 ||
+    code === 17 ||
+    code === 32 ||
+    code === 613 ||
+    subcode === 2446079
+  );
+}
+
+async function fetchMetaPublish(
+  endpoint,
+  options
+) {
+  let lastRateLimitMessage = "";
+
+  for (let attempt = 0; attempt <= PUBLISH_RETRY_DELAYS_MS.length; attempt++) {
+    const response = await fetch(endpoint, options);
+    const data = await parseGraphResponse(response);
+
+    if (!response.ok || data.error) {
+      if (isMetaRateLimitError(response, data)) {
+        lastRateLimitMessage = getGraphErrorMessage(
+          data,
+          "Meta rate limit/throttling response."
+        );
+
+        if (attempt < PUBLISH_RETRY_DELAYS_MS.length) {
+          await sleep(PUBLISH_RETRY_DELAYS_MS[attempt]);
+          continue;
+        }
+      }
+
+      throw new Error(
+        getGraphErrorMessage(
+          data,
+          "Facebook publishing failed."
+        )
+      );
+    }
+
+    return { response, data };
+  }
+
+  throw new Error(
+    lastRateLimitMessage ||
+      "Meta rate limit/throttling persisted after controlled retries."
+  );
+}
+
 async function publishToPage(
   env,
   page,
@@ -4225,8 +4387,8 @@ async function publishTextToPage(
     accessToken
   );
 
-  const response =
-    await fetch(
+  const publishResponse =
+    await fetchMetaPublish(
       endpoint,
       {
         method: "POST",
@@ -4239,21 +4401,7 @@ async function publishTextToPage(
     );
 
   const data =
-    await parseGraphResponse(
-      response
-    );
-
-  if (
-    !response.ok ||
-    data.error
-  ) {
-    throw new Error(
-      getGraphErrorMessage(
-        data,
-        "Facebook text post failed."
-      )
-    );
-  }
+    publishResponse.data;
 
   return {
     postId:
@@ -4305,8 +4453,8 @@ async function publishPhotoToPage(
       "upload.jpg"
   );
 
-  const response =
-    await fetch(
+  const publishResponse =
+    await fetchMetaPublish(
       endpoint,
       {
         method: "POST",
@@ -4315,21 +4463,7 @@ async function publishPhotoToPage(
     );
 
   const data =
-    await parseGraphResponse(
-      response
-    );
-
-  if (
-    !response.ok ||
-    data.error
-  ) {
-    throw new Error(
-      getGraphErrorMessage(
-        data,
-        "Facebook photo post failed."
-      )
-    );
-  }
+    publishResponse.data;
 
   return {
     postId:
@@ -4381,8 +4515,8 @@ async function publishVideoToPage(
       "upload.mp4"
   );
 
-  const response =
-    await fetch(
+  const publishResponse =
+    await fetchMetaPublish(
       endpoint,
       {
         method: "POST",
@@ -4391,21 +4525,7 @@ async function publishVideoToPage(
     );
 
   const data =
-    await parseGraphResponse(
-      response
-    );
-
-  if (
-    !response.ok ||
-    data.error
-  ) {
-    throw new Error(
-      getGraphErrorMessage(
-        data,
-        "Facebook video post failed."
-      )
-    );
-  }
+    publishResponse.data;
 
   return {
     postId:
