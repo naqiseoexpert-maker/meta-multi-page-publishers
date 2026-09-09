@@ -1842,20 +1842,36 @@ async function showDashboard(env) {
                 total +
                 ' Pages processed.</span></div>';
 
+              // Send the selected media with EVERY publish batch.
+              // The /publish request is multipart and its body is consumed
+              // when the run is created, so the original video/file is not
+              // available to later /publish-batch requests unless we send it
+              // again. This is especially important for Reels/videos, because
+              // Meta must receive the actual video binary, not only its name/type.
+              const batchFormData =
+                new FormData();
+
+              batchFormData.append(
+                "runId",
+                runId
+              );
+
+              if (media) {
+                batchFormData.append(
+                  "media",
+                  media,
+                  media.name || "upload.mp4"
+                );
+              }
+
               const batchResponse =
                 await fetch(
                   "/publish-batch",
                   {
                     method: "POST",
-                    headers: {
-                      "Content-Type":
-                        "application/json"
-                    },
                     credentials:
                       "same-origin",
-                    body: JSON.stringify({
-                      runId
-                    })
+                    body: batchFormData
                   }
                 );
 
@@ -3246,6 +3262,18 @@ async function processPublishBatch(
 
   for (const row of batchRows) {
     try {
+      if (
+        run.media_type &&
+        String(run.media_type)
+          .toLowerCase()
+          .startsWith("video/") &&
+        !isValidMediaFile(bodyMedia)
+      ) {
+        throw new Error(
+          "Video/Reel media was not received by the publishing batch. Please try the upload again."
+        );
+      }
+
       const result =
         await publishToPage(
           env,
@@ -4320,13 +4348,9 @@ function isValidMediaFile(
 async function getMediaFromFormRequest(
   request
 ) {
-  // ---------------------------------------------------------
-  // This helper is intentionally lightweight.
-  // The multipart body has already been consumed by
-  // startPublishRun() when the publishing run was created.
-  // If a batch request contains media again, read it here.
-  // ---------------------------------------------------------
-
+  // /publish consumes the original multipart request when the run
+  // is created. Therefore /publish-batch must receive the media again.
+  // This function extracts that media from the batch multipart body.
   try {
     const form =
       await request.formData();
@@ -4334,11 +4358,11 @@ async function getMediaFromFormRequest(
     const media =
       form.get("media");
 
-    return isValidMediaFile(
-      media
-    )
-      ? media
-      : null;
+    if (!isValidMediaFile(media)) {
+      return null;
+    }
+
+    return media;
   } catch (error) {
     return null;
   }
