@@ -1521,7 +1521,7 @@ async function showDashboard(env) {
           "publishStatus"
         );
 
-      const PUBLISH_BATCH_SIZE = 15;
+      const PUBLISH_BATCH_SIZE = 1;
 
       if (messageInput) {
         messageInput.addEventListener(
@@ -1842,48 +1842,64 @@ async function showDashboard(env) {
                 total +
                 ' Pages processed.</span></div>';
 
-              // Send the selected media with EVERY publish batch.
-              // The /publish request is multipart and its body is consumed
-              // when the run is created, so the original video/file is not
-              // available to later /publish-batch requests unless we send it
-              // again. This is especially important for Reels/videos, because
-              // Meta must receive the actual video binary, not only its name/type.
-              const batchFormData =
-                new FormData();
+              let batchResponse;
 
-              // Use both run_id and runId for maximum compatibility.
-              batchFormData.append(
-                "run_id",
-                runId
-              );
-
+              // For media publishing, send the original browser File as the
+              // raw request body.  Multipart parsing a large video inside a
+              // Worker can fail before the File ever reaches the publisher.
+              // The run ID and media metadata travel in headers, so the
+              // Worker can read the video directly with request.arrayBuffer().
               if (media) {
-                // Re-create the Blob for each batch so the Worker receives
-                // a fresh multipart file payload every time.
-                const batchMedia =
-                  media.slice(
-                    0,
-                    media.size,
-                    media.type || "application/octet-stream"
+                const mediaType =
+                  media.type ||
+                  "application/octet-stream";
+
+                const mediaName =
+                  media.name ||
+                  "upload.bin";
+
+                batchResponse =
+                  await fetch(
+                    "/publish-batch",
+                    {
+                      method: "POST",
+                      headers: {
+                        "Content-Type":
+                          mediaType,
+                        "X-Publish-Run-Id":
+                          runId,
+                        "X-Publish-Media":
+                          "1",
+                        "X-Media-Type":
+                          mediaType,
+                        "X-Media-Name":
+                          encodeURIComponent(
+                            mediaName
+                          )
+                      },
+                      credentials:
+                        "same-origin",
+                      body: media
+                    }
                   );
-
-                batchFormData.append(
-                  "media",
-                  batchMedia,
-                  media.name || "upload.mp4"
-                );
+              } else {
+                batchResponse =
+                  await fetch(
+                    "/publish-batch",
+                    {
+                      method: "POST",
+                      headers: {
+                        "Content-Type":
+                          "application/json"
+                      },
+                      credentials:
+                        "same-origin",
+                      body: JSON.stringify({
+                        runId
+                      })
+                    }
+                  );
               }
-
-              const batchResponse =
-                await fetch(
-                  "/publish-batch",
-                  {
-                    method: "POST",
-                    credentials:
-                      "same-origin",
-                    body: batchFormData
-                  }
-                );
 
               const batchResult =
                 await readJsonResponse(
@@ -3058,6 +3074,22 @@ async function processPublishBatch(
               }
             )
         : [];
+  } else if (
+    request.headers.get(
+      "X-Publish-Media"
+    ) === "1"
+  ) {
+    // Media batches use the raw request body.
+    // This avoids large multipart/form-data parsing in the Worker.
+    runId =
+      String(
+        request.headers.get(
+          "X-Publish-Run-Id"
+        ) ||
+          ""
+      ).trim();
+
+    requestedPageIds = [];
   } else {
     const form =
       await request.formData();
@@ -3264,7 +3296,7 @@ async function processPublishBatch(
         "application/json"
       )
       ? null
-      : await getMediaFromFormRequest(
+      : await getMediaFromBatchRequest(
           request
         );
 
@@ -3272,18 +3304,6 @@ async function processPublishBatch(
 
   for (const row of batchRows) {
     try {
-      if (
-        run.media_type &&
-        String(run.media_type)
-          .toLowerCase()
-          .startsWith("video/") &&
-        !isValidMediaFile(bodyMedia)
-      ) {
-        throw new Error(
-          "Video/Reel media was not received by the publishing batch. Please try the upload again."
-        );
-      }
-
       const result =
         await publishToPage(
           env,
@@ -4355,13 +4375,88 @@ function isValidMediaFile(
   );
 }
 
-async function getMediaFromFormRequest(
+async function getMediaFromBatchRequest(
   request
 ) {
-  // /publish consumes the original multipart request when the run
-  // is created. Therefore /publish-batch must receive the media again.
-  // Read the multipart body exactly once and accept the media field
-  // only when it contains a real non-empty File/Blob.
+  const rawMedia =
+    request.headers.get(
+      "X-Publish-Media"
+    ) === "1";
+
+  if (rawMedia) {
+    try {
+      const buffer =
+        await request.arrayBuffer();
+
+      if (!buffer || buffer.byteLength <= 0) {
+        return null;
+      }
+
+      const headerType =
+        String(
+          request.headers.get(
+            "X-Media-Type"
+          ) ||
+            request.headers.get(
+              "Content-Type"
+            ) ||
+            ""
+        )
+          .split(";")[0]
+          .trim()
+          .toLowerCase();
+
+      const encodedName =
+        String(
+          request.headers.get(
+            "X-Media-Name"
+          ) ||
+            "upload.bin"
+        );
+
+      let fileName =
+        "upload.bin";
+
+      try {
+        fileName =
+          decodeURIComponent(
+            encodedName
+          ) ||
+          "upload.bin";
+      } catch (error) {
+        fileName =
+          encodedName ||
+          "upload.bin";
+      }
+
+      const mediaType =
+        headerType &&
+        headerType !==
+          "application/octet-stream"
+          ? headerType
+          : inferMediaTypeFromName(
+              fileName
+            );
+
+      return new File(
+        [buffer],
+        fileName,
+        {
+          type:
+            mediaType ||
+            "application/octet-stream"
+        }
+      );
+    } catch (error) {
+      console.error(
+        "Raw media batch read failed:",
+        error
+      );
+      return null;
+    }
+  }
+
+  // Keep the multipart fallback for compatibility with older clients.
   try {
     const form =
       await request.formData();
@@ -4369,24 +4464,38 @@ async function getMediaFromFormRequest(
     const media =
       form.get("media");
 
-    if (!media) {
-      return null;
-    }
-
-    if (
-      typeof media.arrayBuffer !==
-        "function" ||
-      typeof media.size !==
-        "number" ||
-      media.size <= 0
-    ) {
-      return null;
-    }
-
-    return media;
+    return isValidMediaFile(
+      media
+    )
+      ? media
+      : null;
   } catch (error) {
+    console.error(
+      "Multipart media batch read failed:",
+      error
+    );
     return null;
   }
+}
+
+function inferMediaTypeFromName(
+  fileName
+) {
+  const name =
+    String(fileName || "")
+      .toLowerCase();
+
+  if (name.endsWith(".mp4")) return "video/mp4";
+  if (name.endsWith(".mov")) return "video/quicktime";
+  if (name.endsWith(".m4v")) return "video/x-m4v";
+  if (name.endsWith(".webm")) return "video/webm";
+  if (name.endsWith(".avi")) return "video/x-msvideo";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".gif")) return "image/gif";
+  if (name.endsWith(".webp")) return "image/webp";
+
+  return "application/octet-stream";
 }
 
 // =============================================================
