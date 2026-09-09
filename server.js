@@ -1851,15 +1851,25 @@ async function showDashboard(env) {
               const batchFormData =
                 new FormData();
 
+              // Use both run_id and runId for maximum compatibility.
               batchFormData.append(
-                "runId",
+                "run_id",
                 runId
               );
 
               if (media) {
+                // Re-create the Blob for each batch so the Worker receives
+                // a fresh multipart file payload every time.
+                const batchMedia =
+                  media.slice(
+                    0,
+                    media.size,
+                    media.type || "application/octet-stream"
+                  );
+
                 batchFormData.append(
                   "media",
-                  media,
+                  batchMedia,
                   media.name || "upload.mp4"
                 );
               }
@@ -4350,7 +4360,8 @@ async function getMediaFromFormRequest(
 ) {
   // /publish consumes the original multipart request when the run
   // is created. Therefore /publish-batch must receive the media again.
-  // This function extracts that media from the batch multipart body.
+  // Read the multipart body exactly once and accept the media field
+  // only when it contains a real non-empty File/Blob.
   try {
     const form =
       await request.formData();
@@ -4358,7 +4369,17 @@ async function getMediaFromFormRequest(
     const media =
       form.get("media");
 
-    if (!isValidMediaFile(media)) {
+    if (!media) {
+      return null;
+    }
+
+    if (
+      typeof media.arrayBuffer !==
+        "function" ||
+      typeof media.size !==
+        "number" ||
+      media.size <= 0
+    ) {
       return null;
     }
 
