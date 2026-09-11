@@ -4263,7 +4263,6 @@ async function showPublishResults(
 const PUBLISH_PAGE_DELAY_MS = 4000;
 const PUBLISH_RETRY_DELAYS_MS = [5000, 10000, 20000];
 const PUBLISH_BATCH_GAP_MS = 10000;
-const PUBLISH_BATCH_GAP_MS = 10000;
 
 function sleep(ms) {
   return new Promise(function(resolve) {
