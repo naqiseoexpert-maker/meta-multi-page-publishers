@@ -1568,7 +1568,7 @@ async function showDashboard(env) {
           "publishStatus"
         );
 
-      const PUBLISH_BATCH_SIZE = 1;
+      const PUBLISH_BATCH_SIZE = 30;
 
       if (messageInput) {
         messageInput.addEventListener(
@@ -3056,91 +3056,147 @@ async function processPublishRun(
       return;
     }
 
-    const result =
-      await env.DB.prepare(
-        "SELECT " +
-          "prp.id, prp.page_db_id, prp.facebook_page_id, " +
-          "prp.page_name, p.access_token " +
-          "FROM publish_run_pages prp " +
-          "INNER JOIN pages p ON p.id = prp.page_db_id " +
-          "WHERE prp.run_id = ? " +
-          "AND prp.status = 'pending' " +
-          "ORDER BY prp.id ASC"
-      )
-        .bind(runId)
-        .all();
+    // Publish in controlled groups of 30 Pages. Each group is processed
+    // sequentially to avoid a burst against Meta, then the next group starts.
+    // The same uploaded media object stays in this original Worker execution.
+    let batchNumber = 0;
 
-    const rows = result.results || [];
+    while (true) {
+      const result =
+        await env.DB.prepare(
+          "SELECT " +
+            "prp.id, prp.page_db_id, prp.facebook_page_id, " +
+            "prp.page_name, p.access_token " +
+            "FROM publish_run_pages prp " +
+            "INNER JOIN pages p ON p.id = prp.page_db_id " +
+            "WHERE prp.run_id = ? " +
+            "AND prp.status = 'pending' " +
+            "ORDER BY prp.id ASC " +
+            "LIMIT " +
+            Number(PUBLISH_BATCH_SIZE)
+        )
+          .bind(runId)
+          .all();
 
-    for (let index = 0; index < rows.length; index++) {
-      const row = rows[index];
+      const rows = result.results || [];
 
-      // Atomically claim the Page before touching Meta. This prevents two
-      // simultaneous requests/background executions from publishing the
-      // same Page twice in the same run.
-      const claim = await env.DB.prepare(
-        "UPDATE publish_run_pages SET status = 'publishing', " +
-          "processing_started_at = datetime('now') " +
-          "WHERE id = ? AND status = 'pending'"
-      )
-        .bind(row.id)
-        .run();
-
-      if (Number(claim.meta && claim.meta.changes || 0) !== 1) {
-        continue;
+      if (!rows.length) {
+        break;
       }
 
-      try {
-        const publishResult =
-          await publishToPage(
-            env,
-            row,
-            run.message || "",
-            media
-          );
+      batchNumber += 1;
 
-        await env.DB.prepare(
-          "UPDATE publish_run_pages SET " +
-            "status = 'success', post_id = ?, error = NULL, " +
-            "processing_started_at = NULL, completed_at = datetime('now') WHERE id = ?"
-        )
-          .bind(
-            publishResult.postId || null,
-            row.id
-          )
-          .run();
-      } catch (error) {
-        const errorMessage =
-          error && error.message
-            ? error.message
-            : String(error);
+      for (let index = 0; index < rows.length; index++) {
+        const row = rows[index];
 
-        await env.DB.prepare(
-          "UPDATE publish_run_pages SET " +
-            "status = 'failed', error = ?, " +
-            "processing_started_at = NULL, " +
-            "completed_at = datetime('now') WHERE id = ?"
+        // Atomically claim the Page before touching Meta. This prevents two
+        // simultaneous requests/background executions from publishing the
+        // same Page twice in the same run.
+        const claim = await env.DB.prepare(
+          "UPDATE publish_run_pages SET status = 'publishing', " +
+            "processing_started_at = datetime('now') " +
+            "WHERE id = ? AND status = 'pending'"
         )
-          .bind(
-            errorMessage,
-            row.id
-          )
+          .bind(row.id)
           .run();
+
+        if (
+          Number(
+            claim.meta &&
+            claim.meta.changes ||
+            0
+          ) !== 1
+        ) {
+          continue;
+        }
+
+        try {
+          const publishResult =
+            await publishToPage(
+              env,
+              row,
+              run.message || "",
+              media
+            );
+
+          await env.DB.prepare(
+            "UPDATE publish_run_pages SET " +
+              "status = 'success', post_id = ?, error = NULL, " +
+              "processing_started_at = NULL, completed_at = datetime('now') " +
+              "WHERE id = ?"
+          )
+            .bind(
+              publishResult.postId || null,
+              row.id
+            )
+            .run();
+        } catch (error) {
+          const errorMessage =
+            error && error.message
+              ? error.message
+              : String(error);
+
+          await env.DB.prepare(
+            "UPDATE publish_run_pages SET " +
+              "status = 'failed', error = ?, " +
+              "processing_started_at = NULL, " +
+              "completed_at = datetime('now') WHERE id = ?"
+          )
+            .bind(
+              errorMessage,
+              row.id
+            )
+            .run();
+        }
+
+        // Deliberate pacing between Page publishes. This applies inside
+        // every 30-Page group so Meta does not receive a burst of requests.
+        if (index < rows.length - 1) {
+          await sleep(PUBLISH_PAGE_DELAY_MS);
+        }
       }
 
-      // Keep a deliberate gap between Page publishes. The gap applies after
-      // successful, failed, and retried Pages so a burst cannot build up.
-      if (index < rows.length - 1) {
-        await sleep(PUBLISH_PAGE_DELAY_MS);
+      // If there are more Pages, wait briefly before starting the next
+      // 30-Page group. This separates the groups without changing the UI.
+      const remaining =
+        await env.DB.prepare(
+          "SELECT COUNT(*) AS count " +
+            "FROM publish_run_pages " +
+            "WHERE run_id = ? AND status = 'pending'"
+        )
+          .bind(runId)
+          .first();
+
+      const remainingCount =
+        Number(
+          remaining &&
+          remaining.count
+            ? remaining.count
+            : 0
+        );
+
+      if (remainingCount > 0) {
+        await sleep(PUBLISH_BATCH_GAP_MS);
       }
     }
 
-    await env.DB.prepare(
-      "UPDATE publish_runs SET status = 'completed', " +
-        "completed_at = datetime('now') WHERE id = ?"
-    )
-      .bind(runId)
-      .run();
+    const counts =
+      await getPublishRunCounts(
+        env.DB,
+        runId
+      );
+
+    const done =
+      counts.pending === 0;
+
+    if (done) {
+      await env.DB.prepare(
+        "UPDATE publish_runs SET status = 'completed', " +
+          "completed_at = datetime('now') WHERE id = ?"
+      )
+        .bind(runId)
+        .run();
+    }
   } catch (error) {
     const errorMessage =
       error && error.message
@@ -3451,7 +3507,7 @@ async function processPublishBatch(
           placeholders +
           ") " +
           "ORDER BY prp.id ASC " +
-          "LIMIT 15"
+          "LIMIT " + Number(PUBLISH_BATCH_SIZE)
       )
         .bind(
           runId,
@@ -3476,7 +3532,7 @@ async function processPublishBatch(
           "WHERE prp.run_id = ? " +
           "AND prp.status = 'pending' " +
           "ORDER BY prp.id ASC " +
-          "LIMIT 15"
+          "LIMIT " + Number(PUBLISH_BATCH_SIZE)
       )
         .bind(runId)
         .all();
@@ -4206,6 +4262,8 @@ async function showPublishResults(
 // reduce burst traffic and Meta throttling when many Pages are selected.
 const PUBLISH_PAGE_DELAY_MS = 4000;
 const PUBLISH_RETRY_DELAYS_MS = [5000, 10000, 20000];
+const PUBLISH_BATCH_GAP_MS = 10000;
+const PUBLISH_BATCH_GAP_MS = 10000;
 
 function sleep(ms) {
   return new Promise(function(resolve) {
