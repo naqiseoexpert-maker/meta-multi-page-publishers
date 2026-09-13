@@ -4255,12 +4255,13 @@ async function showPublishResults(
 }
 
 // =============================================================
+const PUBLISH_BATCH_SIZE = 30;
+
 // FACEBOOK PUBLISHING
 // =============================================================
 
 // Deliberate pacing between Pages. This is intentionally conservative to
 // reduce burst traffic and Meta throttling when many Pages are selected.
-const PUBLISH_BATCH_SIZE = 30;
 const PUBLISH_PAGE_DELAY_MS = 4000;
 const PUBLISH_RETRY_DELAYS_MS = [5000, 10000, 20000];
 const PUBLISH_BATCH_GAP_MS = 10000;
