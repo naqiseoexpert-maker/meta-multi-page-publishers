@@ -4334,12 +4334,14 @@ async function showPublishResults(
 // FACEBOOK PUBLISHING
 // =============================================================
 
-// Publish in groups of 30 Pages.
+// Publish in real groups of 30. Pages inside a group are handled with
+// controlled concurrency so large runs do not take several minutes.
+// Ten Pages at a time is a safer compromise than firing all 30 together.
 const PUBLISH_BATCH_SIZE = 30;
-const PUBLISH_BATCH_CONCURRENCY = 30;
+const PUBLISH_BATCH_CONCURRENCY = 10;
 const PUBLISH_PAGE_DELAY_MS = 0;
-const PUBLISH_BATCH_GAP_MS = 0;
-const PUBLISH_RETRY_DELAYS_MS = [];
+const PUBLISH_RETRY_DELAYS_MS = [5000, 10000, 20000];
+const PUBLISH_BATCH_GAP_MS = 3000;
 
 function sleep(ms) {
   return new Promise(function(resolve) {
