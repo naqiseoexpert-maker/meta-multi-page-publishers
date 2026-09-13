@@ -3124,74 +3124,82 @@ async function processPublishRun(
 
       batchNumber += 1;
 
-      for (let index = 0; index < rows.length; index++) {
-        const row = rows[index];
+      // Process this 30-Page group in controlled concurrent waves.
+      // This is the important difference from the old slow implementation:
+      // we do NOT wait 4 seconds after every Page. At most 10 Pages are sent
+      // to Meta at once, while the group itself remains exactly 30 Pages.
+      for (
+        let offset = 0;
+        offset < rows.length;
+        offset += PUBLISH_BATCH_CONCURRENCY
+      ) {
+        const wave = rows.slice(
+          offset,
+          offset + PUBLISH_BATCH_CONCURRENCY
+        );
 
-        // Atomically claim the Page before touching Meta. This prevents two
-        // simultaneous requests/background executions from publishing the
-        // same Page twice in the same run.
-        const claim = await env.DB.prepare(
-          "UPDATE publish_run_pages SET status = 'publishing', " +
-            "processing_started_at = datetime('now') " +
-            "WHERE id = ? AND status = 'pending'"
-        )
-          .bind(row.id)
-          .run();
-
-        if (
-          Number(
-            claim.meta &&
-            claim.meta.changes ||
-            0
-          ) !== 1
-        ) {
-          continue;
-        }
-
-        try {
-          const publishResult =
-            await publishToPage(
-              env,
-              row,
-              run.message || "",
-              media
-            );
-
-          await env.DB.prepare(
-            "UPDATE publish_run_pages SET " +
-              "status = 'success', post_id = ?, error = NULL, " +
-              "processing_started_at = NULL, completed_at = datetime('now') " +
-              "WHERE id = ?"
-          )
-            .bind(
-              publishResult.postId || null,
-              row.id
+        await Promise.all(
+          wave.map(async function(row) {
+            // Atomically claim the Page before touching Meta. This prevents
+            // duplicate publishing if another execution races this run.
+            const claim = await env.DB.prepare(
+              "UPDATE publish_run_pages SET status = 'publishing', " +
+                "processing_started_at = datetime('now') " +
+                "WHERE id = ? AND status = 'pending'"
             )
-            .run();
-        } catch (error) {
-          const errorMessage =
-            error && error.message
-              ? error.message
-              : String(error);
+              .bind(row.id)
+              .run();
 
-          await env.DB.prepare(
-            "UPDATE publish_run_pages SET " +
-              "status = 'failed', error = ?, " +
-              "processing_started_at = NULL, " +
-              "completed_at = datetime('now') WHERE id = ?"
-          )
-            .bind(
-              errorMessage,
-              row.id
-            )
-            .run();
-        }
+            if (
+              Number(
+                claim.meta &&
+                claim.meta.changes ||
+                0
+              ) !== 1
+            ) {
+              return;
+            }
 
-        // Deliberate pacing between Page publishes. This applies inside
-        // every 30-Page group so Meta does not receive a burst of requests.
-        if (index < rows.length - 1) {
-          await sleep(PUBLISH_PAGE_DELAY_MS);
-        }
+            try {
+              const publishResult =
+                await publishToPage(
+                  env,
+                  row,
+                  run.message || "",
+                  media
+                );
+
+              await env.DB.prepare(
+                "UPDATE publish_run_pages SET " +
+                  "status = 'success', post_id = ?, error = NULL, " +
+                  "processing_started_at = NULL, completed_at = datetime('now') " +
+                  "WHERE id = ?"
+              )
+                .bind(
+                  publishResult.postId || null,
+                  row.id
+                )
+                .run();
+            } catch (error) {
+              const errorMessage =
+                error && error.message
+                  ? error.message
+                  : String(error);
+
+              await env.DB.prepare(
+                "UPDATE publish_run_pages SET " +
+                  "status = 'failed', error = ?, " +
+                  "processing_started_at = NULL, " +
+                  "completed_at = datetime('now') WHERE id = ?"
+              )
+                .bind(
+                  errorMessage,
+                  row.id
+                )
+                .run();
+            }
+          })
+        );
       }
 
       // If there are more Pages, wait briefly before starting the next
@@ -4326,13 +4334,14 @@ async function showPublishResults(
 // FACEBOOK PUBLISHING
 // =============================================================
 
+// Publish in real groups of 30. Pages inside a group are handled with
+// controlled concurrency so large runs do not take several minutes.
+// Ten Pages at a time is a safer compromise than firing all 30 together.
 const PUBLISH_BATCH_SIZE = 30;
-
-// Deliberate pacing between Pages. This is intentionally conservative to
-// reduce burst traffic and Meta throttling when many Pages are selected.
-const PUBLISH_PAGE_DELAY_MS = 4000;
+const PUBLISH_BATCH_CONCURRENCY = 10;
+const PUBLISH_PAGE_DELAY_MS = 0;
 const PUBLISH_RETRY_DELAYS_MS = [5000, 10000, 20000];
-const PUBLISH_BATCH_GAP_MS = 10000;
+const PUBLISH_BATCH_GAP_MS = 3000;
 
 function sleep(ms) {
   return new Promise(function(resolve) {
