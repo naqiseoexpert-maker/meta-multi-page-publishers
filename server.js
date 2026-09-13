@@ -735,12 +735,15 @@ async function ensureDatabaseSchema(db) {
     )
     .run();
 
-  // If a Worker execution died while a Page was being published, release
-  // that claim after a safety window so the Page can be retried later.
+  // A Page that was already claimed for publishing must NEVER be returned
+  // to pending. If a Worker execution died while that one attempt was in
+  // progress, permanently mark that Page as failed instead of retrying it.
   await db
     .prepare(
-      "UPDATE publish_run_pages SET status = 'pending', " +
-        "processing_started_at = NULL " +
+      "UPDATE publish_run_pages SET status = 'failed', " +
+        "error = COALESCE(error, 'Publishing attempt was interrupted before a final Meta response was recorded.'), " +
+        "processing_started_at = NULL, " +
+        "completed_at = COALESCE(completed_at, datetime('now')) " +
         "WHERE status = 'publishing' " +
         "AND processing_started_at < datetime('now', '-15 minutes')"
     )
@@ -3202,8 +3205,8 @@ async function processPublishRun(
         );
       }
 
-      // If there are more Pages, wait briefly before starting the next
-      // 30-Page group. This separates the groups without changing the UI.
+      // Only after every Page in this 30-Page group has reached a final
+      // status (success or failed) do we start the next 30-Page group.
       const remaining =
         await env.DB.prepare(
           "SELECT COUNT(*) AS count " +
@@ -3747,9 +3750,8 @@ async function processPublishBatch(
       });
     }
 
-    if (index < batchRows.length - 1) {
-      await sleep(PUBLISH_PAGE_DELAY_MS);
-    }
+    // No retry and no retry delay. The next Page is processed only after
+    // this Page has reached its final success/failed status.
   }
 
   const counts =
@@ -4334,13 +4336,12 @@ async function showPublishResults(
 // FACEBOOK PUBLISHING
 // =============================================================
 
-// Publish in real groups of 30. Pages inside a group are handled with
-// controlled concurrency so large runs do not take several minutes.
-// Ten Pages at a time is a safer compromise than firing all 30 together.
+// Publish in real groups of 30 Pages.
+// Each Page gets exactly ONE Meta publishing attempt.
+// There is NO automatic retry, NO retry delay, and NO second attempt.
 const PUBLISH_BATCH_SIZE = 30;
 const PUBLISH_BATCH_CONCURRENCY = 10;
 const PUBLISH_PAGE_DELAY_MS = 0;
-const PUBLISH_RETRY_DELAYS_MS = [5000, 10000, 20000];
 const PUBLISH_BATCH_GAP_MS = 3000;
 
 function sleep(ms) {
@@ -4349,77 +4350,27 @@ function sleep(ms) {
   });
 }
 
-function getGraphErrorCode(data) {
-  return Number(
-    data &&
-    data.error &&
-    data.error.code
-  );
-}
-
-function getGraphErrorSubcode(data) {
-  return Number(
-    data &&
-    data.error &&
-    data.error.error_subcode
-  );
-}
-
-function isMetaRateLimitError(response, data) {
-  const status = Number(response && response.status || 0);
-  const code = getGraphErrorCode(data);
-  const subcode = getGraphErrorSubcode(data);
-
-  // 429 is an explicit HTTP throttle. Meta also returns common rate-limit
-  // conditions as Graph API error codes with HTTP 400.
-  return (
-    status === 429 ||
-    code === 4 ||
-    code === 17 ||
-    code === 32 ||
-    code === 613 ||
-    subcode === 2446079
-  );
-}
-
 async function fetchMetaPublish(
   endpoint,
   options
 ) {
-  let lastRateLimitMessage = "";
+  // IMPORTANT:
+  // This function intentionally performs exactly ONE fetch attempt.
+  // Any Meta/API error is returned to the caller immediately and the Page
+  // is permanently marked failed for this publishing run.
+  const response = await fetch(endpoint, options);
+  const data = await parseGraphResponse(response);
 
-  for (let attempt = 0; attempt <= PUBLISH_RETRY_DELAYS_MS.length; attempt++) {
-    const response = await fetch(endpoint, options);
-    const data = await parseGraphResponse(response);
-
-    if (!response.ok || data.error) {
-      if (isMetaRateLimitError(response, data)) {
-        lastRateLimitMessage = getGraphErrorMessage(
-          data,
-          "Meta rate limit/throttling response."
-        );
-
-        if (attempt < PUBLISH_RETRY_DELAYS_MS.length) {
-          await sleep(PUBLISH_RETRY_DELAYS_MS[attempt]);
-          continue;
-        }
-      }
-
-      throw new Error(
-        getGraphErrorMessage(
-          data,
-          "Facebook publishing failed."
-        )
-      );
-    }
-
-    return { response, data };
+  if (!response.ok || data.error) {
+    throw new Error(
+      getGraphErrorMessage(
+        data,
+        "Facebook publishing failed."
+      )
+    );
   }
 
-  throw new Error(
-    lastRateLimitMessage ||
-      "Meta rate limit/throttling persisted after controlled retries."
-  );
+  return { response, data };
 }
 
 async function publishToPage(
