@@ -735,15 +735,16 @@ async function ensureDatabaseSchema(db) {
     )
     .run();
 
-  // A Page that was already claimed for publishing must NEVER be returned
-  // to pending. If a Worker execution died while that one attempt was in
-  // progress, permanently mark that Page as failed instead of retrying it.
+  // If a Worker execution dies while a Page is being published, mark
+  // that Page failed after the safety window. NEVER return it to pending,
+  // because this publisher uses exactly one Meta attempt per Page.
   await db
     .prepare(
-      "UPDATE publish_run_pages SET status = 'failed', " +
-        "error = COALESCE(error, 'Publishing attempt was interrupted before a final Meta response was recorded.'), " +
+      "UPDATE publish_run_pages SET " +
+        "status = 'failed', " +
+        "error = COALESCE(error, 'Publishing execution stopped before the Page result was recorded.'), " +
         "processing_started_at = NULL, " +
-        "completed_at = COALESCE(completed_at, datetime('now')) " +
+        "completed_at = datetime('now') " +
         "WHERE status = 'publishing' " +
         "AND processing_started_at < datetime('now', '-15 minutes')"
     )
@@ -1870,6 +1871,18 @@ async function showDashboard(env) {
             while (
               processed < total
             ) {
+              const currentBatch =
+                Math.floor(
+                  processed /
+                    PUBLISH_BATCH_SIZE
+                ) + 1;
+
+              const totalBatches =
+                Math.ceil(
+                  total /
+                    PUBLISH_BATCH_SIZE
+                );
+
               publishButtonText.textContent =
                 "Publishing " +
                 processed +
@@ -1881,99 +1894,102 @@ async function showDashboard(env) {
 
               publishStatus.innerHTML =
                 '<div class="status-spinner"></div>' +
-                '<div><strong>Publishing...</strong>' +
-                '<span>Preparing 30-Page batches...</span></div>';
-
-              const statusResponse =
-                await fetch(
-                  "/publish-status?runId=" +
-                    encodeURIComponent(runId),
-                  {
-                    method: "GET",
-                    credentials: "same-origin",
-                    cache: "no-store"
-                  }
-                );
-
-              const statusResult =
-                await readJsonResponse(
-                  statusResponse,
-                  "Could not read publishing status."
-                );
-
-              if (
-                !statusResult ||
-                !statusResult.ok
-              ) {
-                throw new Error(
-                  statusResult &&
-                  statusResult.error
-                    ? statusResult.error
-                    : "Could not read publishing status."
-                );
-              }
-
-              processed = Number(
-                statusResult.processed || 0
-              );
-
-              succeeded = Number(
-                statusResult.succeeded || 0
-              );
-
-              failed = Number(
-                statusResult.failed || 0
-              );
-
-              const currentBatch =
-                Number(
-                  statusResult.currentBatch || 1
-                );
-
-              const totalBatches =
-                Number(
-                  statusResult.totalBatches ||
-                    Math.ceil(
-                      total /
-                      PUBLISH_BATCH_SIZE
-                    )
-                );
-
-              const batchStart =
-                ((currentBatch - 1) *
-                  PUBLISH_BATCH_SIZE) +
-                1;
-
-              const batchEnd =
-                Math.min(
-                  currentBatch *
-                    PUBLISH_BATCH_SIZE,
-                  total
-                );
-
-              publishStatus.innerHTML =
-                '<div class="status-spinner"></div>' +
                 '<div><strong>Publishing Batch ' +
                 currentBatch +
                 ' of ' +
                 totalBatches +
-                '</strong><span>Pages ' +
-                batchStart +
-                '–' +
-                batchEnd +
-                ' • ' +
-                processed +
-                ' of ' +
-                total +
-                ' Pages processed.</span></div>';
+                '</strong><span>Each Page gets one attempt only. Failed Pages continue as failed.</span></div>';
 
-              if (statusResult.done) {
+              let batchResponse;
+
+              if (media) {
+                batchResponse =
+                  await fetch(
+                    "/publish-batch",
+                    {
+                      method: "POST",
+                      headers: {
+                        "X-Publish-Media": "1",
+                        "X-Publish-Run-Id":
+                          String(runId),
+                        "X-Media-Type":
+                          media.type ||
+                          "application/octet-stream",
+                        "X-Media-Name":
+                          encodeURIComponent(
+                            media.name ||
+                            "upload.bin"
+                          )
+                      },
+                      body: media,
+                      credentials:
+                        "same-origin",
+                      cache: "no-store"
+                    }
+                  );
+              } else {
+                batchResponse =
+                  await fetch(
+                    "/publish-batch",
+                    {
+                      method: "POST",
+                      headers: {
+                        "Content-Type":
+                          "application/json"
+                      },
+                      body: JSON.stringify({
+                        runId: runId
+                      }),
+                      credentials:
+                        "same-origin",
+                      cache: "no-store"
+                    }
+                  );
+              }
+
+              const batchResult =
+                await readJsonResponse(
+                  batchResponse,
+                  "Could not process the publishing batch."
+                );
+
+              if (
+                !batchResult ||
+                !batchResult.ok
+              ) {
+                throw new Error(
+                  batchResult &&
+                  batchResult.error
+                    ? batchResult.error
+                    : "Could not process the publishing batch."
+                );
+              }
+
+              processed =
+                Number(
+                  batchResult.processed || 0
+                );
+
+              succeeded =
+                Number(
+                  batchResult.succeeded || 0
+                );
+
+              failed =
+                Number(
+                  batchResult.failed || 0
+                );
+
+              if (batchResult.done) {
                 break;
               }
 
               await new Promise(
                 function(resolve) {
-                  setTimeout(resolve, 900);
+                  setTimeout(
+                    resolve,
+                    250
+                  );
                 }
               );
             }
@@ -3045,24 +3061,9 @@ async function startPublishRun(
       .run();
   }
 
-  // IMPORTANT: the uploaded File is available only on this original
-  // request. Keep the media in the same execution and process the run in
-  // the Worker background instead of asking the browser to upload it again.
-  // This removes the source of the recurring "post is empty" / missing
-  // media failures.
-  const backgroundPromise = processPublishRun(
-    runId,
-    env,
-    sessionId,
-    media
-  );
-
-  if (ctx && typeof ctx.waitUntil === "function") {
-    ctx.waitUntil(backgroundPromise);
-  } else {
-    await backgroundPromise;
-  }
-
+  // The browser processes the run in real 30-Page requests.
+  // We intentionally do NOT keep one long Worker execution alive.
+  // This prevents the publisher from getting stuck after a number of Pages.
   return jsonResponse({
     ok: true,
     runId,
@@ -3080,306 +3081,8 @@ async function processPublishRun(
   sessionId,
   media
 ) {
-  try {
-    if (media && !isValidMediaFile(media)) {
-      media = null;
-    }
-
-    const run =
-      await env.DB.prepare(
-        "SELECT id, session_id, message, status " +
-          "FROM publish_runs WHERE id = ?"
-      )
-        .bind(runId)
-        .first();
-
-    if (!run || run.session_id !== sessionId) {
-      return;
-    }
-
-    // Publish in controlled groups of 30 Pages. Each group is processed
-    // sequentially to avoid a burst against Meta, then the next group starts.
-    // The same uploaded media object stays in this original Worker execution.
-    let batchNumber = 0;
-
-    while (true) {
-      const result =
-        await env.DB.prepare(
-          "SELECT " +
-            "prp.id, prp.page_db_id, prp.facebook_page_id, " +
-            "prp.page_name, p.access_token " +
-            "FROM publish_run_pages prp " +
-            "INNER JOIN pages p ON p.id = prp.page_db_id " +
-            "WHERE prp.run_id = ? " +
-            "AND prp.status = 'pending' " +
-            "ORDER BY prp.id ASC " +
-            "LIMIT " +
-            Number(PUBLISH_BATCH_SIZE)
-        )
-          .bind(runId)
-          .all();
-
-      const rows = result.results || [];
-
-      if (!rows.length) {
-        break;
-      }
-
-      batchNumber += 1;
-
-      // Process this 30-Page group in controlled concurrent waves.
-      // This is the important difference from the old slow implementation:
-      // we do NOT wait 4 seconds after every Page. At most 10 Pages are sent
-      // to Meta at once, while the group itself remains exactly 30 Pages.
-      for (
-        let offset = 0;
-        offset < rows.length;
-        offset += PUBLISH_BATCH_CONCURRENCY
-      ) {
-        const wave = rows.slice(
-          offset,
-          offset + PUBLISH_BATCH_CONCURRENCY
-        );
-
-        await Promise.all(
-          wave.map(async function(row) {
-            // Atomically claim the Page before touching Meta. This prevents
-            // duplicate publishing if another execution races this run.
-            const claim = await env.DB.prepare(
-              "UPDATE publish_run_pages SET status = 'publishing', " +
-                "processing_started_at = datetime('now') " +
-                "WHERE id = ? AND status = 'pending'"
-            )
-              .bind(row.id)
-              .run();
-
-            if (
-              Number(
-                claim.meta &&
-                claim.meta.changes ||
-                0
-              ) !== 1
-            ) {
-              return;
-            }
-
-            try {
-              const publishResult =
-                await publishToPage(
-                  env,
-                  row,
-                  run.message || "",
-                  media
-                );
-
-              await env.DB.prepare(
-                "UPDATE publish_run_pages SET " +
-                  "status = 'success', post_id = ?, error = NULL, " +
-                  "processing_started_at = NULL, completed_at = datetime('now') " +
-                  "WHERE id = ?"
-              )
-                .bind(
-                  publishResult.postId || null,
-                  row.id
-                )
-                .run();
-            } catch (error) {
-              const errorMessage =
-                error && error.message
-                  ? error.message
-                  : String(error);
-
-              await env.DB.prepare(
-                "UPDATE publish_run_pages SET " +
-                  "status = 'failed', error = ?, " +
-                  "processing_started_at = NULL, " +
-                  "completed_at = datetime('now') WHERE id = ?"
-              )
-                .bind(
-                  errorMessage,
-                  row.id
-                )
-                .run();
-            }
-          })
-        );
-      }
-
-      // Only after every Page in this 30-Page group has reached a final
-      // status (success or failed) do we start the next 30-Page group.
-      const remaining =
-        await env.DB.prepare(
-          "SELECT COUNT(*) AS count " +
-            "FROM publish_run_pages " +
-            "WHERE run_id = ? AND status = 'pending'"
-        )
-          .bind(runId)
-          .first();
-
-      const remainingCount =
-        Number(
-          remaining &&
-          remaining.count
-            ? remaining.count
-            : 0
-        );
-
-      if (remainingCount > 0) {
-        await sleep(PUBLISH_BATCH_GAP_MS);
-      }
-    }
-
-    const counts =
-      await getPublishRunCounts(
-        env.DB,
-        runId
-      );
-
-    const done =
-      counts.pending === 0;
-
-    if (done) {
-      await env.DB.prepare(
-        "UPDATE publish_runs SET status = 'completed', " +
-          "completed_at = datetime('now') WHERE id = ?"
-      )
-        .bind(runId)
-        .run();
-    }
-  } catch (error) {
-    const errorMessage =
-      error && error.message
-        ? error.message
-        : String(error);
-
-    console.error(
-      "Background publish run failed:",
-      error
-    );
-
-    try {
-      await env.DB.prepare(
-        "UPDATE publish_run_pages SET status = 'failed', " +
-          "error = ?, completed_at = datetime('now') " +
-          "WHERE run_id = ? AND status = 'pending'"
-      )
-        .bind(
-          errorMessage,
-          runId
-        )
-        .run();
-
-      await env.DB.prepare(
-        "UPDATE publish_runs SET status = 'completed', " +
-          "completed_at = datetime('now') WHERE id = ?"
-      )
-        .bind(runId)
-        .run();
-    } catch (dbError) {
-      console.error(
-        "Could not record background publish failure:",
-        dbError
-      );
-    }
-  }
-}
-
-// =============================================================
-// PUBLISH STATUS
-// =============================================================
-
-async function getPublishStatus(
-  request,
-  env,
-  sessionId
-) {
-  const url = new URL(request.url);
-  const runId = String(
-    url.searchParams.get("runId") ||
-      url.searchParams.get("run_id") ||
-      ""
-  ).trim();
-
-  if (!runId) {
-    return jsonResponse(
-      { ok: false, error: "Publishing run ID is missing." },
-      400
-    );
-  }
-
-  const run =
-    await env.DB.prepare(
-      "SELECT id, session_id, status FROM publish_runs WHERE id = ?"
-    )
-      .bind(runId)
-      .first();
-
-  if (!run) {
-    return jsonResponse(
-      { ok: false, error: "Publishing run was not found." },
-      404
-    );
-  }
-
-  if (run.session_id !== sessionId) {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "You are not authorized to view this publishing run."
-      },
-      403
-    );
-  }
-
-  const counts =
-    await getPublishRunCounts(
-      env.DB,
-      runId
-    );
-
-  const done =
-    counts.pending === 0;
-
-  const processed =
-    counts.succeeded +
-    counts.failed;
-
-  const totalBatches =
-    Math.ceil(
-      counts.total /
-      Number(PUBLISH_BATCH_SIZE)
-    );
-
-  const currentBatch =
-    done
-      ? totalBatches
-      : Math.min(
-          totalBatches,
-          Math.floor(
-            processed /
-            Number(PUBLISH_BATCH_SIZE)
-          ) + 1
-        );
-
-  const batchProcessed =
-    done
-      ? counts.total % Number(PUBLISH_BATCH_SIZE) || Number(PUBLISH_BATCH_SIZE)
-      : processed % Number(PUBLISH_BATCH_SIZE);
-
-  return jsonResponse({
-    ok: true,
-    done,
-    status: run.status || (done ? "completed" : "processing"),
-    processed,
-    total: counts.total,
-    pending: counts.pending,
-    succeeded: counts.succeeded,
-    failed: counts.failed,
-    batchSize: Number(PUBLISH_BATCH_SIZE),
-    currentBatch,
-    totalBatches,
-    batchProcessed
-  });
+  // Legacy compatibility only. Active publishing is handled by /publish-batch.
+  return;
 }
 
 // =============================================================
@@ -3667,91 +3370,103 @@ async function processPublishBatch(
 
   const results = [];
 
-  for (let index = 0; index < batchRows.length; index++) {
-    const row = batchRows[index];
+  // Process a 30-Page group in controlled waves.
+  // At most 10 Pages are sent to Meta at once.
+  // Every Page gets exactly ONE Meta attempt.
+  for (
+    let offset = 0;
+    offset < batchRows.length;
+    offset += PUBLISH_BATCH_CONCURRENCY
+  ) {
+    const wave =
+      batchRows.slice(
+        offset,
+        offset +
+          PUBLISH_BATCH_CONCURRENCY
+      );
 
-    // Claim each Page atomically so legacy/manual batch calls cannot race
-    // with the background publisher and create duplicate posts.
-    const claim = await env.DB.prepare(
-      "UPDATE publish_run_pages SET status = 'publishing', " +
-        "processing_started_at = datetime('now') " +
-        "WHERE id = ? AND status = 'pending'"
-    )
-      .bind(row.id)
-      .run();
+    await Promise.all(
+      wave.map(
+        async function(row) {
+          const claim =
+            await env.DB.prepare(
+              "UPDATE publish_run_pages SET " +
+                "status = 'publishing', " +
+                "processing_started_at = datetime('now') " +
+                "WHERE id = ? AND status = 'pending'"
+            )
+              .bind(row.id)
+              .run();
 
-    if (Number(claim.meta && claim.meta.changes || 0) !== 1) {
-      continue;
-    }
+          if (
+            Number(
+              claim.meta &&
+              claim.meta.changes ||
+              0
+            ) !== 1
+          ) {
+            return;
+          }
 
-    try {
-      const result =
-        await publishToPage(
-          env,
-          row,
-          run.message || "",
-          bodyMedia
-        );
+          try {
+            const result =
+              await publishToPage(
+                env,
+                row,
+                run.message || "",
+                bodyMedia
+              );
 
-      await env.DB.prepare(
-        "UPDATE publish_run_pages " +
-          "SET status = 'success', " +
-          "post_id = ?, " +
-          "error = NULL, " +
-          "processing_started_at = NULL, " +
-          "completed_at = datetime('now') " +
-          "WHERE id = ?"
+            await env.DB.prepare(
+              "UPDATE publish_run_pages SET " +
+                "status = 'success', " +
+                "post_id = ?, " +
+                "error = NULL, " +
+                "processing_started_at = NULL, " +
+                "completed_at = datetime('now') " +
+                "WHERE id = ?"
+            )
+              .bind(
+                result.postId ||
+                  null,
+                row.id
+              )
+              .run();
+
+            results.push({
+              id: row.id,
+              status: "success"
+            });
+          } catch (error) {
+            const errorMessage =
+              error &&
+              error.message
+                ? error.message
+                : String(error);
+
+            await env.DB.prepare(
+              "UPDATE publish_run_pages SET " +
+                "status = 'failed', " +
+                "error = ?, " +
+                "processing_started_at = NULL, " +
+                "completed_at = datetime('now') " +
+                "WHERE id = ?"
+            )
+              .bind(
+                errorMessage,
+                row.id
+              )
+              .run();
+
+            results.push({
+              id: row.id,
+              status: "failed",
+              error: errorMessage
+            });
+          }
+        }
       )
-        .bind(
-          result.postId ||
-            null,
-          row.id
-        )
-        .run();
-
-      results.push({
-        pageId:
-          row.facebook_page_id,
-        pageName:
-          row.page_name,
-        ok: true,
-        postId:
-          result.postId ||
-          null
-      });
-    } catch (error) {
-      const message =
-        error &&
-        error.message
-          ? error.message
-          : String(error);
-
-      await env.DB.prepare(
-        "UPDATE publish_run_pages " +
-          "SET status = 'failed', " +
-          "error = ?, " +
-          "processing_started_at = NULL, " +
-          "completed_at = datetime('now') " +
-          "WHERE id = ?"
-      )
-        .bind(
-          message,
-          row.id
-        )
-        .run();
-
-      results.push({
-        pageId:
-          row.facebook_page_id,
-        pageName:
-          row.page_name,
-        ok: false,
-        error: message
-      });
-    }
-
-    // No retry and no retry delay. The next Page is processed only after
-    // this Page has reached its final success/failed status.
+    );
   }
 
   const counts =
@@ -4336,13 +4051,14 @@ async function showPublishResults(
 // FACEBOOK PUBLISHING
 // =============================================================
 
-// Publish in real groups of 30 Pages.
-// Each Page gets exactly ONE Meta publishing attempt.
-// There is NO automatic retry, NO retry delay, and NO second attempt.
+// Publish in real groups of 30. Pages inside a group are handled with
+// controlled concurrency so large runs do not take several minutes.
+// Ten Pages at a time is a safer compromise than firing all 30 together.
 const PUBLISH_BATCH_SIZE = 30;
 const PUBLISH_BATCH_CONCURRENCY = 10;
 const PUBLISH_PAGE_DELAY_MS = 0;
-const PUBLISH_BATCH_GAP_MS = 3000;
+const PUBLISH_RETRY_DELAYS_MS = [];
+const PUBLISH_BATCH_GAP_MS = 1000;
 
 function sleep(ms) {
   return new Promise(function(resolve) {
@@ -4350,27 +4066,69 @@ function sleep(ms) {
   });
 }
 
+function getGraphErrorCode(data) {
+  return Number(
+    data &&
+    data.error &&
+    data.error.code
+  );
+}
+
+function getGraphErrorSubcode(data) {
+  return Number(
+    data &&
+    data.error &&
+    data.error.error_subcode
+  );
+}
+
+function isMetaRateLimitError(response, data) {
+  const status = Number(response && response.status || 0);
+  const code = getGraphErrorCode(data);
+  const subcode = getGraphErrorSubcode(data);
+
+  // 429 is an explicit HTTP throttle. Meta also returns common rate-limit
+  // conditions as Graph API error codes with HTTP 400.
+  return (
+    status === 429 ||
+    code === 4 ||
+    code === 17 ||
+    code === 32 ||
+    code === 613 ||
+    subcode === 2446079
+  );
+}
+
 async function fetchMetaPublish(
   endpoint,
   options
 ) {
-  // IMPORTANT:
-  // This function intentionally performs exactly ONE fetch attempt.
-  // Any Meta/API error is returned to the caller immediately and the Page
-  // is permanently marked failed for this publishing run.
-  const response = await fetch(endpoint, options);
-  const data = await parseGraphResponse(response);
+  // Exactly ONE request to Meta for each Page.
+  // No retry, no retry delay, and no second attempt.
+  const response =
+    await fetch(
+      endpoint,
+      options
+    );
+
+  const data =
+    await parseGraphResponse(
+      response
+    );
 
   if (!response.ok || data.error) {
     throw new Error(
       getGraphErrorMessage(
         data,
-        "Facebook publishing failed."
+        "Meta API returned an error."
       )
     );
   }
 
-  return { response, data };
+  return {
+    response,
+    data
+  };
 }
 
 async function publishToPage(
