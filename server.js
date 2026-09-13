@@ -1797,7 +1797,7 @@ async function showDashboard(env) {
           publishStatus.innerHTML =
             '<div class="status-spinner"></div>' +
             '<div><strong>Preparing publish run...</strong>' +
-            '<span>Creating your publishing batch.</span></div>';
+            '<span>Creating 30-Page batches from your selected Pages.</span></div>';
 
           try {
             const formData =
@@ -1879,11 +1879,7 @@ async function showDashboard(env) {
               publishStatus.innerHTML =
                 '<div class="status-spinner"></div>' +
                 '<div><strong>Publishing...</strong>' +
-                '<span>' +
-                processed +
-                ' of ' +
-                total +
-                ' Pages processed.</span></div>';
+                '<span>Preparing 30-Page batches...</span></div>';
 
               const statusResponse =
                 await fetch(
@@ -1925,6 +1921,48 @@ async function showDashboard(env) {
               failed = Number(
                 statusResult.failed || 0
               );
+
+              const currentBatch =
+                Number(
+                  statusResult.currentBatch || 1
+                );
+
+              const totalBatches =
+                Number(
+                  statusResult.totalBatches ||
+                    Math.ceil(
+                      total /
+                      PUBLISH_BATCH_SIZE
+                    )
+                );
+
+              const batchStart =
+                ((currentBatch - 1) *
+                  PUBLISH_BATCH_SIZE) +
+                1;
+
+              const batchEnd =
+                Math.min(
+                  currentBatch *
+                    PUBLISH_BATCH_SIZE,
+                  total
+                );
+
+              publishStatus.innerHTML =
+                '<div class="status-spinner"></div>' +
+                '<div><strong>Publishing Batch ' +
+                currentBatch +
+                ' of ' +
+                totalBatches +
+                '</strong><span>Pages ' +
+                batchStart +
+                '–' +
+                batchEnd +
+                ' • ' +
+                processed +
+                ' of ' +
+                total +
+                ' Pages processed.</span></div>';
 
               if (statusResult.done) {
                 break;
@@ -3291,15 +3329,45 @@ async function getPublishStatus(
   const done =
     counts.pending === 0;
 
+  const processed =
+    counts.succeeded +
+    counts.failed;
+
+  const totalBatches =
+    Math.ceil(
+      counts.total /
+      Number(PUBLISH_BATCH_SIZE)
+    );
+
+  const currentBatch =
+    done
+      ? totalBatches
+      : Math.min(
+          totalBatches,
+          Math.floor(
+            processed /
+            Number(PUBLISH_BATCH_SIZE)
+          ) + 1
+        );
+
+  const batchProcessed =
+    done
+      ? counts.total % Number(PUBLISH_BATCH_SIZE) || Number(PUBLISH_BATCH_SIZE)
+      : processed % Number(PUBLISH_BATCH_SIZE);
+
   return jsonResponse({
     ok: true,
     done,
     status: run.status || (done ? "completed" : "processing"),
-    processed: counts.succeeded + counts.failed,
+    processed,
     total: counts.total,
     pending: counts.pending,
     succeeded: counts.succeeded,
-    failed: counts.failed
+    failed: counts.failed,
+    batchSize: Number(PUBLISH_BATCH_SIZE),
+    currentBatch,
+    totalBatches,
+    batchProcessed
   });
 }
 
@@ -4255,10 +4323,10 @@ async function showPublishResults(
 }
 
 // =============================================================
-const PUBLISH_BATCH_SIZE = 30;
-
 // FACEBOOK PUBLISHING
 // =============================================================
+
+const PUBLISH_BATCH_SIZE = 30;
 
 // Deliberate pacing between Pages. This is intentionally conservative to
 // reduce burst traffic and Meta throttling when many Pages are selected.
