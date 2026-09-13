@@ -3467,6 +3467,18 @@ async function processPublishBatch(
         }
       )
     );
+
+    // Give Meta a small breathing window between waves.
+    // This reduces burst/throttling errors without retrying any Page.
+    if (
+      offset + PUBLISH_BATCH_CONCURRENCY <
+      batchRows.length &&
+      PUBLISH_BATCH_GAP_MS > 0
+    ) {
+      await sleep(
+        PUBLISH_BATCH_GAP_MS
+      );
+    }
   }
 
   const counts =
@@ -4055,10 +4067,10 @@ async function showPublishResults(
 // controlled concurrency so large runs do not take several minutes.
 // Ten Pages at a time is a safer compromise than firing all 30 together.
 const PUBLISH_BATCH_SIZE = 30;
-const PUBLISH_BATCH_CONCURRENCY = 10;
+const PUBLISH_BATCH_CONCURRENCY = 2;
 const PUBLISH_PAGE_DELAY_MS = 0;
 const PUBLISH_RETRY_DELAYS_MS = [];
-const PUBLISH_BATCH_GAP_MS = 1000;
+const PUBLISH_BATCH_GAP_MS = 1500;
 
 function sleep(ms) {
   return new Promise(function(resolve) {
