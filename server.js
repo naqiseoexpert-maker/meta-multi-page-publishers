@@ -3371,8 +3371,8 @@ async function processPublishBatch(
   const results = [];
 
   // Process a 30-Page group in controlled waves.
-  // At most 10 Pages are sent to Meta at once.
-  // Every Page gets exactly ONE Meta attempt.
+  // Every Page gets exactly ONE Meta publish attempt.
+  // A failed Page is recorded immediately and is never retried.
   for (
     let offset = 0;
     offset < batchRows.length;
@@ -4065,7 +4065,7 @@ async function showPublishResults(
 
 // Publish in real groups of 30. Pages inside a group are handled with
 // controlled concurrency so large runs do not take several minutes.
-// Ten Pages at a time is a safer compromise than firing all 30 together.
+// Controlled concurrency keeps large Page runs stable without retries.
 const PUBLISH_BATCH_SIZE = 30;
 const PUBLISH_BATCH_CONCURRENCY = 2;
 const PUBLISH_PAGE_DELAY_MS = 0;
@@ -4358,6 +4358,14 @@ async function publishVideoToPage(
     accessToken
   );
 
+  // Explicitly publish the uploaded video. Without this flag, a successful
+  // upload response does not give this publisher enough certainty that the
+  // video was created as published Page content.
+  form.append(
+    "published",
+    "true"
+  );
+
   if (message) {
     form.append(
       "description",
@@ -4384,11 +4392,23 @@ async function publishVideoToPage(
   const data =
     publishResponse.data;
 
+  // Meta must return an actual video/content ID. Treating an empty or
+  // unexpected success payload as a successful Page publish causes the UI
+  // to show success even though no video was actually created.
+  const videoId =
+    data &&
+    (data.id || data.video_id);
+
+  if (!videoId) {
+    throw new Error(
+      "Meta accepted the video request but did not return a video ID. The video was not confirmed as published."
+    );
+  }
+
   return {
     postId:
       data.post_id ||
-      data.id ||
-      null,
+      videoId,
     raw: data
   };
 }
